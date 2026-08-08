@@ -100,7 +100,14 @@ cp .env.example .env
 
 ### Running
 
-Run the project in terminal (with hot reload on file changes).
+Run the project in terminal. For hot reload on file changes, install [air](https://github.com/air-verse/air) once.
+
+```sh
+go install github.com/air-verse/air@latest
+make dev
+```
+
+If you don't want hot reload, you can run it directly with `go run`:
 
 > The `dev` build tag reads `.env` from the working directory on startup.
 

@@ -1,0 +1,24 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -tags dev -o ./tmp/claude-lens ./cmd/claude-lens"
+  entrypoint = ["./tmp/claude-lens"]
+  log = "tmp/build-errors.log"
+  include_ext = ["go", "html"]
+  exclude_dir = ["tmp", "bin", "data", "logs", ".git", ".githooks", ".github", ".vscode", ".claude"]
+  exclude_regex = ["_test\\.go"]
+  delay = 1000
+  stop_on_error = true
+  # SIGINT (not SIGKILL) on rebuild, so main.go's signal.NotifyContext gets
+  # the same graceful shutdown path as a real Ctrl-C — including draining
+  # in-flight exchange saves (see proxy/handler.go's waitForSaves) — instead
+  # of the process being killed mid-write.
+  send_interrupt = true
+  kill_delay = "2s"
+
+[log]
+  time = true
+
+[misc]
+  clean_on_exit = true

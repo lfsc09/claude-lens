@@ -13,6 +13,12 @@ install-hooks:
 	git config core.hooksPath .githooks
 	chmod +x .githooks/post-commit
 
+## dev: Run the project with hot reload on file changes (requires air: go install github.com/air-verse/air@latest)
+.PHONY: dev
+dev:
+	@command -v air >/dev/null 2>&1 || { echo "air not found — install with: go install github.com/air-verse/air@latest"; exit 1; }
+	air
+
 ## build: Build the project for the current platform
 .PHONY: build
 build:
