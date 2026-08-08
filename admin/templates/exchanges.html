@@ -1,0 +1,81 @@
+{{ define "title" }}Exchanges – claude-lens Admin{{ end }}
+{{ define "content" }}
+<script>window._exchangesPage = {{ .Page }};</script>
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold">Exchanges</h1>
+  <form action="{{ urlFor "ui_reset" }}" method="post"
+    onsubmit="return confirm('Delete {{ if .SessionID }}exchanges for this session{{ else }}all exchanges{{ end }}?')">
+    {{ if .SessionID }}<input type="hidden" name="session_id" value="{{ .SessionID }}">{{ end }}
+    <button type="submit" class="text-sm text-red-500 hover:text-red-700 hover:underline">
+      {{ if .SessionID }}Clear session{{ else }}Clear all{{ end }}
+    </button>
+  </form>
+</div>
+
+<form method="get" class="mb-4 flex gap-2">
+  <input type="text" name="session_id" value="{{ .SessionID }}" placeholder="Filter by session ID or name"
+    class="border border-gray-300 rounded px-3 py-1.5 text-sm w-72 focus:outline-none focus:ring-1 focus:ring-blue-500">
+  <button type="submit" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700">
+    Filter
+  </button>
+  {{ if .SessionID }}
+  <a href="{{ urlFor "ui_exchanges" }}" class="text-sm text-gray-500 self-center hover:underline">Clear</a>
+  {{ end }}
+</form>
+
+<div class="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-50 border-b border-gray-200 text-left text-gray-500">
+      <tr>
+        <th class="px-4 py-2 font-medium">ID</th>
+        <th class="px-4 py-2 font-medium">Session</th>
+        <th class="px-4 py-2 font-medium">Model</th>
+        <th class="px-4 py-2 font-medium">Path</th>
+        <th class="px-4 py-2 font-medium">Time</th>
+        <th class="px-4 py-2 font-medium text-right">In tokens</th>
+        <th class="px-4 py-2 font-medium text-right">Out tokens</th>
+        <th class="px-4 py-2 font-medium text-right">Cost</th>
+        <th class="px-4 py-2 font-medium">Stream</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100" id="exchanges-tbody">
+      {{ range .Rows }}
+      <tr class="hover:bg-gray-50">
+        <td class="px-4 py-2">
+          <a href="{{ urlFor "ui_exchange_detail" .ID }}" class="text-blue-600 hover:underline">{{ .ID }}</a>
+        </td>
+        <td class="px-4 py-2 max-w-xs truncate text-gray-700" title="{{ .SessionID }}">
+          {{ coalesce .SessionName .SessionID }}
+        </td>
+        <td class="px-4 py-2 text-gray-500 font-mono text-xs truncate max-w-xs" title="{{ coalesce .Model "" }}">
+          {{ coalesce .Model "—" }}
+        </td>
+        <td class="px-4 py-2 text-gray-500 font-mono text-xs">{{ .Path }}</td>
+        <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .Timestamp }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtInt .InputTokens }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtInt .OutputTokens }}</td>
+        <td class="px-4 py-2 text-right text-gray-700">{{ fmtCost .Cost }}</td>
+        <td class="px-4 py-2 text-gray-400 text-center">{{ if .IsStreaming }}✓{{ end }}</td>
+      </tr>
+      {{ else }}
+      <tr>
+        <td colspan="9" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="mt-4 flex gap-4 text-sm">
+  {{ if gt .Page 1 }}
+  <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">←
+    Previous</a>
+  {{ end }}
+  {{ if .HasNext }}
+  <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">Next
+    →</a>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ template "base" . }}

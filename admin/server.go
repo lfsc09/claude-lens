@@ -21,15 +21,25 @@ type Server struct {
 	engine *gin.Engine
 }
 
-// NewServer builds a Server with all JSON API routes registered.
-func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) *Server {
+// NewServer builds a Server with the JSON API and HTML UI routes
+// registered. It only fails if the embedded templates don't parse — a
+// build-time invariant, not a runtime condition — so a broken template is
+// treated as fatal rather than something the caller can meaningfully
+// recover from at startup.
+func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) (*Server, error) {
 	gin.SetMode(gin.ReleaseMode)
 
-	h := &handlers{db: db, est: est, status: st}
+	pages, err := ParseTemplates()
+	if err != nil {
+		return nil, err
+	}
+
+	h := &handlers{db: db, est: est, status: st, pages: pages}
 
 	r := gin.New()
 	r.Use(gin.Recovery(), slogMiddleware())
 
+	// JSON API
 	r.GET("/health", h.health)
 	r.GET("/exchanges", h.listExchanges)
 	r.GET("/exchanges/:id", h.exchangeDetail)
@@ -40,7 +50,18 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) *Server
 	r.PUT("/prices/:prefix", h.upsertPrice)
 	r.DELETE("/prices/:prefix", h.deletePrice)
 
-	return &Server{engine: r}
+	// HTML UI
+	r.GET("/", h.uiDashboard)
+	r.GET("/ui/exchanges", h.uiExchanges)
+	r.GET("/ui/exchanges/:id", h.uiExchangeDetail)
+	r.POST("/ui/reset", h.uiReset)
+	r.GET("/ui/prices", h.uiPrices)
+	r.POST("/ui/prices", h.uiCreatePrice)
+	r.POST("/ui/prices/:prefix", h.uiUpdatePrice)
+	r.POST("/ui/prices/:prefix/delete", h.uiDeletePrice)
+	r.NoRoute(h.notFound)
+
+	return &Server{engine: r}, nil
 }
 
 // Run serves on addr until ctx is done, then gracefully shuts down.

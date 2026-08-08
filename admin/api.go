@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -18,6 +19,24 @@ type handlers struct {
 	db     *database.DB
 	est    *pricing.Estimator
 	status *status.Flag
+	pages  map[string]*template.Template
+}
+
+// render executes the named page template (see ParseTemplates — each page
+// is its own clone of base.html, so "content"/"title"/"scripts" from one
+// page can never leak into another).
+func (h *handlers) render(c *gin.Context, status int, page string, data any) {
+	tmpl, ok := h.pages[page]
+	if !ok {
+		slog.Error("no such page template", "page", page)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	c.Status(status)
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(c.Writer, page, data); err != nil {
+		slog.Error("template render failed", "page", page, "error", err)
+	}
 }
 
 func (h *handlers) health(c *gin.Context) {

@@ -28,7 +28,11 @@ func newTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	return NewServer(db, est, status.New()), db
+	s, err := NewServer(db, est, status.New())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return s, db
 }
 
 func doJSON(t *testing.T, s *Server, method, path string, body any) *httptest.ResponseRecorder {

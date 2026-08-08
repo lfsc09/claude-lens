@@ -1,0 +1,188 @@
+package admin
+
+import (
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
+	"github.com/lfsc09/claude-lens/internal/database"
+)
+
+const uiPageSize = 50
+
+func startOfToday() float64 {
+	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return float64(midnight.Unix())
+}
+
+func (h *handlers) uiDashboard(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	totals, err := h.db.GetTokenTotals(ctx, "", nil)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	since := startOfToday()
+	totalsToday, err := h.db.GetTokenTotals(ctx, "", &since)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	stats, err := h.db.GetSessionStats(ctx)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	dailyCosts, err := h.db.GetDailyCosts(ctx, 60)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	h.render(c, http.StatusOK, "dashboard.html", gin.H{
+		"Totals":       totals,
+		"TotalsToday":  totalsToday,
+		"SessionStats": stats,
+		"DailyCosts":   dailyCosts,
+	})
+}
+
+func (h *handlers) uiExchanges(c *gin.Context) {
+	sessionID := c.Query("session_id")
+	page := 1
+	if v := c.Query("page"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 1 {
+			page = n
+		}
+	}
+	offset := (page - 1) * uiPageSize
+
+	rows, err := h.db.GetExchanges(c.Request.Context(), sessionID, uiPageSize+1, offset)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	hasNext := len(rows) > uiPageSize
+	if hasNext {
+		rows = rows[:uiPageSize]
+	}
+
+	h.render(c, http.StatusOK, "exchanges.html", gin.H{
+		"Rows":      rows,
+		"SessionID": sessionID,
+		"Page":      page,
+		"HasNext":   hasNext,
+	})
+}
+
+func (h *handlers) uiExchangeDetail(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		h.render(c, http.StatusNotFound, "404.html", gin.H{"ID": int64(0)})
+		return
+	}
+
+	row, err := h.db.GetExchangeDetail(c.Request.Context(), id)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	if row == nil {
+		h.render(c, http.StatusNotFound, "404.html", gin.H{"ID": id})
+		return
+	}
+	h.render(c, http.StatusOK, "exchange_detail.html", row)
+}
+
+func (h *handlers) uiReset(c *gin.Context) {
+	sessionID := c.PostForm("session_id")
+	n, err := h.db.DeleteExchanges(c.Request.Context(), sessionID)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	slog.Info("reset exchanges", "deleted", n, "session_id", sessionID)
+
+	redirectURL, err := urlFor("ui_exchanges", "session_id", sessionID)
+	if err != nil {
+		redirectURL = "/ui/exchanges"
+	}
+	c.Redirect(http.StatusFound, redirectURL)
+}
+
+func (h *handlers) uiPrices(c *gin.Context) {
+	prices, err := h.db.ListPrices(c.Request.Context())
+	if err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	h.render(c, http.StatusOK, "prices.html", gin.H{"Prices": prices})
+}
+
+func (h *handlers) uiCreatePrice(c *gin.Context) {
+	prefix := strings.TrimSpace(c.PostForm("model_prefix"))
+	inputPerM, errIn := strconv.ParseFloat(c.PostForm("input_per_m"), 64)
+	outputPerM, errOut := strconv.ParseFloat(c.PostForm("output_per_m"), 64)
+	if prefix == "" || errIn != nil || errOut != nil {
+		c.String(http.StatusBadRequest, "model_prefix, input_per_m, and output_per_m are required")
+		return
+	}
+
+	if err := h.upsertPriceAndRefresh(c, prefix, inputPerM, outputPerM); err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	c.Redirect(http.StatusFound, "/ui/prices")
+}
+
+func (h *handlers) uiUpdatePrice(c *gin.Context) {
+	prefix := c.Param("prefix")
+	inputPerM, errIn := strconv.ParseFloat(c.PostForm("input_per_m"), 64)
+	outputPerM, errOut := strconv.ParseFloat(c.PostForm("output_per_m"), 64)
+	if errIn != nil || errOut != nil {
+		c.String(http.StatusBadRequest, "input_per_m and output_per_m must be numbers")
+		return
+	}
+
+	if err := h.upsertPriceAndRefresh(c, prefix, inputPerM, outputPerM); err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	c.Redirect(http.StatusFound, "/ui/prices")
+}
+
+func (h *handlers) uiDeletePrice(c *gin.Context) {
+	prefix := c.Param("prefix")
+	if err := h.db.DeletePrice(c.Request.Context(), prefix); err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := h.est.Refresh(c.Request.Context()); err != nil {
+		c.String(http.StatusInternalServerError, "internal error")
+		return
+	}
+	c.Redirect(http.StatusFound, "/ui/prices")
+}
+
+func (h *handlers) upsertPriceAndRefresh(c *gin.Context, prefix string, inputPerM, outputPerM float64) error {
+	p := database.Price{
+		Prefix:     prefix,
+		InputPerM:  inputPerM,
+		OutputPerM: outputPerM,
+		UpdatedAt:  float64(time.Now().Unix()),
+	}
+	if err := h.db.UpsertPrice(c.Request.Context(), p); err != nil {
+		return err
+	}
+	return h.est.Refresh(c.Request.Context())
+}
+
+func (h *handlers) notFound(c *gin.Context) {
+	h.render(c, http.StatusNotFound, "404.html", gin.H{"ID": int64(0)})
+}

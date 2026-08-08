@@ -1,0 +1,150 @@
+{{ define "base" }}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ block "title" . }}claude-lens Admin{{ end }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-50 min-h-screen text-gray-800">
+
+  <header class="bg-white border-b border-gray-200 px-6 py-3">
+    <nav class="flex items-center gap-6 text-sm font-medium">
+      <span class="text-base font-bold text-gray-900">claude-lens</span>
+      <a href="{{ urlFor "ui_dashboard" }}" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+      <a href="{{ urlFor "ui_exchanges" }}" class="text-gray-600 hover:text-gray-900">Exchanges</a>
+      <a href="{{ urlFor "ui_prices" }}" class="text-gray-600 hover:text-gray-900">Prices</a>
+      <span id="proxy-status" class="ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500">
+        Proxy Service
+      </span>
+    </nav>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    {{ block "content" . }}{{ end }}
+  </main>
+
+  <script>
+    (function () {
+      var es = new EventSource('/stream');
+
+      es.onmessage = function (e) {
+        var data = JSON.parse(e.data);
+        updateProxyStatus(data.proxy_status);
+        updateTotals(data.totals);
+        updateTotalsToday(data.totals_today);
+        checkExchangesUpdate(data.latest_exchange_id);
+      };
+
+      es.onerror = function () {
+        updateProxyStatus('unreachable');
+      };
+
+      function updateProxyStatus(status) {
+        var el = document.getElementById('proxy-status');
+        if (!el) return;
+        switch (status) {
+          case 'ok':
+            el.textContent = 'Proxy Service: OK';
+            el.className = 'ml-auto px-2 py-1 border border-green-300 border-dashed text-xs text-gray-500 bg-green-100 text-green-800';
+            break;
+          case 'degraded':
+            el.textContent = 'Proxy Service: Degraded';
+            el.className = 'ml-auto px-2 py-1 border border-yellow-300 border-dashed text-xs text-gray-500 bg-yellow-100 text-yellow-800';
+            break;
+          case 'unreachable':
+            el.textContent = 'Proxy Service: Unreachable';
+            el.className = 'ml-auto px-2 py-1 border border-red-300 border-dashed text-xs text-gray-500 bg-red-100 text-red-800 animate-pulse';
+            break;
+          default:
+            el.textContent = 'Proxy Service: Unknown';
+            el.className = 'ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500 bg-gray-100 text-gray-800';
+        }
+      }
+
+      function updateTotals(totals) {
+        if (!totals) return;
+        var el;
+        el = document.getElementById('total-input-tokens');
+        if (el) el.textContent = (totals.total_input_tokens || 0).toLocaleString();
+        el = document.getElementById('total-input-cost');
+        if (el) el.textContent = fmtCost(totals.total_input_cost);
+        el = document.getElementById('total-output-tokens');
+        if (el) el.textContent = (totals.total_output_tokens || 0).toLocaleString();
+        el = document.getElementById('total-output-cost');
+        if (el) el.textContent = fmtCost(totals.total_output_cost);
+        el = document.getElementById('total-tokens');
+        if (el) el.textContent = ((totals.total_input_tokens || 0) + (totals.total_output_tokens || 0)).toLocaleString();
+        el = document.getElementById('total-cost');
+        if (el) el.textContent = fmtCost(totals.total_cost);
+      }
+
+      function updateTotalsToday(totals) {
+        if (!totals) return;
+        var el;
+        el = document.getElementById('today-input-tokens');
+        if (el) el.textContent = (totals.total_input_tokens || 0).toLocaleString();
+        el = document.getElementById('today-output-tokens');
+        if (el) el.textContent = (totals.total_output_tokens || 0).toLocaleString();
+        el = document.getElementById('today-tokens');
+        if (el) el.textContent = ((totals.total_input_tokens || 0) + (totals.total_output_tokens || 0)).toLocaleString();
+      }
+
+      var _knownLatestId = 0;
+
+      function checkExchangesUpdate(latestId) {
+        if (!latestId || latestId <= _knownLatestId) return;
+        _knownLatestId = latestId;
+        if (typeof window._onNewExchange === 'function') window._onNewExchange();
+        var tbody = document.getElementById('exchanges-tbody');
+        if (!tbody) return;
+        if (window._exchangesPage && window._exchangesPage > 1) return;
+        var sessionId = new URLSearchParams(window.location.search).get('session_id') || '';
+        var url = '/exchanges?limit=50' + (sessionId ? '&session_id=' + encodeURIComponent(sessionId) : '');
+        fetch(url)
+          .then(function (r) { return r.json(); })
+          .then(function (rows) {
+            if (!rows.length) return;
+            tbody.innerHTML = rows.map(buildRow).join('');
+          });
+      }
+
+      function buildRow(row) {
+        var d = new Date(row.timestamp * 1000);
+        var pad = function (n) { return String(n).padStart(2, '0'); };
+        var ts = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+          ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+        var label = esc(row.session_name || row.session_id);
+        return '<tr class="hover:bg-gray-50">' +
+          '<td class="px-4 py-2"><a href="/ui/exchanges/' + row.id + '" class="text-blue-600 hover:underline">' + row.id + '</a></td>' +
+          '<td class="px-4 py-2 max-w-xs truncate text-gray-700" title="' + esc(row.session_id) + '">' + label + '</td>' +
+          '<td class="px-4 py-2 text-gray-500 font-mono text-xs truncate max-w-xs" title="' + esc(row.model || '') + '">' + esc(row.model || '—') + '</td>' +
+          '<td class="px-4 py-2 text-gray-500 font-mono text-xs">' + esc(row.path) + '</td>' +
+          '<td class="px-4 py-2 text-gray-500 whitespace-nowrap">' + ts + '</td>' +
+          '<td class="px-4 py-2 text-right">' + (row.input_tokens != null ? row.input_tokens : '—') + '</td>' +
+          '<td class="px-4 py-2 text-right">' + (row.output_tokens != null ? row.output_tokens : '—') + '</td>' +
+          '<td class="px-4 py-2 text-right text-gray-700">' + fmtCost(row.cost) + '</td>' +
+          '<td class="px-4 py-2 text-gray-400 text-center">' + (row.is_streaming ? '✓' : '') + '</td>' +
+          '</tr>';
+      }
+
+      function fmtCost(c) {
+        if (c == null) return '—';
+        return '$' + (c < 0.01 ? c.toFixed(4) : c.toFixed(2));
+      }
+
+      function esc(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+    })();
+  </script>
+
+  {{ block "scripts" . }}{{ end }}
+
+</body>
+
+</html>
+{{ end }}
