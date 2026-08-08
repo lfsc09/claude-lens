@@ -45,6 +45,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) (*Serve
 	r.GET("/exchanges/:id", h.exchangeDetail)
 	r.DELETE("/exchanges", h.resetExchanges)
 	r.GET("/totals", h.totals)
+	r.GET("/stream", h.sseStream)
 	r.GET("/session-stats", h.sessionStats)
 	r.GET("/prices", h.listPrices)
 	r.PUT("/prices/:prefix", h.upsertPrice)
