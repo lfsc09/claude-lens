@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Guard: if `version` is already part of this commit, we're inside the
+# amend triggered by this hook — exit to prevent an infinite loop.
+if git diff-tree --no-commit-id -r HEAD --name-only | grep -q "^version$"; then
+  exit 0
+fi
+
+COMMIT_MSG=$(git log -1 --format="%s")
+VERSION=$(cat version)
+MAJOR=$(echo "$VERSION" | cut -d. -f1)
+MINOR=$(echo "$VERSION" | cut -d. -f2)
+PATCH=$(echo "$VERSION" | cut -d. -f3)
+
+if echo "$COMMIT_MSG" | grep -qE '^[a-z]+!:'; then
+  MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+elif echo "$COMMIT_MSG" | grep -qE '^(feat|refactor):'; then
+  MINOR=$((MINOR + 1)); PATCH=0
+elif echo "$COMMIT_MSG" | grep -qE '^(fix|chore|docs|test):'; then
+  PATCH=$((PATCH + 1))
+else
+  exit 0  # unrecognized prefix — nothing to bump
+fi
+
+NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+echo "$NEW_VERSION" > version
+git add version
+git commit --amend --no-edit --no-verify

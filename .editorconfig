@@ -1,0 +1,24 @@
+# EditorConfig helps developers define and maintain consistent
+# coding styles between different editors and IDEs
+
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+
+# Go files follow the official Go style guide (tabs, not spaces)
+[*.go]
+indent_style = tab
+indent_size = 4
+
+# Configuration and data files typically use 2 or 4 spaces
+[*.{json,yaml,yml,toml}]
+indent_style = space
+indent_size = 2
+
+# Makefiles strictly require hard tabs
+[Makefile]
+indent_style = tab

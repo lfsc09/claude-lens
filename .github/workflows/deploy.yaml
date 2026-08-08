@@ -1,0 +1,68 @@
+name: Auto Deploy on Merge to Main
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload assets to the release
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat version)" >> $GITHUB_OUTPUT
+
+      - name: Set up go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Build binaries
+        run: |
+          mkdir dist
+          GOOS=linux GOARCH=amd64 go build \
+            -ldflags "-X github.com/lfsc09/claude-lens/cmd.Version=${{ steps.version.outputs.version }}" \
+            -o dist/claude-lens-linux-amd64
+          GOOS=darwin GOARCH=amd64 go build \
+            -ldflags "-X github.com/lfsc09/claude-lens/cmd.Version=${{ steps.version.outputs.version }}" \
+            -o dist/claude-lens-darwin-amd64
+          GOOS=windows GOARCH=amd64 go build \
+            -ldflags "-X github.com/lfsc09/claude-lens/cmd.Version=${{ steps.version.outputs.version }}" \
+            -o dist/claude-lens-windows-amd64.exe
+
+      - name: Create and push Git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "v${{ steps.version.outputs.version }}"
+          files: |
+            dist/claude-lens-linux-amd64
+            dist/claude-lens-darwin-amd64
+            dist/claude-lens-windows-amd64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
