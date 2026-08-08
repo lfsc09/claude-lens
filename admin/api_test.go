@@ -28,7 +28,7 @@ func newTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	s, err := NewServer(db, est, status.New())
+	s, err := NewServer(db, est, status.New(), "test")
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -70,6 +70,9 @@ func TestHealth(t *testing.T) {
 	}
 	if body["proxy"] != "unreachable" {
 		t.Errorf("proxy field = %q, want unreachable (fresh status.Flag)", body["proxy"])
+	}
+	if body["version"] != "test" {
+		t.Errorf("version field = %q, want %q (the version newTestServer passed to NewServer)", body["version"], "test")
 	}
 }
 

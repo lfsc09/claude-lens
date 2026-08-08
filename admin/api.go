@@ -16,11 +16,12 @@ import (
 
 // handlers holds the dependencies shared by every admin route.
 type handlers struct {
-	db     *database.DB
-	est    *pricing.Estimator
-	status *status.Flag
-	pages  map[string]*template.Template
-	logger *slog.Logger
+	db      *database.DB
+	est     *pricing.Estimator
+	status  *status.Flag
+	pages   map[string]*template.Template
+	logger  *slog.Logger
+	version string
 }
 
 // render executes the named page template (see ParseTemplates — each page
@@ -41,7 +42,7 @@ func (h *handlers) render(c *gin.Context, status int, page string, data any) {
 }
 
 func (h *handlers) health(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "proxy": string(h.status.Get())})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "proxy": string(h.status.Get()), "version": h.version})
 }
 
 func (h *handlers) listExchanges(c *gin.Context) {

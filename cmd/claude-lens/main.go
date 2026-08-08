@@ -52,13 +52,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	adminSrv, err := admin.NewServer(db, est, st)
+	adminSrv, err := admin.NewServer(db, est, st, Version)
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("starting", "proxy_addr", cfg.ProxyAddr, "admin_addr", cfg.AdminAddr)
+	slog.Info("starting", "version", Version, "proxy_addr", cfg.ProxyAddr, "admin_addr", cfg.AdminAddr)
 
 	var proxyErr, adminErr error
 	var wg sync.WaitGroup

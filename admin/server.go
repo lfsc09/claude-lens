@@ -27,7 +27,7 @@ type Server struct {
 // build-time invariant, not a runtime condition — so a broken template is
 // treated as fatal rather than something the caller can meaningfully
 // recover from at startup.
-func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) (*Server, error) {
+func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, version string) (*Server, error) {
 	gin.SetMode(gin.ReleaseMode)
 
 	pages, err := ParseTemplates()
@@ -36,7 +36,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) (*Serve
 	}
 
 	logger := slog.Default().With("component", "admin")
-	h := &handlers{db: db, est: est, status: st, pages: pages, logger: logger}
+	h := &handlers{db: db, est: est, status: st, pages: pages, logger: logger, version: version}
 
 	r := gin.New()
 	r.Use(gin.Recovery(), slogMiddleware(logger))

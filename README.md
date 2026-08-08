@@ -74,7 +74,7 @@ full list with defaults. None are required to start the binary.
 
 | Endpoint | Description |
 |---|---|
-| `GET /health` | Admin liveness + in-process proxy status (`ok`/`degraded`/`unreachable`) |
+| `GET /health` | Admin liveness, in-process proxy status (`ok`/`degraded`/`unreachable`), and the build's `version` |
 | `GET /exchanges` | Paginated list of captured exchanges (`session_id`, `limit` ≤ 1000, `offset`) |
 | `GET /exchanges/:id` | Full detail for one exchange, including raw request/response bodies |
 | `DELETE /exchanges` | Delete all exchanges, or only those for a given `session_id` |
