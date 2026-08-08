@@ -1,0 +1,341 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"log/slog"
+	"math"
+	"strings"
+	"time"
+)
+
+// Exchange is a row to be written after a proxied request/response completes.
+type Exchange struct {
+	SessionID     string
+	SessionName   *string
+	Path          string
+	Timestamp     float64
+	IsStreaming   bool
+	InputMessages *string
+	RawRequest    string
+	RawResponse   string
+	OutputText    *string
+	InputTokens   *int
+	OutputTokens  *int
+	Model         *string
+	InputCost     *float64
+	OutputCost    *float64
+}
+
+// ExchangeSummary is a row as listed in the exchanges table/dashboard (no
+// request/response bodies).
+type ExchangeSummary struct {
+	ID           int64
+	SessionID    string
+	SessionName  *string
+	Path         string
+	Timestamp    float64
+	IsStreaming  bool
+	InputTokens  *int
+	OutputTokens *int
+	Model        *string
+	Cost         *float64
+}
+
+// ExchangeDetail is a full exchange row, including request/response bodies.
+type ExchangeDetail struct {
+	ID            int64
+	SessionID     string
+	SessionName   *string
+	Path          string
+	Timestamp     float64
+	IsStreaming   bool
+	InputMessages *string
+	OutputText    *string
+	InputTokens   *int
+	OutputTokens  *int
+	Model         *string
+	Cost          *float64
+	InputCost     *float64
+	OutputCost    *float64
+	RawRequest    *string
+	RawResponse   *string
+}
+
+// Totals is an aggregate over a set of exchanges.
+type Totals struct {
+	Count             int64
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCost         *float64
+	TotalInputCost    *float64
+	TotalOutputCost   *float64
+}
+
+// SessionStat is a per-session aggregate row.
+type SessionStat struct {
+	SessionID         string
+	SessionName       *string
+	ExchangeCount     int64
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCost         float64
+	TotalInputCost    *float64
+	TotalOutputCost   *float64
+	LastUpdated       float64
+}
+
+// DailyCost is a daily cost total, local-time bucketed.
+type DailyCost struct {
+	Day       string
+	DailyCost float64
+}
+
+// SaveExchange inserts one exchange row. On failure it logs the error and
+// returns it — matching the Python version's behavior of never letting a
+// storage failure break the response already sent to the client.
+func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
+	var cost *float64
+	if e.InputCost != nil && e.OutputCost != nil {
+		c := math.Round((*e.InputCost+*e.OutputCost)*1e6) / 1e6
+		cost = &c
+	}
+
+	_, err := db.sql.ExecContext(ctx,
+		`INSERT INTO exchanges
+			(session_id, session_name, path, timestamp, is_streaming,
+			 input_messages, output_text, input_tokens, output_tokens,
+			 model, cost, input_cost, output_cost, raw_request, raw_response)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.SessionID, e.SessionName, e.Path, e.Timestamp, boolToInt(e.IsStreaming),
+		e.InputMessages, e.OutputText, e.InputTokens, e.OutputTokens,
+		e.Model, cost, e.InputCost, e.OutputCost, e.RawRequest, e.RawResponse,
+	)
+	if err != nil {
+		slog.Error("save exchange failed", "error", err, "session_id", e.SessionID)
+		return err
+	}
+
+	slog.Info("saved exchange",
+		"session_id", e.SessionID, "path", e.Path, "model", derefStr(e.Model),
+		"input_tokens", derefInt(e.InputTokens), "output_tokens", derefInt(e.OutputTokens),
+		"cost", derefFloat(cost), "streaming", e.IsStreaming,
+	)
+	return nil
+}
+
+// GetExchanges returns a page of exchange summaries, newest first, optionally
+// filtered to a single session. Pass sessionID == "" for no filter.
+func (db *DB) GetExchanges(ctx context.Context, sessionID string, limit, offset int) ([]ExchangeSummary, error) {
+	query := `SELECT id, session_id, session_name, path, timestamp, is_streaming,
+	                  input_tokens, output_tokens, model, cost
+	           FROM exchanges `
+	args := []any{}
+	if sessionID != "" {
+		query += "WHERE session_id = ? "
+		args = append(args, sessionID)
+	}
+	query += "ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := db.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []ExchangeSummary
+	for rows.Next() {
+		var e ExchangeSummary
+		var isStreaming int
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp,
+			&isStreaming, &e.InputTokens, &e.OutputTokens, &e.Model, &e.Cost); err != nil {
+			return nil, err
+		}
+		e.IsStreaming = isStreaming != 0
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// GetExchangeDetail returns a single exchange, or nil if id doesn't exist.
+func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail, error) {
+	var e ExchangeDetail
+	var isStreaming int
+	err := db.sql.QueryRowContext(ctx,
+		`SELECT id, session_id, session_name, path, timestamp, is_streaming,
+		        input_messages, output_text, input_tokens, output_tokens,
+		        model, cost, input_cost, output_cost, raw_request, raw_response
+		 FROM exchanges WHERE id = ?`, id,
+	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp, &isStreaming,
+		&e.InputMessages, &e.OutputText, &e.InputTokens, &e.OutputTokens,
+		&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.RawRequest, &e.RawResponse)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.IsStreaming = isStreaming != 0
+	return &e, nil
+}
+
+// GetTokenTotals returns aggregate token/cost counts, optionally scoped to a
+// session (sessionID == "" for no filter) and/or a start timestamp.
+func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float64) (Totals, error) {
+	query := `SELECT COUNT(*),
+	                 SUM(input_tokens), SUM(output_tokens),
+	                 SUM(cost), SUM(input_cost), SUM(output_cost)
+	          FROM exchanges`
+	var conditions []string
+	var args []any
+	if sessionID != "" {
+		conditions = append(conditions, "session_id = ?")
+		args = append(args, sessionID)
+	}
+	if since != nil {
+		conditions = append(conditions, "timestamp >= ?")
+		args = append(args, *since)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var t Totals
+	var inputTokens, outputTokens sql.NullInt64
+	var totalCost, totalInputCost, totalOutputCost sql.NullFloat64
+	err := db.sql.QueryRowContext(ctx, query, args...).Scan(
+		&t.Count, &inputTokens, &outputTokens, &totalCost, &totalInputCost, &totalOutputCost,
+	)
+	if err != nil {
+		return Totals{}, err
+	}
+	t.TotalInputTokens = inputTokens.Int64
+	t.TotalOutputTokens = outputTokens.Int64
+	t.TotalCost = roundedOrNil(totalCost, 4)
+	t.TotalInputCost = roundedOrNil(totalInputCost, 4)
+	t.TotalOutputCost = roundedOrNil(totalOutputCost, 4)
+	return t, nil
+}
+
+// GetSessionStats returns per-session aggregates, most recently active first.
+func (db *DB) GetSessionStats(ctx context.Context) ([]SessionStat, error) {
+	rows, err := db.sql.QueryContext(ctx,
+		`SELECT session_id, MAX(session_name),
+		        COUNT(*),
+		        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		        COALESCE(SUM(cost), 0), SUM(input_cost), SUM(output_cost),
+		        MAX(timestamp)
+		 FROM exchanges
+		 GROUP BY session_id
+		 ORDER BY MAX(timestamp) DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SessionStat
+	for rows.Next() {
+		var s SessionStat
+		var totalInputCost, totalOutputCost sql.NullFloat64
+		if err := rows.Scan(&s.SessionID, &s.SessionName, &s.ExchangeCount,
+			&s.TotalInputTokens, &s.TotalOutputTokens, &s.TotalCost,
+			&totalInputCost, &totalOutputCost, &s.LastUpdated); err != nil {
+			return nil, err
+		}
+		if totalInputCost.Valid {
+			s.TotalInputCost = &totalInputCost.Float64
+		}
+		if totalOutputCost.Valid {
+			s.TotalOutputCost = &totalOutputCost.Float64
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// GetDailyCosts returns daily cost totals for the last `days` days
+// (local-time bucketed), oldest first.
+func (db *DB) GetDailyCosts(ctx context.Context, days int) ([]DailyCost, error) {
+	cutoff := float64(time.Now().AddDate(0, 0, -days).Unix())
+	rows, err := db.sql.QueryContext(ctx,
+		`SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+		        SUM(COALESCE(cost, 0))
+		 FROM exchanges
+		 WHERE timestamp >= ?
+		 GROUP BY day
+		 ORDER BY day`,
+		cutoff,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DailyCost
+	for rows.Next() {
+		var d DailyCost
+		if err := rows.Scan(&d.Day, &d.DailyCost); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DeleteExchanges deletes all exchanges, or only those for a specific
+// session (sessionID == "" deletes everything). Returns the number of rows
+// deleted.
+func (db *DB) DeleteExchanges(ctx context.Context, sessionID string) (int64, error) {
+	var res sql.Result
+	var err error
+	if sessionID != "" {
+		res, err = db.sql.ExecContext(ctx, "DELETE FROM exchanges WHERE session_id = ?", sessionID)
+	} else {
+		res, err = db.sql.ExecContext(ctx, "DELETE FROM exchanges")
+	}
+	if err != nil {
+		slog.Error("delete exchanges failed", "error", err, "session_id", sessionID)
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func roundedOrNil(v sql.NullFloat64, decimals int) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	mult := math.Pow(10, float64(decimals))
+	r := math.Round(v.Float64*mult) / mult
+	return &r
+}
+
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func derefInt(i *int) int {
+	if i == nil {
+		return 0
+	}
+	return *i
+}
+
+func derefFloat(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
+}
