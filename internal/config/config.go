@@ -30,15 +30,15 @@ func Load() (Config, error) {
 	loadDotEnv()
 
 	cfg := Config{
-		ProxyAddr: getEnv("PROXY_ADDR", ":7801"),
-		AdminAddr: getEnv("ADMIN_ADDR", ":7802"),
+		ProxyAddr: getEnv("CLENS_PROXY_ADDR", ":7801"),
+		AdminAddr: getEnv("CLENS_ADMIN_ADDR", ":7802"),
 
-		AnthropicBaseURL:       strings.TrimRight(getEnv("PROXY_ANTHROPIC_BASE_URL", defaultAnthropicBaseURL), "/"),
-		AnthropicAuthToken:     getEnv("PROXY_ANTHROPIC_AUTH_TOKEN", ""),
-		AnthropicCustomHeaders: getEnv("PROXY_ANTHROPIC_CUSTOM_HEADERS", ""),
+		AnthropicBaseURL:       strings.TrimRight(getEnv("CLENS_PROXY_BASE_URL", defaultAnthropicBaseURL), "/"),
+		AnthropicAuthToken:     getEnv("CLENS_PROXY_AUTH_TOKEN", ""),
+		AnthropicCustomHeaders: getEnv("CLENS_PROXY_CUSTOM_HEADERS", ""),
 
-		DataDir: getEnv("DATA_DIR", "data"),
-		LogDir:  getEnv("LOG_DIR", "logs"),
+		DataDir: getEnv("CLENS_DATA_DIR", "data"),
+		LogDir:  getEnv("CLENS_LOG_DIR", "logs"),
 	}
 	cfg.DBPath = filepath.Join(cfg.DataDir, "claude-lens.db")
 

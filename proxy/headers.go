@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ParseCustomHeaders parses PROXY_ANTHROPIC_CUSTOM_HEADERS: newline-separated
+// ParseCustomHeaders parses CLENS_PROXY_CUSTOM_HEADERS: newline-separated
 // "Header-Name: value" lines. Blank lines are skipped. A malformed line (no
 // colon, or an empty name/value) is an error — this only ever runs once at
 // startup against operator-supplied config, so failing loudly beats silently
@@ -21,12 +21,12 @@ func ParseCustomHeaders(raw string) (map[string]string, error) {
 		}
 		name, value, ok := strings.Cut(line, ":")
 		if !ok {
-			return nil, fmt.Errorf("PROXY_ANTHROPIC_CUSTOM_HEADERS must use 'Header-Name: value' format (bad line: %q)", line)
+			return nil, fmt.Errorf("CLENS_PROXY_CUSTOM_HEADERS must use 'Header-Name: value' format (bad line: %q)", line)
 		}
 		name = strings.TrimSpace(name)
 		value = strings.TrimSpace(value)
 		if name == "" || value == "" {
-			return nil, fmt.Errorf("PROXY_ANTHROPIC_CUSTOM_HEADERS contains an empty header name or value (bad line: %q)", line)
+			return nil, fmt.Errorf("CLENS_PROXY_CUSTOM_HEADERS contains an empty header name or value (bad line: %q)", line)
 		}
 		headers[name] = value
 	}

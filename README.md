@@ -1,133 +1,54 @@
 # claude-lens
 
-A transparent HTTP proxy that sits between a Claude Code client and an
-upstream Anthropic-compatible API. Every request and response is captured
-and stored in a local SQLite database, giving you a full audit trail of
-prompts, completions, token usage, and cost across sessions — with a small
-admin dashboard to browse it.
+### About
 
-`claude-lens` is a single static binary: no Docker, no separate runtime
-install. It runs two HTTP servers concurrently in one process — a reverse
-proxy and an admin UI — sharing one in-process database connection and
-health flag.
+A transparent HTTP proxy that sits between a Claude Code client and an upstream Anthropic-compatible API. Every request and response is captured and stored in a local SQLite database, giving you a full audit trail of prompts, completions, token usage, and cost across sessions — with a small admin dashboard to browse it.
 
----
+`claude-lens` is a single static binary. It runs two HTTP servers concurrently in one process — a reverse proxy and an admin UI — sharing one in-process database connection and health flag.
 
-## Getting started
+### How to use
 
-**Prerequisites:** Go 1.26+.
+To route Claude Code traffic through `claude-lens`, set the `ANTHROPIC_BASE_URL` environment variable to `http://localhost:7801`.
 
-### Development
+> If you have another proxy already in use (e.g. LiteLLM), put its URL in `CLENS_PROXY_BASE_URL` instead, and `claude-lens` will forward requests to it.
+>
+> Additional Envs like `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_CUSTOM_HEADERS` must be replaced by `CLENS_PROXY_AUTH_TOKEN` and `CLENS_PROXY_CUSTOM_HEADERS`, respectively.
 
-```sh
-cp .env.example .env    # fill in the values you need
-go run -tags dev ./cmd/claude-lens
-```
+### `claude-lens` environment variables
 
-The `dev` build tag additionally reads `.env` from the working directory on
-startup (any variable not already set in the real environment). This code
-path doesn't exist at all in a release build — see [Configuration](#configuration).
+All `claude-lens` configuration is via environment variables. They are all optional to customize behaviour.
 
-### Release build
-
-```sh
-make build               # ./bin/claude-lens, current platform
-make build-all            # linux/amd64, darwin/amd64, windows/amd64
-```
-
-or directly:
-
-```sh
-go build -o bin/claude-lens ./cmd/claude-lens
-```
-
-A release binary only ever reads real OS environment variables — set them
-via shell `export`, a systemd unit's `Environment=`/`EnvironmentFile=`, or
-similar. Run it from a working directory where `data/` and `logs/` can be
-created (or point `DATA_DIR`/`LOG_DIR` at absolute paths, see below).
-
-The **proxy** listens on `:7801` and the **admin UI** on `:7802` by
-default; both are configurable.
-
----
-
-## Configuration
-
-All configuration is via environment variables — see `.env.example` for the
-full list with defaults. None are required to start the binary.
+They all must be set in OS environment (e.g. `export VAR=value` or a systemd unit's `Environment=`/`EnvironmentFile=`). The `.env` file is only read in development builds (see [Getting started](#getting-started)).
 
 | Variable | Default | Description |
 |---|---|---|
-| `PROXY_ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Upstream API URL. Point this at a LiteLLM proxy or any other Anthropic-compatible endpoint. |
-| `PROXY_ANTHROPIC_AUTH_TOKEN` | — | If set, replaces the `Authorization` header on every forwarded request. Accepts a raw key or a full `Scheme token` value. |
-| `PROXY_ANTHROPIC_CUSTOM_HEADERS` | — | Extra headers injected into every forwarded request, one per line as `Header-Name: value`. |
-| `PROXY_ADDR` | `:7801` | Proxy server listen address. |
-| `ADMIN_ADDR` | `:7802` | Admin server listen address. |
-| `DATA_DIR` | `data` | Where the SQLite database is created. |
-| `LOG_DIR` | `logs` | Where the rotating log file is written (5MB × 3 backups). |
+| `CLENS_PROXY_BASE_URL` | `https://api.anthropic.com` | Upstream API URL. Point this at a LiteLLM proxy or any other Anthropic-compatible endpoint. |
+| `CLENS_PROXY_AUTH_TOKEN` | — | If set, replaces the `Authorization` header on every forwarded request. Accepts a raw key or a full `Scheme token` value. |
+| `CLENS_PROXY_CUSTOM_HEADERS` | — | Extra headers injected into every forwarded request, one per line as `Header-Name: value`. |
+| `CLENS_PROXY_ADDR` | `:7801` | Proxy server listen address. |
+| `CLENS_ADMIN_ADDR` | `:7802` | Admin server listen address. |
+| `CLENS_DATA_DIR` | `data` | Where the SQLite database is created. |
+| `CLENS_LOG_DIR` | `logs` | Where the rotating log file is written (5MB × 3 backups). |
 
----
+### How it works
 
-## Admin interface
+```mermaid
+graph LR
+  CC["Claude Code"] -->|Request| Proxy
 
-### JSON API
+  subgraph ClaudeLens["claude-lens"]
+    Proxy["proxy (:7801)"]
+    Admin["admin (:7802)"]
+    DB[("SQLite database")]
 
-| Endpoint | Description |
-|---|---|
-| `GET /health` | Admin liveness, in-process proxy status (`ok`/`degraded`/`unreachable`), and the build's `version` |
-| `GET /exchanges` | Paginated list of captured exchanges (`session_id`, `limit` ≤ 1000, `offset`) |
-| `GET /exchanges/:id` | Full detail for one exchange, including raw request/response bodies |
-| `DELETE /exchanges` | Delete all exchanges, or only those for a given `session_id` |
-| `GET /totals` | Aggregate token/cost totals (`session_id` filter) |
-| `GET /stream` | Server-Sent Events feed of live proxy status + totals, every 3s |
-| `GET /session-stats` | Per-session aggregates |
-| `GET /prices` | List all model price rows |
-| `PUT /prices/:prefix` | Upsert a model price row (`input_per_m`, `output_per_m` JSON body) |
-| `DELETE /prices/:prefix` | Remove a model price row |
+    Proxy -->|Save exchange| DB
+    Admin -->|Read exchange| DB
+  end
 
-### HTML dashboard
-
-`GET /` (dashboard), `GET /ui/exchanges` (paginated table with session
-filter), `GET /ui/exchanges/:id` (detail view), `GET /ui/prices` (manage
-model prices — add/edit/delete, effective immediately, no restart needed).
-
-Captured data lives in `<DATA_DIR>/claude-lens.db` (SQLite, WAL mode).
-
----
-
-## How it works
-
-Claude Code (and similar clients) sends every prompt as an HTTPS request to
-the Anthropic API. `claude-lens` sits in that path: it receives the
-request, forwards it upstream, tees the (possibly streamed) response back
-to the client while buffering it, then saves the completed exchange —
-without ever blocking or delaying what the client sees.
-
-```
-Claude Code  →  claude-lens proxy (:7801)  →  Upstream API
-                       ↓
-                 SQLite database  ←  claude-lens admin (:7802)
+  Proxy -->|Forward request| API["Upstream API"]
 ```
 
-The client requires no changes — just point it at the proxy's address
-instead of the real API.
-
-### Using with a LiteLLM proxy
-
-A common setup is to chain `claude-lens` in front of a LiteLLM proxy, to
-route traffic through multiple models while still capturing everything the
-client sends and receives:
-
-```
-Claude Code  →  claude-lens  →  LiteLLM Proxy  →  Anthropic / OpenAI / etc.
-```
-
-Set `PROXY_ANTHROPIC_BASE_URL` to your LiteLLM instance's address (e.g.
-`http://litellm:4000`). If LiteLLM requires its own key, set
-`PROXY_ANTHROPIC_AUTH_TOKEN` so the original client credentials are
-transparently replaced.
-
-### What gets captured
+#### Proxy interceptor
 
 Only POST requests are intercepted (GET/PUT/DELETE pass through
 untouched). For each one, the database records:
@@ -144,15 +65,57 @@ Streaming responses are fully supported: each chunk is forwarded to the
 client as it arrives (never buffered) while a copy is assembled for
 storage once the stream completes.
 
----
+</br>
 
-## Development
+# Development Details
+
+**Prerequisites:** Go 1.26+.
+
+### Installation
+
+Clone the repository and `cd` into it.
 
 ```sh
-go test ./...              # unit + integration tests
-go build ./...              # compile everything
+git clone
+cd claude-lens
 ```
 
-`make install-hooks` sets `core.hooksPath` to `.githooks` (installs a
-post-commit hook that bumps `version` based on the commit message's
-conventional-commit prefix).
+Configure the commit hooks.
+
+```sh
+make install-hooks
+```
+
+Install dependencies.
+
+```sh
+go mod download
+```
+
+Create a `.env` file in the project root, based on `.env.example`, and fill in any values you want to override.
+
+```sh
+cp .env.example .env
+```
+
+### Running
+
+Run the project in terminal (with hot reload on file changes).
+
+> The `dev` build tag reads `.env` from the working directory on startup.
+
+```sh
+go run -tags dev ./cmd/claude-lens
+```
+
+Run tests.
+
+```sh
+go test ./...
+```
+
+Run with race detection (useful for debugging data races).
+
+```sh
+go test -race ./...
+```

@@ -53,7 +53,7 @@ type Handler struct {
 }
 
 // NewHandler builds a Handler. It fails only if
-// PROXY_ANTHROPIC_CUSTOM_HEADERS or PROXY_ANTHROPIC_BASE_URL is malformed.
+// CLENS_PROXY_CUSTOM_HEADERS or CLENS_PROXY_BASE_URL is malformed.
 func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag) (*Handler, error) {
 	customHeaders, err := ParseCustomHeaders(cfg.AnthropicCustomHeaders)
 	if err != nil {
