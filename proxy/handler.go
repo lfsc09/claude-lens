@@ -1,0 +1,221 @@
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/lfsc09/claude-lens/internal/config"
+	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/parsing"
+	"github.com/lfsc09/claude-lens/internal/pricing"
+	"github.com/lfsc09/claude-lens/internal/status"
+)
+
+// exchangeMeta carries per-request state from Director to ModifyResponse —
+// httputil.ReverseProxy gives no other hook for passing data between the
+// two, so it rides the outbound request's context (resp.Request is the same
+// *http.Request Director mutated, per net/http.Transport's contract of
+// setting Response.Request to the request it sent).
+type exchangeMeta struct {
+	intercept     bool
+	sessionID     string
+	sessionName   *string
+	path          string
+	timestamp     float64
+	rawRequest    string
+	inputMessages *string
+	isStreaming   bool
+	model         *string
+}
+
+type metaKey struct{}
+
+// Handler is an http.Handler that reverse-proxies to the configured
+// Anthropic base URL, intercepting POST requests to record an exchange.
+type Handler struct {
+	cfg           config.Config
+	db            *database.DB
+	estimator     *pricing.Estimator
+	status        *status.Flag
+	customHeaders map[string]string
+	target        *url.URL
+	rp            *httputil.ReverseProxy
+}
+
+// NewHandler builds a Handler. It fails only if
+// PROXY_ANTHROPIC_CUSTOM_HEADERS or PROXY_ANTHROPIC_BASE_URL is malformed.
+func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag) (*Handler, error) {
+	customHeaders, err := ParseCustomHeaders(cfg.AnthropicCustomHeaders)
+	if err != nil {
+		return nil, err
+	}
+
+	target, err := url.Parse(cfg.AnthropicBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	h := &Handler{
+		cfg:           cfg,
+		db:            db,
+		estimator:     estimator,
+		status:        st,
+		customHeaders: customHeaders,
+		target:        target,
+	}
+
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout: 10 * time.Second,
+		}).DialContext,
+		ResponseHeaderTimeout: 300 * time.Second,
+	}
+
+	h.rp = &httputil.ReverseProxy{
+		Director:       h.director,
+		ModifyResponse: h.modifyResponse,
+		ErrorHandler:   h.errorHandler,
+		Transport:      transport,
+		// Flush after every write, unconditionally — Anthropic's streaming
+		// responses are SSE, but don't rely on ReverseProxy's default
+		// content-type sniff to catch that; a buffered stream defeats the
+		// entire point of this proxy.
+		FlushInterval: -1,
+	}
+
+	return h, nil
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.rp.ServeHTTP(w, r)
+}
+
+func (h *Handler) director(r *http.Request) {
+	originalPath := r.URL.Path
+
+	r.URL.Scheme = h.target.Scheme
+	r.URL.Host = h.target.Host
+	r.URL.Path = h.target.Path + originalPath
+	r.Host = h.target.Host
+
+	if h.cfg.AnthropicAuthToken != "" {
+		SetHeader(r.Header, "Authorization", FormatAuthHeader(h.cfg.AnthropicAuthToken))
+	}
+	for name, value := range h.customHeaders {
+		SetHeader(r.Header, name, value)
+	}
+
+	meta := &exchangeMeta{path: originalPath}
+
+	if r.Method == http.MethodPost {
+		meta.intercept = true
+		meta.sessionID = SanitizeSessionID(firstNonEmpty(
+			r.Header.Get("x-claude-code-session-id"),
+			r.Header.Get("x-session-id"),
+			"default_session",
+		))
+		if name := r.Header.Get("x-session-name"); name != "" {
+			meta.sessionName = &name
+		}
+		meta.timestamp = float64(time.Now().UnixNano()) / 1e9
+
+		body, err := io.ReadAll(r.Body)
+		r.Body.Close()
+		if err != nil {
+			slog.Error("failed to read request body, forwarding without interception", "error", err, "path", originalPath)
+			meta.intercept = false
+			r.Body = http.NoBody
+		} else {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			meta.rawRequest = string(body)
+			meta.inputMessages, meta.isStreaming, meta.model = parsing.ExtractRequestFields(body)
+		}
+	}
+
+	*r = *r.WithContext(context.WithValue(r.Context(), metaKey{}, meta))
+}
+
+func (h *Handler) modifyResponse(resp *http.Response) error {
+	h.status.Set(status.OK)
+
+	meta, _ := resp.Request.Context().Value(metaKey{}).(*exchangeMeta)
+	if meta == nil || !meta.intercept {
+		return nil
+	}
+
+	resp.Body = newTeeReadCloser(resp.Body, func(raw []byte) {
+		go h.saveExchange(meta, raw)
+	})
+	return nil
+}
+
+func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
+	ctx := context.Background()
+
+	outputText, inputTokens, outputTokens := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
+
+	var inputCost, outputCost *float64
+	if meta.model != nil && inputTokens != nil && outputTokens != nil {
+		ic, oc, ok := h.estimator.EstimateCosts(*meta.model, *inputTokens, *outputTokens)
+		if ok {
+			inputCost, outputCost = &ic, &oc
+		}
+	}
+
+	err := h.db.SaveExchange(ctx, database.Exchange{
+		SessionID:     meta.sessionID,
+		SessionName:   meta.sessionName,
+		Path:          meta.path,
+		Timestamp:     meta.timestamp,
+		IsStreaming:   meta.isStreaming,
+		InputMessages: meta.inputMessages,
+		RawRequest:    meta.rawRequest,
+		RawResponse:   strings.ToValidUTF8(string(rawResponse), "�"),
+		OutputText:    outputText,
+		InputTokens:   inputTokens,
+		OutputTokens:  outputTokens,
+		Model:         meta.model,
+		InputCost:     inputCost,
+		OutputCost:    outputCost,
+	})
+	if err != nil {
+		slog.Error("failed to save exchange", "error", err, "session_id", meta.sessionID, "path", meta.path)
+	}
+}
+
+func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, context.Canceled) {
+		return // client disconnected; nothing to write back
+	}
+
+	h.status.Set(status.Degraded)
+	slog.Error("forward to upstream failed", "error", err, "url", r.URL.String())
+
+	var netErr net.Error
+	switch {
+	case errors.As(err, &netErr) && netErr.Timeout():
+		http.Error(w, "Gateway Timeout: upstream did not respond in time", http.StatusGatewayTimeout)
+	case errors.As(err, &netErr):
+		http.Error(w, "Bad Gateway: upstream connection failed", http.StatusBadGateway)
+	default:
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}

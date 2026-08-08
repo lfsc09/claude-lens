@@ -39,6 +39,8 @@ go.work.sum
 !/.vscode/
 !/.vscode/**
 !/cmd
-!/mocker
+!/cmd/**
 !/internal
 !/internal/**
+!/proxy
+!/proxy/**
