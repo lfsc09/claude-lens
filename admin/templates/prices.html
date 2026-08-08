@@ -2,9 +2,8 @@
 {{ define "content" }}
 <h1 class="text-xl font-semibold mb-6">Model prices</h1>
 <p class="text-sm text-gray-500 mb-6">
-  Prices are USD per million tokens. A model is matched against the longest
-  prefix here that matches the model name returned by the API — changes take
-  effect immediately, no restart needed.
+  Prices are USD per million tokens. A model is matched against the longest prefix here that matches the model name
+  returned by the API — changes apply only to new requests.
 </p>
 
 <div class="bg-white rounded-lg border border-gray-200 overflow-x-auto mb-8">
@@ -24,18 +23,21 @@
       <tr class="hover:bg-gray-50">
         <td class="px-4 py-2 font-mono text-xs">{{ $price.Prefix }}</td>
         <td class="px-4 py-2 text-right">
-          <input form="{{ $formID }}" type="number" step="0.01" min="0" name="input_per_m" value="{{ $price.InputPerM }}"
+          <input form="{{ $formID }}" type="number" step="0.01" min="0" name="input_per_m"
+            value="{{ $price.InputPerM }}"
             class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-blue-500">
         </td>
         <td class="px-4 py-2 text-right">
-          <input form="{{ $formID }}" type="number" step="0.01" min="0" name="output_per_m" value="{{ $price.OutputPerM }}"
+          <input form="{{ $formID }}" type="number" step="0.01" min="0" name="output_per_m"
+            value="{{ $price.OutputPerM }}"
             class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-blue-500">
         </td>
         <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime $price.UpdatedAt }}</td>
         <td class="px-4 py-2 text-right whitespace-nowrap">
-          <form id="{{ $formID }}" method="post" action="{{ printf "/ui/prices/%s" $price.Prefix }}" class="hidden"></form>
+          <form id="{{ $formID }}" method="post" action="{{ printf " /ui/prices/%s" $price.Prefix }}" class="hidden">
+          </form>
           <button form="{{ $formID }}" type="submit" class="text-sm text-blue-600 hover:underline mr-3">Save</button>
-          <form method="post" action="{{ printf "/ui/prices/%s/delete" $price.Prefix }}" class="inline"
+          <form method="post" action="{{ printf " /ui/prices/%s/delete" $price.Prefix }}" class="inline"
             onsubmit="return confirm('Delete price for {{ $price.Prefix }}?')">
             <button type="submit" class="text-sm text-red-500 hover:text-red-700 hover:underline">Delete</button>
           </form>
@@ -51,7 +53,8 @@
 </div>
 
 <h2 class="text-base font-semibold mb-3">Add a model price</h2>
-<form method="post" action="{{ urlFor "ui_prices" }}" class="bg-white rounded-lg border border-gray-200 p-4 flex flex-wrap gap-3 items-end">
+<form method="post" action="{{ urlFor " ui_prices" }}"
+  class="bg-white rounded-lg border border-gray-200 p-4 flex flex-wrap gap-3 items-end">
   <div>
     <label class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Model prefix</label>
     <input type="text" name="model_prefix" required placeholder="claude-sonnet-5"

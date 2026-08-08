@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/config"
@@ -50,6 +51,12 @@ type Handler struct {
 	target        *url.URL
 	rp            *httputil.ReverseProxy
 	logger        *slog.Logger
+
+	// saveWG tracks saveExchange goroutines still writing to the database,
+	// so Server.Run can drain them before the process exits instead of
+	// dropping the last exchange of a request that completed right as
+	// shutdown began.
+	saveWG sync.WaitGroup
 }
 
 // NewHandler builds a Handler. It fails only if
@@ -109,6 +116,16 @@ func (h *Handler) director(r *http.Request) {
 	r.URL.Path = h.target.Path + originalPath
 	r.Host = h.target.Host
 
+	// The client's Accept-Encoding (Claude Code asks for gzip/br) would
+	// otherwise ride straight through to upstream. http.Transport only
+	// auto-decompresses gzip when it picks the encoding itself — if this
+	// header survives, Anthropic replies compressed (often brotli, which
+	// Go never decodes) and every downstream read, including the
+	// tee'd copy used for parsing tokens/output text, gets raw compressed
+	// bytes instead of text. Stripping it lets Transport negotiate and
+	// transparently undo gzip on its own.
+	r.Header.Del("Accept-Encoding")
+
 	if h.cfg.AnthropicAuthToken != "" {
 		SetHeader(r.Header, "Authorization", FormatAuthHeader(h.cfg.AnthropicAuthToken))
 	}
@@ -154,10 +171,30 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 		return nil
 	}
 
+	h.saveWG.Add(1)
 	resp.Body = newTeeReadCloser(resp.Body, func(raw []byte) {
-		go h.saveExchange(meta, raw)
+		go func() {
+			defer h.saveWG.Done()
+			h.saveExchange(meta, raw)
+		}()
 	})
 	return nil
+}
+
+// waitForSaves blocks until every in-flight saveExchange goroutine has
+// finished, or timeout elapses first — bounded so a stuck database write
+// (past SQLite's own busy_timeout) can't hang shutdown forever.
+func (h *Handler) waitForSaves(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		h.saveWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		h.logger.Warn("timed out waiting for in-flight exchange saves during shutdown")
+	}
 }
 
 func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {

@@ -67,7 +67,12 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		s.logger.Info("proxy server shutting down")
-		return srv.Shutdown(shutdownCtx)
+		err := srv.Shutdown(shutdownCtx)
+		// Shutdown only waits for in-flight HTTP handlers to return, not for
+		// the detached saveExchange goroutines they kicked off — drain those
+		// too so the last exchange before shutdown isn't silently dropped.
+		s.handler.waitForSaves(5 * time.Second)
+		return err
 	case err := <-errCh:
 		s.status.Set(status.Unreachable)
 		return err

@@ -2,9 +2,11 @@ package proxy
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -172,6 +174,95 @@ func TestNonStreamingPOST_SavesExchangeWithCost(t *testing.T) {
 	// claude-sonnet-5 is seeded at $3/$15 per million tokens; 1M in + 1M out.
 	if detail.Cost == nil || *detail.Cost != 18.0 {
 		t.Errorf("Cost = %v, want 18.0", detail.Cost)
+	}
+}
+
+// TestUpstreamGzipResponse_IsDecompressedBeforeParsing proves the client's
+// Accept-Encoding header is stripped before forwarding upstream: if it
+// weren't, an upstream that compresses based on the client's preference
+// (as Anthropic does) would hand the tee'd copy raw gzip bytes, and
+// parsing.ExtractResponseFields would silently fail to find any tokens.
+func TestUpstreamGzipResponse_IsDecompressedBeforeParsing(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ae := r.Header.Get("Accept-Encoding"); ae != "gzip" {
+			t.Errorf("upstream saw Accept-Encoding = %q, want exactly \"gzip\" (client's original value must be stripped)", ae)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		io.WriteString(gz, `{"content":[{"type":"text","text":"hi there"}],"usage":{"input_tokens":7,"output_tokens":3}}`)
+		gz.Close()
+	}))
+	defer upstream.Close()
+
+	h, db := newTestHandler(t, upstream.URL)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-session-id", "sess-gzip")
+	req.Header.Set("Accept-Encoding", "gzip, br")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "hi there") {
+		t.Fatalf("client did not receive decompressed body: %q", body)
+	}
+
+	waitForExchangeCount(t, db, "sess-gzip", 1)
+	detail := mustGetExchange(t, db, "sess-gzip")
+	if detail.OutputText == nil || *detail.OutputText != "hi there" {
+		t.Errorf("OutputText = %v, want %q", detail.OutputText, "hi there")
+	}
+	if detail.InputTokens == nil || *detail.InputTokens != 7 {
+		t.Errorf("InputTokens = %v, want 7", detail.InputTokens)
+	}
+	if detail.OutputTokens == nil || *detail.OutputTokens != 3 {
+		t.Errorf("OutputTokens = %v, want 3", detail.OutputTokens)
+	}
+}
+
+// TestHandler_WaitForSaves proves waitForSaves blocks until an in-flight
+// saveExchange goroutine actually finishes, rather than returning as soon as
+// it's called — the whole point of draining saveWG during shutdown.
+func TestHandler_WaitForSaves(t *testing.T) {
+	h := &Handler{logger: slog.Default().With("component", "proxy")}
+
+	h.saveWG.Add(1)
+	var finished bool
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		finished = true
+		h.saveWG.Done()
+	}()
+
+	h.waitForSaves(2 * time.Second)
+
+	if !finished {
+		t.Error("waitForSaves returned before the in-flight save finished")
+	}
+}
+
+// TestHandler_WaitForSaves_TimesOut proves a stuck save can't hang shutdown
+// forever — waitForSaves gives up once its timeout elapses.
+func TestHandler_WaitForSaves_TimesOut(t *testing.T) {
+	h := &Handler{logger: slog.Default().With("component", "proxy")}
+	h.saveWG.Add(1) // never Done() — simulates a write that never completes
+
+	start := time.Now()
+	h.waitForSaves(50 * time.Millisecond)
+	elapsed := time.Since(start)
+
+	if elapsed < 50*time.Millisecond {
+		t.Errorf("waitForSaves returned after %v, want at least its 50ms timeout", elapsed)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("waitForSaves returned after %v, want close to its 50ms timeout", elapsed)
 	}
 }
 
