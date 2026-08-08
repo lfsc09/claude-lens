@@ -20,6 +20,7 @@ type handlers struct {
 	est    *pricing.Estimator
 	status *status.Flag
 	pages  map[string]*template.Template
+	logger *slog.Logger
 }
 
 // render executes the named page template (see ParseTemplates — each page
@@ -28,14 +29,14 @@ type handlers struct {
 func (h *handlers) render(c *gin.Context, status int, page string, data any) {
 	tmpl, ok := h.pages[page]
 	if !ok {
-		slog.Error("no such page template", "page", page)
+		h.logger.Error("no such page template", "page", page)
 		c.Status(http.StatusInternalServerError)
 		return
 	}
 	c.Status(status)
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(c.Writer, page, data); err != nil {
-		slog.Error("template render failed", "page", page, "error", err)
+		h.logger.Error("template render failed", "page", page, "error", err)
 	}
 }
 
@@ -127,7 +128,7 @@ func (h *handlers) resetExchanges(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	slog.Info("reset exchanges", "deleted", n, "session_id", sessionID)
+	h.logger.Info("reset exchanges", "deleted", n, "session_id", sessionID)
 	c.JSON(http.StatusOK, gin.H{"deleted": n})
 }
 

@@ -49,6 +49,7 @@ type Handler struct {
 	customHeaders map[string]string
 	target        *url.URL
 	rp            *httputil.ReverseProxy
+	logger        *slog.Logger
 }
 
 // NewHandler builds a Handler. It fails only if
@@ -71,6 +72,7 @@ func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator
 		status:        st,
 		customHeaders: customHeaders,
 		target:        target,
+		logger:        slog.Default().With("component", "proxy"),
 	}
 
 	transport := &http.Transport{
@@ -131,7 +133,7 @@ func (h *Handler) director(r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		r.Body.Close()
 		if err != nil {
-			slog.Error("failed to read request body, forwarding without interception", "error", err, "path", originalPath)
+			h.logger.Error("failed to read request body, forwarding without interception", "error", err, "path", originalPath)
 			meta.intercept = false
 			r.Body = http.NoBody
 		} else {
@@ -188,7 +190,7 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 		OutputCost:    outputCost,
 	})
 	if err != nil {
-		slog.Error("failed to save exchange", "error", err, "session_id", meta.sessionID, "path", meta.path)
+		h.logger.Error("failed to save exchange", "error", err, "session_id", meta.sessionID, "path", meta.path)
 	}
 }
 
@@ -198,7 +200,7 @@ func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error
 	}
 
 	h.status.Set(status.Degraded)
-	slog.Error("forward to upstream failed", "error", err, "url", r.URL.String())
+	h.logger.Error("forward to upstream failed", "error", err, "url", r.URL.String())
 
 	var netErr net.Error
 	switch {

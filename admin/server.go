@@ -19,6 +19,7 @@ import (
 // Server runs the admin HTTP listener.
 type Server struct {
 	engine *gin.Engine
+	logger *slog.Logger
 }
 
 // NewServer builds a Server with the JSON API and HTML UI routes
@@ -34,10 +35,11 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) (*Serve
 		return nil, err
 	}
 
-	h := &handlers{db: db, est: est, status: st, pages: pages}
+	logger := slog.Default().With("component", "admin")
+	h := &handlers{db: db, est: est, status: st, pages: pages, logger: logger}
 
 	r := gin.New()
-	r.Use(gin.Recovery(), slogMiddleware())
+	r.Use(gin.Recovery(), slogMiddleware(logger))
 
 	// JSON API
 	r.GET("/health", h.health)
@@ -62,7 +64,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag) (*Serve
 	r.POST("/ui/prices/:prefix/delete", h.uiDeletePrice)
 	r.NoRoute(h.notFound)
 
-	return &Server{engine: r}, nil
+	return &Server{engine: r, logger: logger}, nil
 }
 
 // Run serves on addr until ctx is done, then gracefully shuts down.
@@ -77,7 +79,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("admin server listening", "addr", addr)
+		s.logger.Info("admin server listening", "addr", addr)
 		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
@@ -90,18 +92,18 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		slog.Info("admin server shutting down")
+		s.logger.Info("admin server shutting down")
 		return srv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		return err
 	}
 }
 
-func slogMiddleware() gin.HandlerFunc {
+func slogMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
-		slog.Info("request",
+		logger.Info("request",
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
 			"status", c.Writer.Status(),

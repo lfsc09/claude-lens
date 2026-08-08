@@ -1,12 +1,22 @@
-// Command claude-lens runs the proxy and admin servers.
+// Command claude-lens runs the proxy and admin servers as goroutines in a
+// single process, sharing one *database.DB and one status.Flag.
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
+	"github.com/lfsc09/claude-lens/admin"
 	"github.com/lfsc09/claude-lens/internal/config"
+	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/logging"
+	"github.com/lfsc09/claude-lens/internal/pricing"
+	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/proxy"
 )
 
 func main() {
@@ -18,5 +28,68 @@ func main() {
 
 	logging.Setup(cfg)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := database.Open(ctx, cfg.DBPath)
+	if err != nil {
+		slog.Error("failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	est := pricing.New(db)
+	if err := est.Refresh(ctx); err != nil {
+		slog.Error("failed to load model prices", "error", err)
+		os.Exit(1)
+	}
+
+	st := status.New()
+
+	proxySrv, err := proxy.NewServer(cfg, db, est, st)
+	if err != nil {
+		slog.Error("failed to build proxy server", "error", err)
+		os.Exit(1)
+	}
+
+	adminSrv, err := admin.NewServer(db, est, st)
+	if err != nil {
+		slog.Error("failed to build admin server", "error", err)
+		os.Exit(1)
+	}
+
 	slog.Info("starting", "proxy_addr", cfg.ProxyAddr, "admin_addr", cfg.AdminAddr)
+
+	var proxyErr, adminErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		// stop() also cancels ctx (see signal.NotifyContext), so if this
+		// server exits for its own reason (e.g. a startup failure) before
+		// a shutdown signal arrives, the other server unblocks and shuts
+		// down too instead of running on its own indefinitely.
+		defer stop()
+		proxyErr = proxySrv.Run(ctx, cfg.ProxyAddr)
+	}()
+	go func() {
+		defer wg.Done()
+		defer stop()
+		adminErr = adminSrv.Run(ctx, cfg.AdminAddr)
+	}()
+
+	<-ctx.Done()
+	slog.Info("shutdown signal received, shutting down")
+	wg.Wait()
+
+	exitCode := 0
+	if proxyErr != nil {
+		slog.Error("proxy server exited with error", "error", proxyErr)
+		exitCode = 1
+	}
+	if adminErr != nil {
+		slog.Error("admin server exited with error", "error", adminErr)
+		exitCode = 1
+	}
+	os.Exit(exitCode)
 }

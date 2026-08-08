@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -107,7 +106,7 @@ func (h *handlers) uiReset(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "internal error")
 		return
 	}
-	slog.Info("reset exchanges", "deleted", n, "session_id", sessionID)
+	h.logger.Info("reset exchanges", "deleted", n, "session_id", sessionID)
 
 	redirectURL, err := urlFor("ui_exchanges", "session_id", sessionID)
 	if err != nil {

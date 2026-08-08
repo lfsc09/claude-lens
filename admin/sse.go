@@ -3,7 +3,6 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -44,11 +43,11 @@ func (h *handlers) sseStream(c *gin.Context) {
 	for {
 		payload, err := h.buildSSEPayload(c.Request.Context())
 		if err != nil {
-			slog.Error("failed to build SSE payload", "error", err)
+			h.logger.Error("failed to build SSE payload", "error", err)
 		} else {
 			b, err := json.Marshal(payload)
 			if err != nil {
-				slog.Error("failed to marshal SSE payload", "error", err)
+				h.logger.Error("failed to marshal SSE payload", "error", err)
 			} else {
 				c.Writer.WriteString("data: ")
 				c.Writer.Write(b)

@@ -22,6 +22,7 @@ import (
 type Server struct {
 	handler *Handler
 	status  *status.Flag
+	logger  *slog.Logger
 }
 
 // NewServer builds a Server. See NewHandler for the possible config errors.
@@ -30,7 +31,7 @@ func NewServer(cfg config.Config, db *database.DB, estimator *pricing.Estimator,
 	if err != nil {
 		return nil, err
 	}
-	return &Server{handler: h, status: st}, nil
+	return &Server{handler: h, status: st, logger: slog.Default().With("component", "proxy")}, nil
 }
 
 // Run serves on addr until ctx is done, then gracefully shuts down.
@@ -50,7 +51,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("proxy server listening", "addr", addr)
+		s.logger.Info("proxy server listening", "addr", addr)
 		s.status.Set(status.OK)
 		err := srv.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -65,7 +66,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 		s.status.Set(status.Unreachable)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		slog.Info("proxy server shutting down")
+		s.logger.Info("proxy server shutting down")
 		return srv.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		s.status.Set(status.Unreachable)
