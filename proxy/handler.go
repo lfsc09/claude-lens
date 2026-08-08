@@ -200,31 +200,48 @@ func (h *Handler) waitForSaves(timeout time.Duration) {
 func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
-	outputText, inputTokens, outputTokens := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
+	outputText, usage := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
 
-	var inputCost, outputCost *float64
-	if meta.model != nil && inputTokens != nil && outputTokens != nil {
-		ic, oc, ok := h.estimator.EstimateCosts(*meta.model, *inputTokens, *outputTokens)
+	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
+	if meta.model != nil && usage.InputTokens != nil && usage.OutputTokens != nil {
+		cacheCreationTokens, cacheReadTokens := 0, 0
+		if usage.CacheCreationTokens != nil {
+			cacheCreationTokens = *usage.CacheCreationTokens
+		}
+		if usage.CacheReadTokens != nil {
+			cacheReadTokens = *usage.CacheReadTokens
+		}
+		costs, ok := h.estimator.EstimateCosts(*meta.model, *usage.InputTokens, *usage.OutputTokens, cacheCreationTokens, cacheReadTokens)
 		if ok {
-			inputCost, outputCost = &ic, &oc
+			inputCost, outputCost = &costs.InputCost, &costs.OutputCost
+			if usage.CacheCreationTokens != nil {
+				cacheCreationCost = &costs.CacheCreationCost
+			}
+			if usage.CacheReadTokens != nil {
+				cacheReadCost = &costs.CacheReadCost
+			}
 		}
 	}
 
 	err := h.db.SaveExchange(ctx, database.Exchange{
-		SessionID:     meta.sessionID,
-		SessionName:   meta.sessionName,
-		Path:          meta.path,
-		Timestamp:     meta.timestamp,
-		IsStreaming:   meta.isStreaming,
-		InputMessages: meta.inputMessages,
-		RawRequest:    meta.rawRequest,
-		RawResponse:   strings.ToValidUTF8(string(rawResponse), "�"),
-		OutputText:    outputText,
-		InputTokens:   inputTokens,
-		OutputTokens:  outputTokens,
-		Model:         meta.model,
-		InputCost:     inputCost,
-		OutputCost:    outputCost,
+		SessionID:           meta.sessionID,
+		SessionName:         meta.sessionName,
+		Path:                meta.path,
+		Timestamp:           meta.timestamp,
+		IsStreaming:         meta.isStreaming,
+		InputMessages:       meta.inputMessages,
+		RawRequest:          meta.rawRequest,
+		RawResponse:         strings.ToValidUTF8(string(rawResponse), "�"),
+		OutputText:          outputText,
+		InputTokens:         usage.InputTokens,
+		OutputTokens:        usage.OutputTokens,
+		CacheCreationTokens: usage.CacheCreationTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		Model:               meta.model,
+		InputCost:           inputCost,
+		OutputCost:          outputCost,
+		CacheCreationCost:   cacheCreationCost,
+		CacheReadCost:       cacheReadCost,
 	})
 	if err != nil {
 		h.logger.Error("failed to save exchange", "error", err, "session_id", meta.sessionID, "path", meta.path)

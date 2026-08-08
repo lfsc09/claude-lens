@@ -12,79 +12,95 @@ import (
 
 // Exchange is a row to be written after a proxied request/response completes.
 type Exchange struct {
-	SessionID     string
-	SessionName   *string
-	Path          string
-	Timestamp     float64
-	IsStreaming   bool
-	InputMessages *string
-	RawRequest    string
-	RawResponse   string
-	OutputText    *string
-	InputTokens   *int
-	OutputTokens  *int
-	Model         *string
-	InputCost     *float64
-	OutputCost    *float64
+	SessionID           string
+	SessionName         *string
+	Path                string
+	Timestamp           float64
+	IsStreaming         bool
+	InputMessages       *string
+	RawRequest          string
+	RawResponse         string
+	OutputText          *string
+	InputTokens         *int
+	OutputTokens        *int
+	CacheCreationTokens *int
+	CacheReadTokens     *int
+	Model               *string
+	InputCost           *float64
+	OutputCost          *float64
+	CacheCreationCost   *float64
+	CacheReadCost       *float64
 }
 
 // ExchangeSummary is a row as listed in the exchanges table/dashboard (no
 // request/response bodies). JSON field names match the old Python version's
 // dict keys (the raw SQL column names).
 type ExchangeSummary struct {
-	ID           int64    `json:"id"`
-	SessionID    string   `json:"session_id"`
-	SessionName  *string  `json:"session_name"`
-	Path         string   `json:"path"`
-	Timestamp    float64  `json:"timestamp"`
-	IsStreaming  bool     `json:"is_streaming"`
-	InputTokens  *int     `json:"input_tokens"`
-	OutputTokens *int     `json:"output_tokens"`
-	Model        *string  `json:"model"`
-	Cost         *float64 `json:"cost"`
+	ID                  int64    `json:"id"`
+	SessionID           string   `json:"session_id"`
+	SessionName         *string  `json:"session_name"`
+	Path                string   `json:"path"`
+	Timestamp           float64  `json:"timestamp"`
+	IsStreaming         bool     `json:"is_streaming"`
+	InputTokens         *int     `json:"input_tokens"`
+	OutputTokens        *int     `json:"output_tokens"`
+	CacheCreationTokens *int     `json:"cache_creation_tokens"`
+	CacheReadTokens     *int     `json:"cache_read_tokens"`
+	Model               *string  `json:"model"`
+	Cost                *float64 `json:"cost"`
 }
 
 // ExchangeDetail is a full exchange row, including request/response bodies.
 type ExchangeDetail struct {
-	ID            int64    `json:"id"`
-	SessionID     string   `json:"session_id"`
-	SessionName   *string  `json:"session_name"`
-	Path          string   `json:"path"`
-	Timestamp     float64  `json:"timestamp"`
-	IsStreaming   bool     `json:"is_streaming"`
-	InputMessages *string  `json:"input_messages"`
-	OutputText    *string  `json:"output_text"`
-	InputTokens   *int     `json:"input_tokens"`
-	OutputTokens  *int     `json:"output_tokens"`
-	Model         *string  `json:"model"`
-	Cost          *float64 `json:"cost"`
-	InputCost     *float64 `json:"input_cost"`
-	OutputCost    *float64 `json:"output_cost"`
-	RawRequest    *string  `json:"raw_request"`
-	RawResponse   *string  `json:"raw_response"`
+	ID                  int64    `json:"id"`
+	SessionID           string   `json:"session_id"`
+	SessionName         *string  `json:"session_name"`
+	Path                string   `json:"path"`
+	Timestamp           float64  `json:"timestamp"`
+	IsStreaming         bool     `json:"is_streaming"`
+	InputMessages       *string  `json:"input_messages"`
+	OutputText          *string  `json:"output_text"`
+	InputTokens         *int     `json:"input_tokens"`
+	OutputTokens        *int     `json:"output_tokens"`
+	CacheCreationTokens *int     `json:"cache_creation_tokens"`
+	CacheReadTokens     *int     `json:"cache_read_tokens"`
+	Model               *string  `json:"model"`
+	Cost                *float64 `json:"cost"`
+	InputCost           *float64 `json:"input_cost"`
+	OutputCost          *float64 `json:"output_cost"`
+	CacheCreationCost   *float64 `json:"cache_creation_cost"`
+	CacheReadCost       *float64 `json:"cache_read_cost"`
+	RawRequest          *string  `json:"raw_request"`
+	RawResponse         *string  `json:"raw_response"`
 }
 
 // Totals is an aggregate over a set of exchanges.
 type Totals struct {
-	Count             int64    `json:"count"`
-	TotalInputTokens  int64    `json:"total_input_tokens"`
-	TotalOutputTokens int64    `json:"total_output_tokens"`
-	TotalCost         *float64 `json:"total_cost"`
-	TotalInputCost    *float64 `json:"total_input_cost"`
-	TotalOutputCost   *float64 `json:"total_output_cost"`
+	Count                    int64    `json:"count"`
+	TotalInputTokens         int64    `json:"total_input_tokens"`
+	TotalOutputTokens        int64    `json:"total_output_tokens"`
+	TotalCacheCreationTokens int64    `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     int64    `json:"total_cache_read_tokens"`
+	TotalCost                *float64 `json:"total_cost"`
+	TotalInputCost           *float64 `json:"total_input_cost"`
+	TotalOutputCost          *float64 `json:"total_output_cost"`
+	TotalCacheCreationCost   *float64 `json:"total_cache_creation_cost"`
+	TotalCacheReadCost       *float64 `json:"total_cache_read_cost"`
 }
 
 // SessionStat is a per-session aggregate row.
 type SessionStat struct {
-	SessionID         string   `json:"session_id"`
-	SessionName       *string  `json:"session_name"`
-	ExchangeCount     int64    `json:"exchange_count"`
-	TotalInputTokens  int64    `json:"total_input_tokens"`
-	TotalOutputTokens int64    `json:"total_output_tokens"`
-	TotalCost         float64  `json:"total_cost"`
-	TotalInputCost    *float64 `json:"total_input_cost"`
-	TotalOutputCost   *float64 `json:"total_output_cost"`
-	LastUpdated       float64  `json:"last_updated"`
+	SessionID                string   `json:"session_id"`
+	SessionName              *string  `json:"session_name"`
+	ExchangeCount            int64    `json:"exchange_count"`
+	TotalInputTokens         int64    `json:"total_input_tokens"`
+	TotalOutputTokens        int64    `json:"total_output_tokens"`
+	TotalCacheCreationTokens int64    `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     int64    `json:"total_cache_read_tokens"`
+	TotalCost                float64  `json:"total_cost"`
+	TotalInputCost           *float64 `json:"total_input_cost"`
+	TotalOutputCost          *float64 `json:"total_output_cost"`
+	LastUpdated              float64  `json:"last_updated"`
 }
 
 // DailyCost is a daily cost total, local-time bucketed.
@@ -98,8 +114,8 @@ type DailyCost struct {
 // storage failure break the response already sent to the client.
 func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	var cost *float64
-	if e.InputCost != nil && e.OutputCost != nil {
-		c := math.Round((*e.InputCost+*e.OutputCost)*1e6) / 1e6
+	if sum, any := sumCosts(e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost); any {
+		c := math.Round(sum*1e6) / 1e6
 		cost = &c
 	}
 
@@ -107,11 +123,15 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 		`INSERT INTO exchanges
 			(session_id, session_name, path, timestamp, is_streaming,
 			 input_messages, output_text, input_tokens, output_tokens,
-			 model, cost, input_cost, output_cost, raw_request, raw_response)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 cache_creation_tokens, cache_read_tokens,
+			 model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost,
+			 raw_request, raw_response)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.SessionID, e.SessionName, e.Path, e.Timestamp, boolToInt(e.IsStreaming),
 		e.InputMessages, e.OutputText, e.InputTokens, e.OutputTokens,
-		e.Model, cost, e.InputCost, e.OutputCost, e.RawRequest, e.RawResponse,
+		e.CacheCreationTokens, e.CacheReadTokens,
+		e.Model, cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost,
+		e.RawRequest, e.RawResponse,
 	)
 	if err != nil {
 		slog.Error("save exchange failed", "error", err, "session_id", e.SessionID)
@@ -121,16 +141,32 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	slog.Info("saved exchange",
 		"session_id", e.SessionID, "path", e.Path, "model", derefStr(e.Model),
 		"input_tokens", derefInt(e.InputTokens), "output_tokens", derefInt(e.OutputTokens),
+		"cache_creation_tokens", derefInt(e.CacheCreationTokens), "cache_read_tokens", derefInt(e.CacheReadTokens),
 		"cost", derefFloat(cost), "streaming", e.IsStreaming,
 	)
 	return nil
+}
+
+// sumCosts adds together whichever of the given cost components are
+// non-nil, returning ok == false only when none of them are set (so a row
+// with no priced components at all still stores a NULL cost, matching the
+// pre-existing input+output behavior, instead of a misleading 0).
+func sumCosts(costs ...*float64) (sum float64, ok bool) {
+	for _, c := range costs {
+		if c != nil {
+			sum += *c
+			ok = true
+		}
+	}
+	return sum, ok
 }
 
 // GetExchanges returns a page of exchange summaries, newest first, optionally
 // filtered to a single session. Pass sessionID == "" for no filter.
 func (db *DB) GetExchanges(ctx context.Context, sessionID string, limit, offset int) ([]ExchangeSummary, error) {
 	query := `SELECT id, session_id, session_name, path, timestamp, is_streaming,
-	                  input_tokens, output_tokens, model, cost
+	                  input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+	                  model, cost
 	           FROM exchanges `
 	args := []any{}
 	if sessionID != "" {
@@ -151,7 +187,8 @@ func (db *DB) GetExchanges(ctx context.Context, sessionID string, limit, offset 
 		var e ExchangeSummary
 		var isStreaming int
 		if err := rows.Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp,
-			&isStreaming, &e.InputTokens, &e.OutputTokens, &e.Model, &e.Cost); err != nil {
+			&isStreaming, &e.InputTokens, &e.OutputTokens, &e.CacheCreationTokens, &e.CacheReadTokens,
+			&e.Model, &e.Cost); err != nil {
 			return nil, err
 		}
 		e.IsStreaming = isStreaming != 0
@@ -167,11 +204,15 @@ func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail,
 	err := db.sql.QueryRowContext(ctx,
 		`SELECT id, session_id, session_name, path, timestamp, is_streaming,
 		        input_messages, output_text, input_tokens, output_tokens,
-		        model, cost, input_cost, output_cost, raw_request, raw_response
+		        cache_creation_tokens, cache_read_tokens,
+		        model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost,
+		        raw_request, raw_response
 		 FROM exchanges WHERE id = ?`, id,
 	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp, &isStreaming,
 		&e.InputMessages, &e.OutputText, &e.InputTokens, &e.OutputTokens,
-		&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.RawRequest, &e.RawResponse)
+		&e.CacheCreationTokens, &e.CacheReadTokens,
+		&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.CacheCreationCost, &e.CacheReadCost,
+		&e.RawRequest, &e.RawResponse)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -187,7 +228,9 @@ func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail,
 func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float64) (Totals, error) {
 	query := `SELECT COUNT(*),
 	                 SUM(input_tokens), SUM(output_tokens),
-	                 SUM(cost), SUM(input_cost), SUM(output_cost)
+	                 SUM(cache_creation_tokens), SUM(cache_read_tokens),
+	                 SUM(cost), SUM(input_cost), SUM(output_cost),
+	                 SUM(cache_creation_cost), SUM(cache_read_cost)
 	          FROM exchanges`
 	var conditions []string
 	var args []any
@@ -204,19 +247,24 @@ func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float
 	}
 
 	var t Totals
-	var inputTokens, outputTokens sql.NullInt64
-	var totalCost, totalInputCost, totalOutputCost sql.NullFloat64
+	var inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens sql.NullInt64
+	var totalCost, totalInputCost, totalOutputCost, totalCacheCreationCost, totalCacheReadCost sql.NullFloat64
 	err := db.sql.QueryRowContext(ctx, query, args...).Scan(
-		&t.Count, &inputTokens, &outputTokens, &totalCost, &totalInputCost, &totalOutputCost,
+		&t.Count, &inputTokens, &outputTokens, &cacheCreationTokens, &cacheReadTokens,
+		&totalCost, &totalInputCost, &totalOutputCost, &totalCacheCreationCost, &totalCacheReadCost,
 	)
 	if err != nil {
 		return Totals{}, err
 	}
 	t.TotalInputTokens = inputTokens.Int64
 	t.TotalOutputTokens = outputTokens.Int64
+	t.TotalCacheCreationTokens = cacheCreationTokens.Int64
+	t.TotalCacheReadTokens = cacheReadTokens.Int64
 	t.TotalCost = roundedOrNil(totalCost, 4)
 	t.TotalInputCost = roundedOrNil(totalInputCost, 4)
 	t.TotalOutputCost = roundedOrNil(totalOutputCost, 4)
+	t.TotalCacheCreationCost = roundedOrNil(totalCacheCreationCost, 4)
+	t.TotalCacheReadCost = roundedOrNil(totalCacheReadCost, 4)
 	return t, nil
 }
 
@@ -226,6 +274,7 @@ func (db *DB) GetSessionStats(ctx context.Context) ([]SessionStat, error) {
 		`SELECT session_id, MAX(session_name),
 		        COUNT(*),
 		        COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
+		        COALESCE(SUM(cache_creation_tokens), 0), COALESCE(SUM(cache_read_tokens), 0),
 		        COALESCE(SUM(cost), 0), SUM(input_cost), SUM(output_cost),
 		        MAX(timestamp)
 		 FROM exchanges
@@ -242,8 +291,9 @@ func (db *DB) GetSessionStats(ctx context.Context) ([]SessionStat, error) {
 		var s SessionStat
 		var totalInputCost, totalOutputCost sql.NullFloat64
 		if err := rows.Scan(&s.SessionID, &s.SessionName, &s.ExchangeCount,
-			&s.TotalInputTokens, &s.TotalOutputTokens, &s.TotalCost,
-			&totalInputCost, &totalOutputCost, &s.LastUpdated); err != nil {
+			&s.TotalInputTokens, &s.TotalOutputTokens,
+			&s.TotalCacheCreationTokens, &s.TotalCacheReadTokens,
+			&s.TotalCost, &totalInputCost, &totalOutputCost, &s.LastUpdated); err != nil {
 			return nil, err
 		}
 		if totalInputCost.Valid {

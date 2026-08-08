@@ -30,6 +30,12 @@ They all must be set in OS environment (e.g. `export VAR=value` or a systemd uni
 | `CLENS_DATA_DIR` | `data` | Where the SQLite database is created. |
 | `CLENS_LOG_DIR` | `logs` | Where the rotating log file is written (5MB × 3 backups). |
 
+### Data and Logs
+
+The SQLite database is created in `CLENS_DATA_DIR` (default `data/`) and is named `claude-lens.db`.
+
+Logs are written to `CLENS_LOG_DIR` (default `logs/`) in a rotating file named `claude-lens.log`. It rotates at 5MB and keeps 3 timestamped backups + 1 active log file - capping total log storage at 20MB.
+
 ### How it works
 
 ```mermaid
@@ -57,8 +63,11 @@ untouched). For each one, the database records:
   session name (`x-session-name`, if set)
 - The full message array sent by the client
 - The assistant's response text
-- `input_tokens`/`output_tokens` reported by the upstream API, and the
-  estimated cost (longest-matching-prefix against the `Prices` table)
+- `input_tokens`/`output_tokens`, plus `cache_creation_input_tokens`/
+  `cache_read_input_tokens` (Anthropic prompt caching) reported by the
+  upstream API, and the estimated cost for each token type
+  (longest-matching-prefix against the `Prices` table, which prices cache
+  writes/reads separately from plain input)
 - The raw request and response bodies, for full-fidelity replay
 
 Streaming responses are fully supported: each chunk is forwarded to the

@@ -259,6 +259,24 @@ func add(a, b any) int64 {
 	return av + bv
 }
 
+// addCostPtr sums two nilable costs for the dashboard's cache-cost card
+// (cache creation + cache read) — nil only when both inputs are nil, so an
+// unpriced cache rate on one side still shows the other's cost instead of
+// collapsing the whole card to "—".
+func addCostPtr(a, b *float64) *float64 {
+	if a == nil && b == nil {
+		return nil
+	}
+	var sum float64
+	if a != nil {
+		sum += *a
+	}
+	if b != nil {
+		sum += *b
+	}
+	return &sum
+}
+
 // FuncMap is the template.FuncMap shared by every admin HTML template.
 func FuncMap() template.FuncMap {
 	return template.FuncMap{
@@ -270,5 +288,6 @@ func FuncMap() template.FuncMap {
 		"toJSON":     toJSON,
 		"prettyJSON": prettyJSON,
 		"add":        add,
+		"addCostPtr": addCostPtr,
 	}
 }

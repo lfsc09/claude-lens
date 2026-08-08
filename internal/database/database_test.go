@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -398,4 +399,118 @@ func TestConcurrentWrites(t *testing.T) {
 
 func round4(f float64) float64 {
 	return float64(int(f*10000+0.5)) / 10000
+}
+
+// TestOpen_MigratesPreexistingDatabase proves that a database created before
+// the cache-token columns existed gets them added via ALTER TABLE on the
+// next Open, instead of CREATE TABLE IF NOT EXISTS silently no-op'ing and
+// leaving the columns missing.
+func TestOpen_MigratesPreexistingDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+
+	// Build a pre-migration schema by hand (no cache_* columns anywhere),
+	// simulating a database created by an older claude-lens binary.
+	legacySchema := `
+CREATE TABLE exchanges (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT    NOT NULL,
+    session_name   TEXT,
+    path           TEXT    NOT NULL,
+    timestamp      REAL    NOT NULL,
+    is_streaming   INTEGER NOT NULL DEFAULT 0,
+    input_messages TEXT,
+    output_text    TEXT,
+    input_tokens   INTEGER,
+    output_tokens  INTEGER,
+    model          TEXT,
+    cost           REAL,
+    input_cost     REAL,
+    output_cost    REAL,
+    raw_request    TEXT,
+    raw_response   TEXT
+);
+CREATE TABLE model_prices (
+    model_prefix TEXT PRIMARY KEY,
+    input_per_m  REAL NOT NULL,
+    output_per_m REAL NOT NULL,
+    updated_at   REAL NOT NULL
+);
+INSERT INTO exchanges (session_id, path, timestamp, raw_request, raw_response, input_tokens, output_tokens)
+VALUES ('legacy-session', '/p', 1000, '{}', '{}', 10, 20);
+INSERT INTO model_prices (model_prefix, input_per_m, output_per_m, updated_at)
+VALUES ('legacy-model', 1.0, 2.0, 1000);
+`
+	setupDB, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := setupDB.Exec(legacySchema); err != nil {
+		t.Fatalf("apply legacy schema: %v", err)
+	}
+	if err := setupDB.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	db, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Open (migration): %v", err)
+	}
+	defer db.Close()
+
+	// The pre-existing rows must survive the migration untouched, with the
+	// new columns present but NULL/zero (no backfill of historical data).
+	list, err := db.GetExchanges(context.Background(), "legacy-session", 10, 0)
+	if err != nil {
+		t.Fatalf("GetExchanges after migration: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("got %d legacy exchanges, want 1", len(list))
+	}
+	if list[0].CacheCreationTokens != nil || list[0].CacheReadTokens != nil {
+		t.Errorf("legacy row got backfilled cache tokens, want nil: %+v", list[0])
+	}
+	if list[0].InputTokens == nil || *list[0].InputTokens != 10 {
+		t.Errorf("legacy row's pre-existing input_tokens was lost: %+v", list[0])
+	}
+
+	prices, err := db.ListPrices(context.Background())
+	if err != nil {
+		t.Fatalf("ListPrices after migration: %v", err)
+	}
+	found := false
+	for _, p := range prices {
+		if p.Prefix == "legacy-model" {
+			found = true
+			if p.CacheWritePerM != 0 || p.CacheReadPerM != 0 {
+				t.Errorf("legacy price row got non-zero cache rates, want 0 default: %+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("legacy-model price row lost during migration")
+	}
+
+	// New writes must be able to use the newly added columns.
+	if err := db.SaveExchange(context.Background(), Exchange{
+		SessionID: "new-session", Path: "/p", Timestamp: 2000,
+		RawRequest: "{}", RawResponse: "{}",
+		CacheCreationTokens: intPtr(50), CacheReadTokens: intPtr(5),
+	}); err != nil {
+		t.Fatalf("SaveExchange after migration: %v", err)
+	}
+	detail, err := db.GetExchanges(context.Background(), "new-session", 1, 0)
+	if err != nil {
+		t.Fatalf("GetExchanges(new-session): %v", err)
+	}
+	if len(detail) != 1 || detail[0].CacheCreationTokens == nil || *detail[0].CacheCreationTokens != 50 {
+		t.Fatalf("post-migration cache token write/read failed: %+v", detail)
+	}
+
+	// Running Open (and thus migrateSchema) again must be a no-op, not an
+	// error from re-adding an already-present column.
+	db2, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("re-Open after migration: %v", err)
+	}
+	db2.Close()
 }

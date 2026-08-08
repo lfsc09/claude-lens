@@ -4,11 +4,13 @@ import "testing"
 
 func TestExtractResponseFields_NonStreaming(t *testing.T) {
 	tests := []struct {
-		name           string
-		body           string
-		wantText       string // "" means want nil
-		wantInputToks  *int
-		wantOutputToks *int
+		name            string
+		body            string
+		wantText        string // "" means want nil
+		wantInputToks   *int
+		wantOutputToks  *int
+		wantCacheCreate *int
+		wantCacheRead   *int
 	}{
 		{
 			name:           "typical response",
@@ -52,11 +54,29 @@ func TestExtractResponseFields_NonStreaming(t *testing.T) {
 			wantInputToks:  nil,
 			wantOutputToks: nil,
 		},
+		{
+			name:            "cache creation and read tokens present",
+			body:            `{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":200,"cache_read_input_tokens":50}}`,
+			wantText:        "hi",
+			wantInputToks:   intPtr(10),
+			wantOutputToks:  intPtr(5),
+			wantCacheCreate: intPtr(200),
+			wantCacheRead:   intPtr(50),
+		},
+		{
+			name:            "cache fields absent stay nil, not zero",
+			body:            `{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5}}`,
+			wantText:        "hi",
+			wantInputToks:   intPtr(10),
+			wantOutputToks:  intPtr(5),
+			wantCacheCreate: nil,
+			wantCacheRead:   nil,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotText, gotIn, gotOut := ExtractResponseFields([]byte(tt.body), false)
+			gotText, usage := ExtractResponseFields([]byte(tt.body), false)
 
 			if tt.wantText == "" {
 				if gotText != nil {
@@ -66,8 +86,10 @@ func TestExtractResponseFields_NonStreaming(t *testing.T) {
 				t.Errorf("outputText = %v, want %q", derefOrNil(gotText), tt.wantText)
 			}
 
-			assertIntPtrEqual(t, "inputTokens", gotIn, tt.wantInputToks)
-			assertIntPtrEqual(t, "outputTokens", gotOut, tt.wantOutputToks)
+			assertIntPtrEqual(t, "inputTokens", usage.InputTokens, tt.wantInputToks)
+			assertIntPtrEqual(t, "outputTokens", usage.OutputTokens, tt.wantOutputToks)
+			assertIntPtrEqual(t, "cacheCreationTokens", usage.CacheCreationTokens, tt.wantCacheCreate)
+			assertIntPtrEqual(t, "cacheReadTokens", usage.CacheReadTokens, tt.wantCacheRead)
 		})
 	}
 }

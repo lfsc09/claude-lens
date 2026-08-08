@@ -27,12 +27,60 @@ func TestEstimateCosts_UsesDefaultSeededPrices(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	inputCost, outputCost, ok := e.EstimateCosts("claude-sonnet-5-20260101", 1_000_000, 1_000_000)
+	costs, ok := e.EstimateCosts("claude-sonnet-5-20260101", 1_000_000, 1_000_000, 0, 0)
 	if !ok {
 		t.Fatal("expected a match against the seeded claude-sonnet-5 price")
 	}
-	if inputCost != 3.00 || outputCost != 15.00 {
-		t.Errorf("got (%v, %v), want (3.00, 15.00)", inputCost, outputCost)
+	if costs.InputCost != 3.00 || costs.OutputCost != 15.00 {
+		t.Errorf("got (%v, %v), want (3.00, 15.00)", costs.InputCost, costs.OutputCost)
+	}
+}
+
+func TestEstimateCosts_ComputesCacheCosts(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	e := New(db)
+	if err := e.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	// claude-sonnet-5 is seeded with CacheWritePerM=3.75, CacheReadPerM=0.30.
+	costs, ok := e.EstimateCosts("claude-sonnet-5-20260101", 0, 0, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatal("expected a match against the seeded claude-sonnet-5 price")
+	}
+	if costs.CacheCreationCost != 3.75 || costs.CacheReadCost != 0.30 {
+		t.Errorf("got (cacheCreation=%v, cacheRead=%v), want (3.75, 0.30)", costs.CacheCreationCost, costs.CacheReadCost)
+	}
+}
+
+func TestEstimateCosts_ZeroCacheRateDoesNotBreakInputOutput(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	for _, p := range mustListPrices(t, db) {
+		_ = db.DeletePrice(ctx, p.Prefix)
+	}
+	// A price row with no cache rates set (e.g. one created before this
+	// feature, or never edited) must still price input/output normally and
+	// simply report 0 cache cost, not fail the match.
+	if err := db.UpsertPrice(ctx, database.Price{Prefix: "no-cache-rate-model", InputPerM: 2.00, OutputPerM: 10.00, UpdatedAt: 1}); err != nil {
+		t.Fatalf("UpsertPrice: %v", err)
+	}
+
+	e := New(db)
+	if err := e.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	costs, ok := e.EstimateCosts("no-cache-rate-model", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatal("expected a match")
+	}
+	if costs.InputCost != 2.00 || costs.OutputCost != 10.00 {
+		t.Errorf("got (input=%v, output=%v), want (2.00, 10.00)", costs.InputCost, costs.OutputCost)
+	}
+	if costs.CacheCreationCost != 0 || costs.CacheReadCost != 0 {
+		t.Errorf("got (cacheCreation=%v, cacheRead=%v), want (0, 0) for an unpriced cache rate", costs.CacheCreationCost, costs.CacheReadCost)
 	}
 }
 
@@ -44,7 +92,7 @@ func TestEstimateCosts_UnknownModel(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	_, _, ok := e.EstimateCosts("some-unrelated-model", 100, 100)
+	_, ok := e.EstimateCosts("some-unrelated-model", 100, 100, 0, 0)
 	if ok {
 		t.Fatal("expected no match for an unrelated model name")
 	}
@@ -81,12 +129,12 @@ func TestEstimateCosts_LongestPrefixWins(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	inputCost, outputCost, ok := e.EstimateCosts("claude-sonnet-4-5", 1_000_000, 1_000_000)
+	costs, ok := e.EstimateCosts("claude-sonnet-4-5", 1_000_000, 1_000_000, 0, 0)
 	if !ok {
 		t.Fatal("expected a match")
 	}
-	if inputCost != 3.00 || outputCost != 15.00 {
-		t.Errorf("got (%v, %v), want the claude-sonnet-4 price (3.00, 15.00), not the shorter claude-sonnet prefix", inputCost, outputCost)
+	if costs.InputCost != 3.00 || costs.OutputCost != 15.00 {
+		t.Errorf("got (%v, %v), want the claude-sonnet-4 price (3.00, 15.00), not the shorter claude-sonnet prefix", costs.InputCost, costs.OutputCost)
 	}
 }
 
@@ -111,9 +159,9 @@ func TestEstimateCosts_ExactMatchWinsOverShorterPrefix(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	inputCost, _, ok := e.EstimateCosts("claude-sonnet-5", 1_000_000, 0)
-	if !ok || inputCost != 3.00 {
-		t.Errorf("got ok=%v inputCost=%v, want exact match at 3.00", ok, inputCost)
+	costs, ok := e.EstimateCosts("claude-sonnet-5", 1_000_000, 0, 0, 0)
+	if !ok || costs.InputCost != 3.00 {
+		t.Errorf("got ok=%v inputCost=%v, want exact match at 3.00", ok, costs.InputCost)
 	}
 }
 
@@ -125,7 +173,7 @@ func TestRefresh_PicksUpChangesWithoutRestart(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	if _, _, ok := e.EstimateCosts("brand-new-model", 100, 100); ok {
+	if _, ok := e.EstimateCosts("brand-new-model", 100, 100, 0, 0); ok {
 		t.Fatal("expected no match before the price exists")
 	}
 
@@ -136,9 +184,9 @@ func TestRefresh_PicksUpChangesWithoutRestart(t *testing.T) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	inputCost, _, ok := e.EstimateCosts("brand-new-model", 1_000_000, 0)
-	if !ok || inputCost != 9.00 {
-		t.Errorf("got ok=%v inputCost=%v, want ok=true inputCost=9.00 after Refresh", ok, inputCost)
+	costs, ok := e.EstimateCosts("brand-new-model", 1_000_000, 0, 0, 0)
+	if !ok || costs.InputCost != 9.00 {
+		t.Errorf("got ok=%v inputCost=%v, want ok=true inputCost=9.00 after Refresh", ok, costs.InputCost)
 	}
 }
 

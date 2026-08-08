@@ -177,6 +177,50 @@ func TestNonStreamingPOST_SavesExchangeWithCost(t *testing.T) {
 	}
 }
 
+func TestNonStreamingPOST_SavesCacheTokensAndCost(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"hi there"}],"usage":{"input_tokens":1000000,"output_tokens":1000000,"cache_creation_input_tokens":1000000,"cache_read_input_tokens":1000000}}`)
+	}))
+	defer upstream.Close()
+
+	h, db := newTestHandler(t, upstream.URL)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-session-id", "sess-cache")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	waitForExchangeCount(t, db, "sess-cache", 1)
+	detail := mustGetExchange(t, db, "sess-cache")
+
+	if detail.CacheCreationTokens == nil || *detail.CacheCreationTokens != 1_000_000 {
+		t.Errorf("CacheCreationTokens = %v, want 1000000", detail.CacheCreationTokens)
+	}
+	if detail.CacheReadTokens == nil || *detail.CacheReadTokens != 1_000_000 {
+		t.Errorf("CacheReadTokens = %v, want 1000000", detail.CacheReadTokens)
+	}
+	// claude-sonnet-5 is seeded at CacheWritePerM=3.75, CacheReadPerM=0.30.
+	if detail.CacheCreationCost == nil || *detail.CacheCreationCost != 3.75 {
+		t.Errorf("CacheCreationCost = %v, want 3.75", detail.CacheCreationCost)
+	}
+	if detail.CacheReadCost == nil || *detail.CacheReadCost != 0.30 {
+		t.Errorf("CacheReadCost = %v, want 0.30", detail.CacheReadCost)
+	}
+	// Total cost must include the cache components, not just input/output.
+	if detail.Cost == nil || *detail.Cost != 18.0+3.75+0.30 {
+		t.Errorf("Cost = %v, want %v", detail.Cost, 18.0+3.75+0.30)
+	}
+}
+
 // TestUpstreamGzipResponse_IsDecompressedBeforeParsing proves the client's
 // Accept-Encoding header is stripped before forwarding upstream: if it
 // weren't, an upstream that compresses based on the client's preference

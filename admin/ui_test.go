@@ -56,6 +56,32 @@ func TestUIDashboard_Renders(t *testing.T) {
 	}
 }
 
+func TestUIDashboard_RendersCacheTokensAndCost(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	inTok, outTok, cacheCreate, cacheRead := 100, 50, 200, 40
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "sess-cache", SessionName: strPtr("Cache Session"), Path: "/v1/messages", RawRequest: "{}", RawResponse: "{}",
+		Timestamp: float64(nowUnix()), InputTokens: &inTok, OutputTokens: &outTok,
+		CacheCreationTokens: &cacheCreate, CacheReadTokens: &cacheRead,
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+
+	rec := doGet(t, s, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Cache tokens") {
+		t.Error("missing 'Cache tokens' stat card")
+	}
+	// 200 + 40 cache tokens comma-grouped.
+	if !strings.Contains(body, "240") {
+		t.Error("cache token total not rendered")
+	}
+}
+
 func TestUIExchanges_RendersRowsAndFilter(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()

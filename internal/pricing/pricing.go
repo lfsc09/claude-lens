@@ -62,20 +62,33 @@ func (e *Estimator) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// EstimateCosts returns the USD input/output cost for a token count against
-// the given model, or ok == false if no price row's prefix matches.
-func (e *Estimator) EstimateCosts(model string, inputTokens, outputTokens int) (inputCost, outputCost float64, ok bool) {
+// Costs is the USD breakdown of a single model call, split by token type —
+// plain input/output plus Anthropic's prompt-caching tokens (cache creation
+// is priced above input, cache read well below it).
+type Costs struct {
+	InputCost         float64
+	OutputCost        float64
+	CacheCreationCost float64
+	CacheReadCost     float64
+}
+
+// EstimateCosts returns the USD cost breakdown for a call's token counts
+// against the given model, or ok == false if no price row's prefix matches.
+func (e *Estimator) EstimateCosts(model string, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens int) (Costs, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	for _, p := range e.cache {
 		if strings.HasPrefix(model, p.Prefix) {
-			inputCost = round6(float64(inputTokens) * p.InputPerM / 1_000_000)
-			outputCost = round6(float64(outputTokens) * p.OutputPerM / 1_000_000)
-			return inputCost, outputCost, true
+			return Costs{
+				InputCost:         round6(float64(inputTokens) * p.InputPerM / 1_000_000),
+				OutputCost:        round6(float64(outputTokens) * p.OutputPerM / 1_000_000),
+				CacheCreationCost: round6(float64(cacheCreationTokens) * p.CacheWritePerM / 1_000_000),
+				CacheReadCost:     round6(float64(cacheReadTokens) * p.CacheReadPerM / 1_000_000),
+			}, true
 		}
 	}
-	return 0, 0, false
+	return Costs{}, false
 }
 
 func round6(f float64) float64 {

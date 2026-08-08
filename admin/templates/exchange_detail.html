@@ -33,6 +33,14 @@
     <p class="mt-1">{{ fmtInt .OutputTokens }}</p>
   </div>
   <div>
+    <p class="text-xs text-gray-500 uppercase tracking-wide">Cache creation tokens</p>
+    <p class="mt-1">{{ fmtInt .CacheCreationTokens }}</p>
+  </div>
+  <div>
+    <p class="text-xs text-gray-500 uppercase tracking-wide">Cache read tokens</p>
+    <p class="mt-1">{{ fmtInt .CacheReadTokens }}</p>
+  </div>
+  <div>
     <p class="text-xs text-gray-500 uppercase tracking-wide">Model</p>
     <p class="mt-1 font-mono text-xs">{{ coalesce .Model "—" }}</p>
   </div>

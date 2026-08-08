@@ -274,6 +274,39 @@ func TestPricesCRUD(t *testing.T) {
 	}
 }
 
+func TestUpsertPrice_CacheRatesOptional(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	// Create with explicit cache rates.
+	rec := doJSON(t, s, http.MethodPut, "/prices/cache-model", map[string]float64{
+		"input_per_m": 2.0, "output_per_m": 10.0, "cache_write_per_m": 2.5, "cache_read_per_m": 0.2,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var p database.Price
+	json.Unmarshal(rec.Body.Bytes(), &p)
+	if p.CacheWritePerM != 2.5 || p.CacheReadPerM != 0.2 {
+		t.Fatalf("unexpected cache rates after create: %+v", p)
+	}
+
+	// Update input/output only, omitting cache rates — they must be
+	// preserved, not reset to 0.
+	rec = doJSON(t, s, http.MethodPut, "/prices/cache-model", map[string]float64{
+		"input_per_m": 3.0, "output_per_m": 11.0,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	json.Unmarshal(rec.Body.Bytes(), &p)
+	if p.InputPerM != 3.0 || p.OutputPerM != 11.0 {
+		t.Errorf("input/output not updated: %+v", p)
+	}
+	if p.CacheWritePerM != 2.5 || p.CacheReadPerM != 0.2 {
+		t.Errorf("cache rates were reset when omitted from the update, want preserved: %+v", p)
+	}
+}
+
 func TestUpsertPrice_RefreshesEstimatorImmediately(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()

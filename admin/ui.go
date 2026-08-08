@@ -132,8 +132,14 @@ func (h *handlers) uiCreatePrice(c *gin.Context) {
 		c.String(http.StatusBadRequest, "model_prefix, input_per_m, and output_per_m are required")
 		return
 	}
+	cacheWritePerM, errCW := parseOptionalFloat(c.PostForm("cache_write_per_m"))
+	cacheReadPerM, errCR := parseOptionalFloat(c.PostForm("cache_read_per_m"))
+	if errCW != nil || errCR != nil {
+		c.String(http.StatusBadRequest, "cache_write_per_m and cache_read_per_m must be numbers")
+		return
+	}
 
-	if err := h.upsertPriceAndRefresh(c, prefix, inputPerM, outputPerM); err != nil {
+	if err := h.upsertPriceAndRefresh(c, prefix, inputPerM, outputPerM, cacheWritePerM, cacheReadPerM); err != nil {
 		c.String(http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -148,12 +154,32 @@ func (h *handlers) uiUpdatePrice(c *gin.Context) {
 		c.String(http.StatusBadRequest, "input_per_m and output_per_m must be numbers")
 		return
 	}
+	cacheWritePerM, errCW := parseOptionalFloat(c.PostForm("cache_write_per_m"))
+	cacheReadPerM, errCR := parseOptionalFloat(c.PostForm("cache_read_per_m"))
+	if errCW != nil || errCR != nil {
+		c.String(http.StatusBadRequest, "cache_write_per_m and cache_read_per_m must be numbers")
+		return
+	}
 
-	if err := h.upsertPriceAndRefresh(c, prefix, inputPerM, outputPerM); err != nil {
+	if err := h.upsertPriceAndRefresh(c, prefix, inputPerM, outputPerM, cacheWritePerM, cacheReadPerM); err != nil {
 		c.String(http.StatusInternalServerError, "internal error")
 		return
 	}
 	c.Redirect(http.StatusFound, "/ui/prices")
+}
+
+// parseOptionalFloat parses a form field that may be blank (meaning "leave
+// unchanged" to the caller), returning nil without error in that case.
+func parseOptionalFloat(raw string) (*float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
 }
 
 func (h *handlers) uiDeletePrice(c *gin.Context) {
@@ -169,17 +195,37 @@ func (h *handlers) uiDeletePrice(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/ui/prices")
 }
 
-func (h *handlers) upsertPriceAndRefresh(c *gin.Context, prefix string, inputPerM, outputPerM float64) error {
-	p := database.Price{
-		Prefix:     prefix,
-		InputPerM:  inputPerM,
-		OutputPerM: outputPerM,
-		UpdatedAt:  float64(time.Now().Unix()),
+// upsertPriceAndRefresh writes a price row. cacheWritePerM/cacheReadPerM may
+// be nil (form field left blank), in which case the existing row's value is
+// kept (0 for a brand-new prefix) instead of silently zeroing it out.
+func (h *handlers) upsertPriceAndRefresh(c *gin.Context, prefix string, inputPerM, outputPerM float64, cacheWritePerM, cacheReadPerM *float64) error {
+	ctx := c.Request.Context()
+
+	var cwPerM, crPerM float64
+	if existing, err := h.db.GetPrice(ctx, prefix); err != nil {
+		return err
+	} else if existing != nil {
+		cwPerM, crPerM = existing.CacheWritePerM, existing.CacheReadPerM
 	}
-	if err := h.db.UpsertPrice(c.Request.Context(), p); err != nil {
+	if cacheWritePerM != nil {
+		cwPerM = *cacheWritePerM
+	}
+	if cacheReadPerM != nil {
+		crPerM = *cacheReadPerM
+	}
+
+	p := database.Price{
+		Prefix:         prefix,
+		InputPerM:      inputPerM,
+		OutputPerM:     outputPerM,
+		CacheWritePerM: cwPerM,
+		CacheReadPerM:  crPerM,
+		UpdatedAt:      float64(time.Now().Unix()),
+	}
+	if err := h.db.UpsertPrice(ctx, p); err != nil {
 		return err
 	}
-	return h.est.Refresh(c.Request.Context())
+	return h.est.Refresh(ctx)
 }
 
 func (h *handlers) notFound(c *gin.Context) {

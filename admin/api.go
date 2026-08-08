@@ -146,8 +146,10 @@ func (h *handlers) listPrices(c *gin.Context) {
 }
 
 type upsertPriceRequest struct {
-	InputPerM  *float64 `json:"input_per_m" binding:"required"`
-	OutputPerM *float64 `json:"output_per_m" binding:"required"`
+	InputPerM      *float64 `json:"input_per_m" binding:"required"`
+	OutputPerM     *float64 `json:"output_per_m" binding:"required"`
+	CacheWritePerM *float64 `json:"cache_write_per_m"`
+	CacheReadPerM  *float64 `json:"cache_read_per_m"`
 }
 
 func (h *handlers) upsertPrice(c *gin.Context) {
@@ -159,11 +161,31 @@ func (h *handlers) upsertPrice(c *gin.Context) {
 		return
 	}
 
+	// Cache rates are optional: an omitted field keeps whatever the row
+	// already has (0 for a brand-new prefix), so editing input/output rates
+	// via a client that doesn't know about cache pricing can't accidentally
+	// zero it out.
+	var cacheWritePerM, cacheReadPerM float64
+	if existing, err := h.db.GetPrice(c.Request.Context(), prefix); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	} else if existing != nil {
+		cacheWritePerM, cacheReadPerM = existing.CacheWritePerM, existing.CacheReadPerM
+	}
+	if req.CacheWritePerM != nil {
+		cacheWritePerM = *req.CacheWritePerM
+	}
+	if req.CacheReadPerM != nil {
+		cacheReadPerM = *req.CacheReadPerM
+	}
+
 	p := database.Price{
-		Prefix:     prefix,
-		InputPerM:  *req.InputPerM,
-		OutputPerM: *req.OutputPerM,
-		UpdatedAt:  float64(time.Now().Unix()),
+		Prefix:         prefix,
+		InputPerM:      *req.InputPerM,
+		OutputPerM:     *req.OutputPerM,
+		CacheWritePerM: cacheWritePerM,
+		CacheReadPerM:  cacheReadPerM,
+		UpdatedAt:      float64(time.Now().Unix()),
 	}
 	if err := h.db.UpsertPrice(c.Request.Context(), p); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

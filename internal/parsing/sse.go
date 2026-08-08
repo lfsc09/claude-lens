@@ -11,7 +11,9 @@ type sseEvent struct {
 	Type    string `json:"type"`
 	Message struct {
 		Usage struct {
-			InputTokens *int `json:"input_tokens"`
+			InputTokens              *int `json:"input_tokens"`
+			CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	} `json:"message"`
 	Delta struct {
@@ -24,10 +26,10 @@ type sseEvent struct {
 }
 
 // parseSSEResponse parses a streaming (text/event-stream) response body,
-// assembling text_delta chunks and pulling token counts out of the
-// message_start / message_delta events, matching Anthropic's SSE event
-// shapes for the Messages API.
-func parseSSEResponse(raw []byte) (outputText *string, inputTokens, outputTokens *int) {
+// assembling text_delta chunks and pulling token usage out of the
+// message_start (input + cache tokens) / message_delta (output tokens)
+// events, matching Anthropic's SSE event shapes for the Messages API.
+func parseSSEResponse(raw []byte) (outputText *string, usage Usage) {
 	var text strings.Builder
 
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -49,13 +51,15 @@ func parseSSEResponse(raw []byte) (outputText *string, inputTokens, outputTokens
 
 		switch event.Type {
 		case "message_start":
-			inputTokens = event.Message.Usage.InputTokens
+			usage.InputTokens = event.Message.Usage.InputTokens
+			usage.CacheCreationTokens = event.Message.Usage.CacheCreationInputTokens
+			usage.CacheReadTokens = event.Message.Usage.CacheReadInputTokens
 		case "content_block_delta":
 			if event.Delta.Type == "text_delta" {
 				text.WriteString(event.Delta.Text)
 			}
 		case "message_delta":
-			outputTokens = event.Usage.OutputTokens
+			usage.OutputTokens = event.Usage.OutputTokens
 		}
 	}
 
@@ -63,5 +67,5 @@ func parseSSEResponse(raw []byte) (outputText *string, inputTokens, outputTokens
 		s := text.String()
 		outputText = &s
 	}
-	return outputText, inputTokens, outputTokens
+	return outputText, usage
 }
