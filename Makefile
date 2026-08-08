@@ -1,4 +1,4 @@
-main_package_path = cmd/main.go
+main_package_path = ./cmd/claude-lens
 binary_name = claude-lens
 build_dir = bin
 
