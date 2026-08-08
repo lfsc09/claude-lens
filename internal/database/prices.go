@@ -8,10 +8,10 @@ import (
 // Price is a row of the model_prices table: USD per million tokens for a
 // model prefix, matched against the full model string returned by the API.
 type Price struct {
-	Prefix     string
-	InputPerM  float64
-	OutputPerM float64
-	UpdatedAt  float64
+	Prefix     string  `json:"model_prefix"`
+	InputPerM  float64 `json:"input_per_m"`
+	OutputPerM float64 `json:"output_per_m"`
+	UpdatedAt  float64 `json:"updated_at"`
 }
 
 // defaultPrices seeds model_prices on first run — mirrors the hardcoded

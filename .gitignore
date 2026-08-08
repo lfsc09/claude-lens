@@ -44,3 +44,5 @@ go.work.sum
 !/internal/**
 !/proxy
 !/proxy/**
+!/admin
+!/admin/**

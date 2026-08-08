@@ -29,67 +29,68 @@ type Exchange struct {
 }
 
 // ExchangeSummary is a row as listed in the exchanges table/dashboard (no
-// request/response bodies).
+// request/response bodies). JSON field names match the old Python version's
+// dict keys (the raw SQL column names).
 type ExchangeSummary struct {
-	ID           int64
-	SessionID    string
-	SessionName  *string
-	Path         string
-	Timestamp    float64
-	IsStreaming  bool
-	InputTokens  *int
-	OutputTokens *int
-	Model        *string
-	Cost         *float64
+	ID           int64    `json:"id"`
+	SessionID    string   `json:"session_id"`
+	SessionName  *string  `json:"session_name"`
+	Path         string   `json:"path"`
+	Timestamp    float64  `json:"timestamp"`
+	IsStreaming  bool     `json:"is_streaming"`
+	InputTokens  *int     `json:"input_tokens"`
+	OutputTokens *int     `json:"output_tokens"`
+	Model        *string  `json:"model"`
+	Cost         *float64 `json:"cost"`
 }
 
 // ExchangeDetail is a full exchange row, including request/response bodies.
 type ExchangeDetail struct {
-	ID            int64
-	SessionID     string
-	SessionName   *string
-	Path          string
-	Timestamp     float64
-	IsStreaming   bool
-	InputMessages *string
-	OutputText    *string
-	InputTokens   *int
-	OutputTokens  *int
-	Model         *string
-	Cost          *float64
-	InputCost     *float64
-	OutputCost    *float64
-	RawRequest    *string
-	RawResponse   *string
+	ID            int64    `json:"id"`
+	SessionID     string   `json:"session_id"`
+	SessionName   *string  `json:"session_name"`
+	Path          string   `json:"path"`
+	Timestamp     float64  `json:"timestamp"`
+	IsStreaming   bool     `json:"is_streaming"`
+	InputMessages *string  `json:"input_messages"`
+	OutputText    *string  `json:"output_text"`
+	InputTokens   *int     `json:"input_tokens"`
+	OutputTokens  *int     `json:"output_tokens"`
+	Model         *string  `json:"model"`
+	Cost          *float64 `json:"cost"`
+	InputCost     *float64 `json:"input_cost"`
+	OutputCost    *float64 `json:"output_cost"`
+	RawRequest    *string  `json:"raw_request"`
+	RawResponse   *string  `json:"raw_response"`
 }
 
 // Totals is an aggregate over a set of exchanges.
 type Totals struct {
-	Count             int64
-	TotalInputTokens  int64
-	TotalOutputTokens int64
-	TotalCost         *float64
-	TotalInputCost    *float64
-	TotalOutputCost   *float64
+	Count             int64    `json:"count"`
+	TotalInputTokens  int64    `json:"total_input_tokens"`
+	TotalOutputTokens int64    `json:"total_output_tokens"`
+	TotalCost         *float64 `json:"total_cost"`
+	TotalInputCost    *float64 `json:"total_input_cost"`
+	TotalOutputCost   *float64 `json:"total_output_cost"`
 }
 
 // SessionStat is a per-session aggregate row.
 type SessionStat struct {
-	SessionID         string
-	SessionName       *string
-	ExchangeCount     int64
-	TotalInputTokens  int64
-	TotalOutputTokens int64
-	TotalCost         float64
-	TotalInputCost    *float64
-	TotalOutputCost   *float64
-	LastUpdated       float64
+	SessionID         string   `json:"session_id"`
+	SessionName       *string  `json:"session_name"`
+	ExchangeCount     int64    `json:"exchange_count"`
+	TotalInputTokens  int64    `json:"total_input_tokens"`
+	TotalOutputTokens int64    `json:"total_output_tokens"`
+	TotalCost         float64  `json:"total_cost"`
+	TotalInputCost    *float64 `json:"total_input_cost"`
+	TotalOutputCost   *float64 `json:"total_output_cost"`
+	LastUpdated       float64  `json:"last_updated"`
 }
 
 // DailyCost is a daily cost total, local-time bucketed.
 type DailyCost struct {
-	Day       string
-	DailyCost float64
+	Day       string  `json:"day"`
+	DailyCost float64 `json:"daily_cost"`
 }
 
 // SaveExchange inserts one exchange row. On failure it logs the error and
