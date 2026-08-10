@@ -28,6 +28,22 @@
   </main>
 
   <script>
+    // Mirrors admin/template.go's fmtTokens: values under 1000 render as
+    // plain integers, larger values abbreviate to 1 decimal place (1.7k,
+    // 6.3M, 1.2B) so SSE-updated cells match the server-rendered ones.
+    function fmtTokens(n) {
+      if (n == null) return '—';
+      const neg = n < 0;
+      const abs = Math.abs(n);
+      let suffix, divisor;
+      if (abs >= 1000000000) { suffix = 'B'; divisor = 1000000000; }
+      else if (abs >= 1000000) { suffix = 'M'; divisor = 1000000; }
+      else if (abs >= 1000) { suffix = 'k'; divisor = 1000; }
+      else return `${neg ? '-' : ''}${abs}`;
+      const val = (abs / divisor).toFixed(1).replace(/\.0$/, '');
+      return `${neg ? '-' : ''}${val}${suffix}`;
+    }
+
     (() => {
       const es = new EventSource('/stream');
 
@@ -82,13 +98,13 @@
         const inputTokens = totals.total_input_tokens ?? 0;
         const outputTokens = totals.total_output_tokens ?? 0;
         const cacheTokens = (totals.total_cache_creation_tokens ?? 0) + (totals.total_cache_read_tokens ?? 0);
-        setText('total-input-tokens', inputTokens.toLocaleString());
+        setText('total-input-tokens', fmtTokens(inputTokens));
         setText('total-input-cost', fmtCost(totals.total_input_cost));
-        setText('total-output-tokens', outputTokens.toLocaleString());
+        setText('total-output-tokens', fmtTokens(outputTokens));
         setText('total-output-cost', fmtCost(totals.total_output_cost));
-        setText('total-cache-tokens', cacheTokens.toLocaleString());
+        setText('total-cache-tokens', fmtTokens(cacheTokens));
         setText('total-cache-cost', fmtCost(addCost(totals.total_cache_creation_cost, totals.total_cache_read_cost)));
-        setText('total-tokens', (inputTokens + outputTokens + cacheTokens).toLocaleString());
+        setText('total-tokens', fmtTokens(inputTokens + outputTokens + cacheTokens));
         setText('total-cost', fmtCost(totals.total_cost));
       }
 
@@ -97,13 +113,13 @@
         const inputTokens = totals.total_input_tokens ?? 0;
         const outputTokens = totals.total_output_tokens ?? 0;
         const cacheTokens = (totals.total_cache_creation_tokens ?? 0) + (totals.total_cache_read_tokens ?? 0);
-        setText('today-input-tokens', inputTokens.toLocaleString());
+        setText('today-input-tokens', fmtTokens(inputTokens));
         setText('today-input-cost', fmtCost(totals.total_input_cost));
-        setText('today-output-tokens', outputTokens.toLocaleString());
+        setText('today-output-tokens', fmtTokens(outputTokens));
         setText('today-output-cost', fmtCost(totals.total_output_cost));
-        setText('today-cache-tokens', cacheTokens.toLocaleString());
+        setText('today-cache-tokens', fmtTokens(cacheTokens));
         setText('today-cache-cost', fmtCost(addCost(totals.total_cache_creation_cost, totals.total_cache_read_cost)));
-        setText('today-tokens', (inputTokens + outputTokens + cacheTokens).toLocaleString());
+        setText('today-tokens', fmtTokens(inputTokens + outputTokens + cacheTokens));
         setText('today-total-cost', fmtCost(totals.total_cost));
       }
 
@@ -140,8 +156,8 @@
           <td class="px-4 py-2 text-gray-500 font-mono text-xs truncate max-w-xs" title="${esc(model || '')}">${modelLabel}</td>
           <td class="px-4 py-2 text-gray-500 font-mono text-xs">${esc(path)}</td>
           <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
-          <td class="px-4 py-2 text-right">${input_tokens ?? '—'}</td>
-          <td class="px-4 py-2 text-right">${output_tokens ?? '—'}</td>
+          <td class="px-4 py-2 text-right">${fmtTokens(input_tokens)}</td>
+          <td class="px-4 py-2 text-right">${fmtTokens(output_tokens)}</td>
           <td class="px-4 py-2 text-right text-gray-700">${fmtCost(cost)}</td>
           <td class="px-4 py-2 text-gray-400 text-center">${is_streaming ? '✓' : ''}</td>
           </tr>`;

@@ -52,8 +52,8 @@
         </td>
         <td class="px-4 py-2 text-gray-500 font-mono text-xs">{{ .Path }}</td>
         <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .Timestamp }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtInt .InputTokens }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtInt .OutputTokens }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtTokens .InputTokens }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtTokens .OutputTokens }}</td>
         <td class="px-4 py-2 text-right text-gray-700">{{ fmtCost .Cost }}</td>
         <td class="px-4 py-2 text-gray-400 text-center">{{ if .IsStreaming }}✓{{ end }}</td>
       </tr>

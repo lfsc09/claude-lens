@@ -6,24 +6,24 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Input tokens</p>
-    <p class="text-2xl font-bold" id="total-input-tokens">{{ fmtInt .Totals.TotalInputTokens }}</p>
+    <p class="text-2xl font-bold" id="total-input-tokens">{{ fmtTokens .Totals.TotalInputTokens }}</p>
     <p class="mt-1 text-sm text-gray-500" id="total-input-cost">{{ fmtCost .Totals.TotalInputCost }}</p>
   </div>
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Output tokens</p>
-    <p class="text-2xl font-bold" id="total-output-tokens">{{ fmtInt .Totals.TotalOutputTokens }}</p>
+    <p class="text-2xl font-bold" id="total-output-tokens">{{ fmtTokens .Totals.TotalOutputTokens }}</p>
     <p class="mt-1 text-sm text-gray-500" id="total-output-cost">{{ fmtCost .Totals.TotalOutputCost }}</p>
   </div>
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache tokens</p>
-    <p class="text-2xl font-bold" id="total-cache-tokens">{{ fmtInt (add .Totals.TotalCacheCreationTokens
+    <p class="text-2xl font-bold" id="total-cache-tokens">{{ fmtTokens (add .Totals.TotalCacheCreationTokens
       .Totals.TotalCacheReadTokens) }}</p>
     <p class="mt-1 text-sm text-gray-500" id="total-cache-cost">{{ fmtCost (addCostPtr .Totals.TotalCacheCreationCost
       .Totals.TotalCacheReadCost) }}</p>
   </div>
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total tokens</p>
-    <p class="text-2xl font-bold" id="total-tokens">{{ fmtInt (add (add .Totals.TotalInputTokens
+    <p class="text-2xl font-bold" id="total-tokens">{{ fmtTokens (add (add .Totals.TotalInputTokens
       .Totals.TotalOutputTokens) (add .Totals.TotalCacheCreationTokens .Totals.TotalCacheReadTokens)) }}</p>
     <p class="mt-1 text-sm text-gray-500" id="total-cost">{{ fmtCost .Totals.TotalCost }}</p>
   </div>
@@ -34,24 +34,24 @@
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Input tokens</p>
-    <p class="text-2xl font-bold" id="today-input-tokens">{{ fmtInt .TotalsToday.TotalInputTokens }}</p>
+    <p class="text-2xl font-bold" id="today-input-tokens">{{ fmtTokens .TotalsToday.TotalInputTokens }}</p>
     <p class="mt-1 text-sm text-gray-500" id="today-input-cost">{{ fmtCost .TotalsToday.TotalInputCost }}</p>
   </div>
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Output tokens</p>
-    <p class="text-2xl font-bold" id="today-output-tokens">{{ fmtInt .TotalsToday.TotalOutputTokens }}</p>
+    <p class="text-2xl font-bold" id="today-output-tokens">{{ fmtTokens .TotalsToday.TotalOutputTokens }}</p>
     <p class="mt-1 text-sm text-gray-500" id="today-output-cost">{{ fmtCost .TotalsToday.TotalOutputCost }}</p>
   </div>
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache tokens</p>
-    <p class="text-2xl font-bold" id="today-cache-tokens">{{ fmtInt (add .TotalsToday.TotalCacheCreationTokens
+    <p class="text-2xl font-bold" id="today-cache-tokens">{{ fmtTokens (add .TotalsToday.TotalCacheCreationTokens
       .TotalsToday.TotalCacheReadTokens) }}</p>
     <p class="mt-1 text-sm text-gray-500" id="today-cache-cost">{{ fmtCost (addCostPtr
       .TotalsToday.TotalCacheCreationCost .TotalsToday.TotalCacheReadCost) }}</p>
   </div>
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total tokens</p>
-    <p class="text-2xl font-bold" id="today-tokens">{{ fmtInt (add (add .TotalsToday.TotalInputTokens
+    <p class="text-2xl font-bold" id="today-tokens">{{ fmtTokens (add (add .TotalsToday.TotalInputTokens
       .TotalsToday.TotalOutputTokens) (add .TotalsToday.TotalCacheCreationTokens .TotalsToday.TotalCacheReadTokens)) }}
     </p>
     <p class="mt-1 text-sm text-gray-500" id="today-total-cost">{{ fmtCost .TotalsToday.TotalCost }}</p>
@@ -85,10 +85,10 @@
           {{ end }}
         </td>
         <td class="px-4 py-2 text-right">{{ .ExchangeCount }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtInt .TotalInputTokens }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtInt .TotalOutputTokens }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtInt (add .TotalCacheCreationTokens .TotalCacheReadTokens) }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtInt (add (add .TotalInputTokens .TotalOutputTokens) (add
+        <td class="px-4 py-2 text-right">{{ fmtTokens .TotalInputTokens }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtTokens .TotalOutputTokens }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtTokens (add .TotalCacheCreationTokens .TotalCacheReadTokens) }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtTokens (add (add .TotalInputTokens .TotalOutputTokens) (add
           .TotalCacheCreationTokens .TotalCacheReadTokens)) }}</td>
         <td class="px-4 py-2 text-right">{{ if .TotalCost }}{{ printf "$%.4f" .TotalCost }}{{ else }}—{{ end }}</td>
         <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .LastUpdated }}</td>
@@ -274,10 +274,10 @@
     return `<tr class="hover:bg-gray-50">
       <td class="px-4 py-2">${nameHtml}</td>
       <td class="px-4 py-2 text-right">${exchange_count}</td>
-      <td class="px-4 py-2 text-right">${inputTok.toLocaleString()}</td>
-      <td class="px-4 py-2 text-right">${outputTok.toLocaleString()}</td>
-      <td class="px-4 py-2 text-right">${cacheTok.toLocaleString()}</td>
-      <td class="px-4 py-2 text-right">${totalTok.toLocaleString()}</td>
+      <td class="px-4 py-2 text-right">${fmtTokens(inputTok)}</td>
+      <td class="px-4 py-2 text-right">${fmtTokens(outputTok)}</td>
+      <td class="px-4 py-2 text-right">${fmtTokens(cacheTok)}</td>
+      <td class="px-4 py-2 text-right">${fmtTokens(totalTok)}</td>
       <td class="px-4 py-2 text-right">${costStr}</td>
       <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
       </tr>`;

@@ -152,6 +152,52 @@ func toInt64(v any) (int64, bool) {
 	}
 }
 
+// fmtTokens abbreviates an integer into a human-readable token count (e.g.
+// 1700 -> "1.7k", 6332446 -> "6.3M"), for use anywhere token counts are
+// summarized rather than inspected exactly (dashboard cards, session/exchange
+// list tables). Mirrors the fmtTokens() JS helper in base.html so
+// server-rendered and SSE-updated values stay identical. Accepts the same
+// input types as fmtInt; nil renders as "—". Exact values (e.g. the exchange
+// detail page) should keep using fmtInt instead.
+func fmtTokens(v any) string {
+	n, ok := toInt64(v)
+	if !ok {
+		return "—"
+	}
+	return abbreviateTokens(n)
+}
+
+func abbreviateTokens(n int64) string {
+	neg := n < 0
+	abs := n
+	if neg {
+		abs = -abs
+	}
+
+	var suffix string
+	var divisor float64
+	switch {
+	case abs >= 1_000_000_000:
+		suffix, divisor = "B", 1_000_000_000
+	case abs >= 1_000_000:
+		suffix, divisor = "M", 1_000_000
+	case abs >= 1_000:
+		suffix, divisor = "k", 1_000
+	default:
+		s := strconv.FormatInt(abs, 10)
+		if neg {
+			return "-" + s
+		}
+		return s
+	}
+
+	s := strings.TrimSuffix(strconv.FormatFloat(float64(abs)/divisor, 'f', 1, 64), ".0")
+	if neg {
+		return "-" + s + suffix
+	}
+	return s + suffix
+}
+
 func groupThousands(n int64) string {
 	neg := n < 0
 	if neg {
@@ -283,6 +329,7 @@ func FuncMap() template.FuncMap {
 		"urlFor":     urlFor,
 		"fmtCost":    fmtCost,
 		"fmtInt":     fmtInt,
+		"fmtTokens":  fmtTokens,
 		"fmtTime":    fmtTime,
 		"coalesce":   coalesce,
 		"toJSON":     toJSON,
