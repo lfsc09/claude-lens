@@ -28,23 +28,23 @@
   </main>
 
   <script>
-    (function () {
-      var es = new EventSource('/stream');
+    (() => {
+      const es = new EventSource('/stream');
 
-      es.onmessage = function (e) {
-        var data = JSON.parse(e.data);
+      es.onmessage = (e) => {
+        const data = JSON.parse(e.data);
         updateProxyStatus(data.proxy_status);
         updateTotals(data.totals);
         updateTotalsToday(data.totals_today);
         checkExchangesUpdate(data.latest_exchange_id);
       };
 
-      es.onerror = function () {
+      es.onerror = () => {
         updateProxyStatus('unreachable');
       };
 
       function updateProxyStatus(status) {
-        var el = document.getElementById('proxy-status');
+        const el = document.getElementById('proxy-status');
         if (!el) return;
         switch (status) {
           case 'ok':
@@ -65,79 +65,79 @@
         }
       }
 
+      function setText(id, text) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+      }
+
       function updateTotals(totals) {
         if (!totals) return;
-        var el;
-        el = document.getElementById('total-input-tokens');
-        if (el) el.textContent = (totals.total_input_tokens || 0).toLocaleString();
-        el = document.getElementById('total-input-cost');
-        if (el) el.textContent = fmtCost(totals.total_input_cost);
-        el = document.getElementById('total-output-tokens');
-        if (el) el.textContent = (totals.total_output_tokens || 0).toLocaleString();
-        el = document.getElementById('total-output-cost');
-        if (el) el.textContent = fmtCost(totals.total_output_cost);
-        el = document.getElementById('total-tokens');
-        if (el) el.textContent = ((totals.total_input_tokens || 0) + (totals.total_output_tokens || 0)).toLocaleString();
-        el = document.getElementById('total-cost');
-        if (el) el.textContent = fmtCost(totals.total_cost);
+        const inputTokens = totals.total_input_tokens ?? 0;
+        const outputTokens = totals.total_output_tokens ?? 0;
+        setText('total-input-tokens', inputTokens.toLocaleString());
+        setText('total-input-cost', fmtCost(totals.total_input_cost));
+        setText('total-output-tokens', outputTokens.toLocaleString());
+        setText('total-output-cost', fmtCost(totals.total_output_cost));
+        setText('total-tokens', (inputTokens + outputTokens).toLocaleString());
+        setText('total-cost', fmtCost(totals.total_cost));
       }
 
       function updateTotalsToday(totals) {
         if (!totals) return;
-        var el;
-        el = document.getElementById('today-input-tokens');
-        if (el) el.textContent = (totals.total_input_tokens || 0).toLocaleString();
-        el = document.getElementById('today-output-tokens');
-        if (el) el.textContent = (totals.total_output_tokens || 0).toLocaleString();
-        el = document.getElementById('today-tokens');
-        if (el) el.textContent = ((totals.total_input_tokens || 0) + (totals.total_output_tokens || 0)).toLocaleString();
+        const inputTokens = totals.total_input_tokens ?? 0;
+        const outputTokens = totals.total_output_tokens ?? 0;
+        setText('today-input-tokens', inputTokens.toLocaleString());
+        setText('today-output-tokens', outputTokens.toLocaleString());
+        setText('today-tokens', (inputTokens + outputTokens).toLocaleString());
       }
 
-      var _knownLatestId = 0;
+      let _knownLatestId = 0;
 
-      function checkExchangesUpdate(latestId) {
+      async function checkExchangesUpdate(latestId) {
         if (!latestId || latestId <= _knownLatestId) return;
         _knownLatestId = latestId;
         if (typeof window._onNewExchange === 'function') window._onNewExchange();
-        var tbody = document.getElementById('exchanges-tbody');
+        const tbody = document.getElementById('exchanges-tbody');
         if (!tbody) return;
         if (window._exchangesPage && window._exchangesPage > 1) return;
-        var sessionId = new URLSearchParams(window.location.search).get('session_id') || '';
-        var url = '/exchanges?limit=50' + (sessionId ? '&session_id=' + encodeURIComponent(sessionId) : '');
-        fetch(url)
-          .then(function (r) { return r.json(); })
-          .then(function (rows) {
-            if (!rows.length) return;
-            tbody.innerHTML = rows.map(buildRow).join('');
-          });
+        const sessionId = new URLSearchParams(window.location.search).get('session_id') || '';
+        const url = `/exchanges?limit=50${sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : ''}`;
+        const res = await fetch(url);
+        const rows = await res.json();
+        if (!rows.length) return;
+        tbody.innerHTML = rows.map(buildRow).join('');
+      }
+
+      function pad(n) {
+        return String(n).padStart(2, '0');
       }
 
       function buildRow(row) {
-        var d = new Date(row.timestamp * 1000);
-        var pad = function (n) { return String(n).padStart(2, '0'); };
-        var ts = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
-          ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-        var label = esc(row.session_name || row.session_id);
-        return '<tr class="hover:bg-gray-50">' +
-          '<td class="px-4 py-2"><a href="/ui/exchanges/' + row.id + '" class="text-blue-600 hover:underline">' + row.id + '</a></td>' +
-          '<td class="px-4 py-2 max-w-xs truncate text-gray-700" title="' + esc(row.session_id) + '">' + label + '</td>' +
-          '<td class="px-4 py-2 text-gray-500 font-mono text-xs truncate max-w-xs" title="' + esc(row.model || '') + '">' + esc(row.model || '—') + '</td>' +
-          '<td class="px-4 py-2 text-gray-500 font-mono text-xs">' + esc(row.path) + '</td>' +
-          '<td class="px-4 py-2 text-gray-500 whitespace-nowrap">' + ts + '</td>' +
-          '<td class="px-4 py-2 text-right">' + (row.input_tokens != null ? row.input_tokens : '—') + '</td>' +
-          '<td class="px-4 py-2 text-right">' + (row.output_tokens != null ? row.output_tokens : '—') + '</td>' +
-          '<td class="px-4 py-2 text-right text-gray-700">' + fmtCost(row.cost) + '</td>' +
-          '<td class="px-4 py-2 text-gray-400 text-center">' + (row.is_streaming ? '✓' : '') + '</td>' +
-          '</tr>';
+        const { id, session_id, session_name, model, path, timestamp, input_tokens, output_tokens, cost, is_streaming } = row;
+        const d = new Date(timestamp * 1000);
+        const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        const label = esc(session_name || session_id);
+        const modelLabel = esc(model || '—');
+        return `<tr class="hover:bg-gray-50">
+          <td class="px-4 py-2"><a href="/ui/exchanges/${id}" class="text-blue-600 hover:underline">${id}</a></td>
+          <td class="px-4 py-2 max-w-xs truncate text-gray-700" title="${esc(session_id)}">${label}</td>
+          <td class="px-4 py-2 text-gray-500 font-mono text-xs truncate max-w-xs" title="${esc(model || '')}">${modelLabel}</td>
+          <td class="px-4 py-2 text-gray-500 font-mono text-xs">${esc(path)}</td>
+          <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
+          <td class="px-4 py-2 text-right">${input_tokens ?? '—'}</td>
+          <td class="px-4 py-2 text-right">${output_tokens ?? '—'}</td>
+          <td class="px-4 py-2 text-right text-gray-700">${fmtCost(cost)}</td>
+          <td class="px-4 py-2 text-gray-400 text-center">${is_streaming ? '✓' : ''}</td>
+          </tr>`;
       }
 
       function fmtCost(c) {
         if (c == null) return '—';
-        return '$' + (c < 0.01 ? c.toFixed(4) : c.toFixed(2));
+        return `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}`;
       }
 
       function esc(s) {
-        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       }
     })();
   </script>
