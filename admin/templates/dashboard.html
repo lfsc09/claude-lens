@@ -116,7 +116,7 @@
 <script>
   (() => {
     // ── Heatmap ───────────────────────────────────────────────────────────
-    const _dailyCosts = {{ toJSON .DailyCosts }};
+    const _dailyCosts = {{ toJSON .DailyCosts }} ?? [];
 
   function renderHeatmap() {
     const container = document.getElementById('cost-heatmap');

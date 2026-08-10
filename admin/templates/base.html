@@ -70,15 +70,25 @@
         if (el) el.textContent = text;
       }
 
+      // Mirrors admin/template.go's addCostPtr: nil only when both inputs are
+      // nil, so an unpriced cache rate on one side still shows the other's cost.
+      function addCost(a, b) {
+        if (a == null && b == null) return null;
+        return (a ?? 0) + (b ?? 0);
+      }
+
       function updateTotals(totals) {
         if (!totals) return;
         const inputTokens = totals.total_input_tokens ?? 0;
         const outputTokens = totals.total_output_tokens ?? 0;
+        const cacheTokens = (totals.total_cache_creation_tokens ?? 0) + (totals.total_cache_read_tokens ?? 0);
         setText('total-input-tokens', inputTokens.toLocaleString());
         setText('total-input-cost', fmtCost(totals.total_input_cost));
         setText('total-output-tokens', outputTokens.toLocaleString());
         setText('total-output-cost', fmtCost(totals.total_output_cost));
-        setText('total-tokens', (inputTokens + outputTokens).toLocaleString());
+        setText('total-cache-tokens', cacheTokens.toLocaleString());
+        setText('total-cache-cost', fmtCost(addCost(totals.total_cache_creation_cost, totals.total_cache_read_cost)));
+        setText('total-tokens', (inputTokens + outputTokens + cacheTokens).toLocaleString());
         setText('total-cost', fmtCost(totals.total_cost));
       }
 
@@ -86,9 +96,15 @@
         if (!totals) return;
         const inputTokens = totals.total_input_tokens ?? 0;
         const outputTokens = totals.total_output_tokens ?? 0;
+        const cacheTokens = (totals.total_cache_creation_tokens ?? 0) + (totals.total_cache_read_tokens ?? 0);
         setText('today-input-tokens', inputTokens.toLocaleString());
+        setText('today-input-cost', fmtCost(totals.total_input_cost));
         setText('today-output-tokens', outputTokens.toLocaleString());
-        setText('today-tokens', (inputTokens + outputTokens).toLocaleString());
+        setText('today-output-cost', fmtCost(totals.total_output_cost));
+        setText('today-cache-tokens', cacheTokens.toLocaleString());
+        setText('today-cache-cost', fmtCost(addCost(totals.total_cache_creation_cost, totals.total_cache_read_cost)));
+        setText('today-tokens', (inputTokens + outputTokens + cacheTokens).toLocaleString());
+        setText('today-total-cost', fmtCost(totals.total_cost));
       }
 
       let _knownLatestId = 0;
