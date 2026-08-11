@@ -102,12 +102,58 @@ func TestUIExchanges_RendersRowsAndFilter(t *testing.T) {
 		t.Errorf("expected 2 rows with /v1/messages, got body: %s", body)
 	}
 
-	rec = doGet(t, s, "/ui/exchanges?session_id=a")
+	rec = doGet(t, s, "/ui/exchanges?q="+url.QueryEscape(`session = "a"`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("filtered status = %d, want 200", rec.Code)
 	}
 	if strings.Count(rec.Body.String(), "/v1/messages") != 1 {
 		t.Errorf("filtered view should show exactly 1 row, body: %s", rec.Body.String())
+	}
+}
+
+func TestUIExchanges_MalformedQueryShowsError(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "a", Path: "/v1/messages", Timestamp: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+
+	rec := doGet(t, s, "/ui/exchanges?q="+url.QueryEscape(`bogus_field = 1`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a bad query is a rendered error, not an HTTP failure)", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "bogus_field") {
+		t.Errorf("expected the parse error to be shown in the page, body: %s", body)
+	}
+	if strings.Contains(body, "/v1/messages") {
+		t.Errorf("a malformed filter must not fall back to showing unfiltered rows, body: %s", body)
+	}
+}
+
+func TestUIExchanges_ClearSessionOnlyForExactSessionQuery(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "a", Path: "/v1/messages", Timestamp: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+
+	rec := doGet(t, s, "/ui/exchanges?q="+url.QueryEscape(`session = "a"`))
+	if !strings.Contains(rec.Body.String(), "Clear session") {
+		t.Errorf("exact session query should offer 'Clear session', body: %s", rec.Body.String())
+	}
+
+	rec = doGet(t, s, "/ui/exchanges?q="+url.QueryEscape(`session = "a" AND cost > 0`))
+	body := rec.Body.String()
+	if strings.Contains(body, "Clear session") {
+		t.Errorf("a multi-condition query must not offer a scoped 'Clear session' delete, body: %s", body)
+	}
+	if !strings.Contains(body, "Clear all") {
+		t.Errorf("expected 'Clear all' to be shown instead, body: %s", body)
 	}
 }
 

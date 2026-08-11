@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,7 +54,7 @@ func (h *handlers) uiDashboard(c *gin.Context) {
 }
 
 func (h *handlers) uiExchanges(c *gin.Context) {
-	sessionID := c.Query("session_id")
+	q := c.Query("q")
 	page := 1
 	if v := c.Query("page"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 1 {
@@ -62,21 +63,33 @@ func (h *handlers) uiExchanges(c *gin.Context) {
 	}
 	offset := (page - 1) * uiPageSize
 
-	rows, err := h.db.GetExchanges(c.Request.Context(), sessionID, uiPageSize+1, offset)
+	rows, err := h.db.GetExchanges(c.Request.Context(), q, uiPageSize+1, offset)
+	var filterErr string
 	if err != nil {
-		c.String(http.StatusInternalServerError, "internal error")
-		return
+		// A malformed query is a user input error, not a server failure —
+		// render the page with the parse error and no rows rather than a
+		// 500 or (worse) silently falling back to an unfiltered list.
+		filterErr = err.Error()
+		rows = nil
 	}
 	hasNext := len(rows) > uiPageSize
 	if hasNext {
 		rows = rows[:uiPageSize]
 	}
 
+	// Only an exact `session = "..."` query (no other conditions) scopes the
+	// "Clear session" delete action — anything more complex only offers
+	// "Clear all", so a multi-condition filter can never turn into an
+	// implicit "delete everything matching this" button.
+	sessionID, _ := database.ExtractExactSession(q)
+
 	h.render(c, http.StatusOK, "exchanges.html", gin.H{
-		"Rows":      rows,
-		"SessionID": sessionID,
-		"Page":      page,
-		"HasNext":   hasNext,
+		"Rows":        rows,
+		"Query":       q,
+		"FilterError": filterErr,
+		"SessionID":   sessionID,
+		"Page":        page,
+		"HasNext":     hasNext,
 	})
 }
 
@@ -108,7 +121,11 @@ func (h *handlers) uiReset(c *gin.Context) {
 	}
 	h.logger.Info("reset exchanges", "deleted", n, "session_id", sessionID)
 
-	redirectURL, err := urlFor("ui_exchanges", "session_id", sessionID)
+	q := ""
+	if sessionID != "" {
+		q = fmt.Sprintf("session = %q", sessionID)
+	}
+	redirectURL, err := urlFor("ui_exchanges", "q", q)
 	if err != nil {
 		redirectURL = "/ui/exchanges"
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -191,7 +193,7 @@ func TestGetExchanges_SessionFilterAndPagination(t *testing.T) {
 		t.Errorf("expected newest-first ordering, got %+v", all)
 	}
 
-	sessA, err := db.GetExchanges(ctx, "a", 100, 0)
+	sessA, err := db.GetExchanges(ctx, `session = "a"`, 100, 0)
 	if err != nil {
 		t.Fatalf("GetExchanges(a): %v", err)
 	}
@@ -212,6 +214,97 @@ func TestGetExchanges_SessionFilterAndPagination(t *testing.T) {
 	}
 	if page1[0].ID == page2[0].ID {
 		t.Errorf("page1 and page2 overlap: %+v vs %+v", page1, page2)
+	}
+}
+
+// TestGetExchanges_FilterQuery exercises the search-box query language (see
+// query_filter.go) end-to-end against a real DB: text =/like, numeric/bool
+// comparisons, computed fields (cache_tokens), AND/OR precedence, and
+// parens overriding that precedence.
+func TestGetExchanges_FilterQuery(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	base := float64(time.Now().Unix())
+
+	seed := []Exchange{
+		{ // row 1
+			SessionID: "sess-a", Path: "/v1/messages", Timestamp: base,
+			RawRequest: "{}", RawResponse: "{}",
+			Model:               strPtr("claude-sonnet-4-5"),
+			InputTokens:         intPtr(100),
+			OutputTokens:        intPtr(50),
+			CacheCreationTokens: intPtr(10),
+			CacheReadTokens:     intPtr(5),
+			InputCost:           floatPtr(0.03),
+			IsStreaming:         false,
+		},
+		{ // row 2
+			SessionID: "sess-b", SessionName: strPtr("my project"), Path: "/v1/messages", Timestamp: base + 100,
+			RawRequest: "{}", RawResponse: "{}",
+			Model:        strPtr("claude-haiku-4-5"),
+			InputTokens:  intPtr(200),
+			OutputTokens: intPtr(80),
+			InputCost:    floatPtr(0.20),
+			IsStreaming:  true,
+		},
+		{ // row 3: no usage captured at all (e.g. a parse failure)
+			SessionID: "sess-a", Path: "/v1/complete", Timestamp: base + 200,
+			RawRequest: "{}", RawResponse: "{}",
+			Model:       strPtr("claude-opus-4-5"),
+			IsStreaming: false,
+		},
+	}
+	for i, e := range seed {
+		if err := db.SaveExchange(ctx, e); err != nil {
+			t.Fatalf("SaveExchange[%d]: %v", i, err)
+		}
+	}
+
+	tests := []struct {
+		name      string
+		query     string
+		wantPaths []string // by .Path, since it's distinct per row above
+	}{
+		{"text like", `model like sonnet`, []string{"/v1/messages"}},
+		{"text equals exact model", `model = "claude-haiku-4-5"`, []string{"/v1/messages"}},
+		{"session matches two rows", `session = "sess-a"`, []string{"/v1/complete", "/v1/messages"}},
+		{"path like across sessions", `path like messages`, []string{"/v1/messages", "/v1/messages"}},
+		{"bool stream", `stream = true`, []string{"/v1/messages"}},
+		{"number gt", `input_tokens > 150`, []string{"/v1/messages"}},
+		{"cost gt", `cost > 0.1`, []string{"/v1/messages"}},
+		{"and excludes non-matching cost", `model like sonnet AND cost > 0.1`, nil},
+		{"or includes both", `model like sonnet OR cost > 0.1`, []string{"/v1/messages", "/v1/messages"}},
+		{
+			"parens override precedence",
+			`(model like sonnet OR model like haiku) AND session = "sess-a"`,
+			[]string{"/v1/messages"},
+		},
+		{"cache_tokens computed field", `cache_tokens > 0`, []string{"/v1/messages"}},
+		{"total_tokens excludes no-usage row", `total_tokens > 0`, []string{"/v1/messages", "/v1/messages"}},
+		{"no match", `model = "does-not-exist"`, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := db.GetExchanges(ctx, tt.query, 100, 0)
+			if err != nil {
+				t.Fatalf("GetExchanges(%q): %v", tt.query, err)
+			}
+			var gotPaths []string
+			for _, r := range rows {
+				gotPaths = append(gotPaths, r.Path)
+			}
+			sort.Strings(gotPaths)
+			want := append([]string(nil), tt.wantPaths...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(gotPaths, want) {
+				t.Errorf("GetExchanges(%q) paths = %v, want %v", tt.query, gotPaths, want)
+			}
+		})
+	}
+
+	if _, err := db.GetExchanges(ctx, `nope = 1`, 100, 0); err == nil {
+		t.Error("GetExchanges with an unknown filter field: expected error, got nil")
 	}
 }
 
@@ -388,7 +481,7 @@ func TestConcurrentWrites(t *testing.T) {
 		}
 	}
 
-	rows, err := db.GetExchanges(ctx, "concurrent", 100, 0)
+	rows, err := db.GetExchanges(ctx, `session = "concurrent"`, 100, 0)
 	if err != nil {
 		t.Fatalf("GetExchanges: %v", err)
 	}
@@ -459,7 +552,7 @@ VALUES ('legacy-model', 1.0, 2.0, 1000);
 
 	// The pre-existing rows must survive the migration untouched, with the
 	// new columns present but NULL/zero (no backfill of historical data).
-	list, err := db.GetExchanges(context.Background(), "legacy-session", 10, 0)
+	list, err := db.GetExchanges(context.Background(), `session = "legacy-session"`, 10, 0)
 	if err != nil {
 		t.Fatalf("GetExchanges after migration: %v", err)
 	}
@@ -471,6 +564,13 @@ VALUES ('legacy-model', 1.0, 2.0, 1000);
 	}
 	if list[0].InputTokens == nil || *list[0].InputTokens != 10 {
 		t.Errorf("legacy row's pre-existing input_tokens was lost: %+v", list[0])
+	}
+	// total_tokens must still reflect the real input/output tokens even
+	// though the cache columns are NULL — a naive "col+col+col+col" sum
+	// would collapse to NULL here since SQL NULL propagates through '+'.
+	if list[0].TotalTokens == nil || *list[0].TotalTokens != 10+20 {
+		t.Errorf("legacy row's total_tokens = %v, want %d (10 input + 20 output, NULL cache cols ignored)",
+			list[0].TotalTokens, 10+20)
 	}
 
 	prices, err := db.ListPrices(context.Background())
@@ -498,7 +598,7 @@ VALUES ('legacy-model', 1.0, 2.0, 1000);
 	}); err != nil {
 		t.Fatalf("SaveExchange after migration: %v", err)
 	}
-	detail, err := db.GetExchanges(context.Background(), "new-session", 1, 0)
+	detail, err := db.GetExchanges(context.Background(), `session = "new-session"`, 1, 0)
 	if err != nil {
 		t.Fatalf("GetExchanges(new-session): %v", err)
 	}

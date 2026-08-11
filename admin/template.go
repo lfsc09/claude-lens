@@ -294,6 +294,18 @@ func prettyJSON(s *string) string {
 	return buf.String()
 }
 
+// sessionFilterQuery builds the `session = "<id>"` search-box query used to
+// deep-link into one session's exchanges (the dashboard's per-session links
+// and, via admin/ui.go's uiReset, the post-"Clear session" redirect), so the
+// query-language quoting/escaping lives in exactly one place. Returns "" for
+// a blank id, matching urlFor's zero-value-omits-the-param convention.
+func sessionFilterQuery(sessionID string) string {
+	if sessionID == "" {
+		return ""
+	}
+	return fmt.Sprintf("session = %q", sessionID)
+}
+
 // add is a small arithmetic helper for the dashboard's "total tokens" cells
 // (input + output) and the exchanges list's page-1/page+1 pagination links,
 // which Go templates can't compute inline on their own. Accepts int or
@@ -326,15 +338,16 @@ func addCostPtr(a, b *float64) *float64 {
 // FuncMap is the template.FuncMap shared by every admin HTML template.
 func FuncMap() template.FuncMap {
 	return template.FuncMap{
-		"urlFor":     urlFor,
-		"fmtCost":    fmtCost,
-		"fmtInt":     fmtInt,
-		"fmtTokens":  fmtTokens,
-		"fmtTime":    fmtTime,
-		"coalesce":   coalesce,
-		"toJSON":     toJSON,
-		"prettyJSON": prettyJSON,
-		"add":        add,
-		"addCostPtr": addCostPtr,
+		"urlFor":             urlFor,
+		"fmtCost":            fmtCost,
+		"fmtInt":             fmtInt,
+		"fmtTokens":          fmtTokens,
+		"fmtTime":            fmtTime,
+		"coalesce":           coalesce,
+		"toJSON":             toJSON,
+		"prettyJSON":         prettyJSON,
+		"add":                add,
+		"addCostPtr":         addCostPtr,
+		"sessionFilterQuery": sessionFilterQuery,
 	}
 }

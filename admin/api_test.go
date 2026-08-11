@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestExchangesList_FilterAndPagination(t *testing.T) {
 		}
 	}
 
-	rec := doJSON(t, s, http.MethodGet, "/exchanges?session_id=a", nil)
+	rec := doJSON(t, s, http.MethodGet, "/exchanges?q="+url.QueryEscape(`session = "a"`), nil)
 	var rows []database.ExchangeSummary
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -111,6 +112,11 @@ func TestExchangesList_FilterAndPagination(t *testing.T) {
 	rec = doJSON(t, s, http.MethodGet, "/exchanges?limit=abc", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("non-integer limit: status = %d, want 400", rec.Code)
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/exchanges?q="+url.QueryEscape(`bogus_field = 1`), nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown filter field: status = %d, want 400", rec.Code)
 	}
 }
 

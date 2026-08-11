@@ -422,7 +422,7 @@ func waitForExchangeCount(t *testing.T, db *database.DB, sessionID string, want 
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		rows, err := db.GetExchanges(context.Background(), sessionID, 100, 0)
+		rows, err := db.GetExchanges(context.Background(), fmt.Sprintf("session = %q", sessionID), 100, 0)
 		if err != nil {
 			t.Fatalf("GetExchanges: %v", err)
 		}
@@ -436,7 +436,7 @@ func waitForExchangeCount(t *testing.T, db *database.DB, sessionID string, want 
 
 func mustGetExchange(t *testing.T, db *database.DB, sessionID string) *database.ExchangeDetail {
 	t.Helper()
-	rows, err := db.GetExchanges(context.Background(), sessionID, 1, 0)
+	rows, err := db.GetExchanges(context.Background(), fmt.Sprintf("session = %q", sessionID), 1, 0)
 	if err != nil || len(rows) == 0 {
 		t.Fatalf("no exchange found for session_id=%s (err=%v)", sessionID, err)
 	}

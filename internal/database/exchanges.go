@@ -163,22 +163,23 @@ func sumCosts(costs ...*float64) (sum float64, ok bool) {
 }
 
 // GetExchanges returns a page of exchange summaries, newest first, optionally
-// filtered to a single session. Pass sessionID == "" for no filter.
-func (db *DB) GetExchanges(ctx context.Context, sessionID string, limit, offset int) ([]ExchangeSummary, error) {
+// filtered by a search-box query (see query_filter.go for the grammar). Pass
+// filterQuery == "" for no filter.
+func (db *DB) GetExchanges(ctx context.Context, filterQuery string, limit, offset int) ([]ExchangeSummary, error) {
+	where, whereArgs, err := CompileExchangeFilter(filterQuery)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `SELECT id, session_id, session_name, path, timestamp, is_streaming,
 	                  input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 	                  model, cost,
-	                  CASE WHEN input_tokens IS NULL AND output_tokens IS NULL
-	                            AND cache_creation_tokens IS NULL AND cache_read_tokens IS NULL
-	                       THEN NULL
-	                       ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-	                            + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0)
-	                  END AS total_tokens
+	                  ` + totalTokensExpr + ` AS total_tokens
 	           FROM exchanges `
 	args := []any{}
-	if sessionID != "" {
-		query += "WHERE session_id = ? "
-		args = append(args, sessionID)
+	if where != "" {
+		query += "WHERE " + where + " "
+		args = append(args, whereArgs...)
 	}
 	query += "ORDER BY timestamp DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)

@@ -132,8 +132,8 @@
         const tbody = document.getElementById('exchanges-tbody');
         if (!tbody) return;
         if (window._exchangesPage && window._exchangesPage > 1) return;
-        const sessionId = new URLSearchParams(window.location.search).get('session_id') || '';
-        const url = `/exchanges?limit=50${sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : ''}`;
+        const q = new URLSearchParams(window.location.search).get('q') || '';
+        const url = `/exchanges?limit=50${q ? `&q=${encodeURIComponent(q)}` : ''}`;
         const res = await fetch(url);
         const rows = await res.json();
         if (!rows.length) return;

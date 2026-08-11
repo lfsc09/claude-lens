@@ -78,7 +78,7 @@
       {{ range .SessionStats }}
       <tr class="hover:bg-gray-50">
         <td class="px-4 py-2">
-          <a href="{{ urlFor "ui_exchanges" "session_id" .SessionID }}"
+          <a href="{{ urlFor "ui_exchanges" "q" (sessionFilterQuery .SessionID) }}"
             class="text-blue-600 hover:underline font-medium">{{ coalesce .SessionName .SessionID }}</a>
           {{ if .SessionName }}
           <span class="block text-xs text-gray-400 font-mono">{{ .SessionID }}</span>
@@ -270,7 +270,8 @@
     const costStr = cost > 0 ? `$${cost.toFixed(4)}` : '—';
     const d = new Date(last_updated * 1000);
     const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    const nameHtml = `<a href="/ui/exchanges?session_id=${encodeURIComponent(session_id)}" class="text-blue-600 hover:underline font-medium">${esc(session_name || session_id)}</a>${session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session_id)}</span>` : ''}`;
+    const sessionQuery = 'session = ' + JSON.stringify(session_id);
+    const nameHtml = `<a href="/ui/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-blue-600 hover:underline font-medium">${esc(session_name || session_id)}</a>${session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session_id)}</span>` : ''}`;
     return `<tr class="hover:bg-gray-50">
       <td class="px-4 py-2">${nameHtml}</td>
       <td class="px-4 py-2 text-right">${exchange_count}</td>

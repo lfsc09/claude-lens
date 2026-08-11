@@ -12,14 +12,29 @@
   </form>
 </div>
 
-<form method="get" class="mb-4 flex gap-2">
-  <input type="text" name="session_id" value="{{ .SessionID }}" placeholder="Filter by session ID or name"
-    class="border border-gray-300 rounded px-3 py-1.5 text-sm w-72 focus:outline-none focus:ring-1 focus:ring-blue-500">
-  <button type="submit" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700">
-    Filter
-  </button>
-  {{ if .SessionID }}
-  <a href="{{ urlFor "ui_exchanges" }}" class="text-sm text-gray-500 self-center hover:underline">Clear</a>
+<form method="get" class="mb-4">
+  <div class="flex gap-2">
+    <input type="text" name="q" value="{{ .Query }}" placeholder='model like sonnet AND cost > 0.1'
+      class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full font-mono focus:outline-none focus:ring-1 focus:ring-blue-500">
+    <button type="submit" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700 whitespace-nowrap">
+      Search
+    </button>
+    {{ if .Query }}
+    <a href="{{ urlFor "ui_exchanges" }}"
+      class="text-sm text-gray-500 self-center hover:underline whitespace-nowrap">Clear</a>
+    {{ end }}
+  </div>
+  {{ if .FilterError }}
+  <p class="mt-1.5 text-xs text-red-600">{{ .FilterError }}</p>
+  {{ else }}
+  <p class="mt-1.5 text-xs text-gray-400">
+    <b>Fields</b>: id, session, model, path, date, input_tokens, output_tokens, cache_tokens, total_tokens, cost, stream
+  </p>
+  <ul class="mt-1.5">
+    <li class="mt-0.5 ms-2 text-xs text-gray-400">Text fields take: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">like</code></li>
+    <li class="mt-0.5 ms-2 text-xs text-gray-400">Numbers/dates take: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&lt;</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&gt;</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">!=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&lt;=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&gt;=</code></li>
+    <li class="mt-0.5 ms-2 text-xs text-gray-400">Combine with: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">AND</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">OR</code> and <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">(…)</code></li>
+  </ul>
   {{ end }}
 </form>
 
@@ -67,10 +82,10 @@
 
 <div class="mt-4 flex gap-4 text-sm">
   {{ if gt .Page 1 }}
-  <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">Previous</a>
+  <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "q" .Query }}" class="text-blue-600 hover:underline">Previous</a>
   {{ end }}
   {{ if .HasNext }}
-  <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">Next</a>
+  <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "q" .Query }}" class="text-blue-600 hover:underline">Next</a>
   {{ end }}
 </div>
 {{ end }}

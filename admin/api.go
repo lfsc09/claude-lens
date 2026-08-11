@@ -46,7 +46,7 @@ func (h *handlers) health(c *gin.Context) {
 }
 
 func (h *handlers) listExchanges(c *gin.Context) {
-	sessionID := c.Query("session_id")
+	q := c.Query("q")
 
 	limit := 100
 	offset := 0
@@ -70,9 +70,9 @@ func (h *handlers) listExchanges(c *gin.Context) {
 		limit = 1000
 	}
 
-	rows, err := h.db.GetExchanges(c.Request.Context(), sessionID, limit, offset)
+	rows, err := h.db.GetExchanges(c.Request.Context(), q, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if rows == nil {
