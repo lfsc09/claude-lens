@@ -40,13 +40,13 @@ jobs:
           mkdir dist
           GOOS=linux GOARCH=amd64 go build \
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
-            -o dist/claude-lens-linux-amd64
+            -o dist/claude-lens-linux-amd64 ./cmd/claude-lens
           GOOS=darwin GOARCH=amd64 go build \
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
-            -o dist/claude-lens-darwin-amd64
+            -o dist/claude-lens-darwin-amd64 ./cmd/claude-lens
           GOOS=windows GOARCH=amd64 go build \
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
-            -o dist/claude-lens-windows-amd64.exe
+            -o dist/claude-lens-windows-amd64.exe ./cmd/claude-lens
 
       - name: Create and push Git tag
         run: |
