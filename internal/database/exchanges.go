@@ -48,6 +48,7 @@ type ExchangeSummary struct {
 	CacheReadTokens     *int     `json:"cache_read_tokens"`
 	Model               *string  `json:"model"`
 	Cost                *float64 `json:"cost"`
+	TotalTokens         *int     `json:"total_tokens"`
 }
 
 // ExchangeDetail is a full exchange row, including request/response bodies.
@@ -166,7 +167,13 @@ func sumCosts(costs ...*float64) (sum float64, ok bool) {
 func (db *DB) GetExchanges(ctx context.Context, sessionID string, limit, offset int) ([]ExchangeSummary, error) {
 	query := `SELECT id, session_id, session_name, path, timestamp, is_streaming,
 	                  input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-	                  model, cost
+	                  model, cost,
+	                  CASE WHEN input_tokens IS NULL AND output_tokens IS NULL
+	                            AND cache_creation_tokens IS NULL AND cache_read_tokens IS NULL
+	                       THEN NULL
+	                       ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+	                            + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0)
+	                  END AS total_tokens
 	           FROM exchanges `
 	args := []any{}
 	if sessionID != "" {
@@ -188,7 +195,7 @@ func (db *DB) GetExchanges(ctx context.Context, sessionID string, limit, offset 
 		var isStreaming int
 		if err := rows.Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp,
 			&isStreaming, &e.InputTokens, &e.OutputTokens, &e.CacheCreationTokens, &e.CacheReadTokens,
-			&e.Model, &e.Cost); err != nil {
+			&e.Model, &e.Cost, &e.TotalTokens); err != nil {
 			return nil, err
 		}
 		e.IsStreaming = isStreaming != 0

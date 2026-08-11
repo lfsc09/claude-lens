@@ -30,10 +30,8 @@
         <th class="px-4 py-2 font-medium">ID</th>
         <th class="px-4 py-2 font-medium">Session</th>
         <th class="px-4 py-2 font-medium">Model</th>
-        <th class="px-4 py-2 font-medium">Path</th>
         <th class="px-4 py-2 font-medium">Time</th>
-        <th class="px-4 py-2 font-medium text-right">In tokens</th>
-        <th class="px-4 py-2 font-medium text-right">Out tokens</th>
+        <th class="px-4 py-2 font-medium text-right">Tokens</th>
         <th class="px-4 py-2 font-medium text-right">Cost</th>
         <th class="px-4 py-2 font-medium">Stream</th>
       </tr>
@@ -47,19 +45,20 @@
         <td class="px-4 py-2 max-w-xs truncate text-gray-700" title="{{ .SessionID }}">
           {{ coalesce .SessionName .SessionID }}
         </td>
-        <td class="px-4 py-2 text-gray-500 font-mono text-xs truncate max-w-xs" title="{{ coalesce .Model "" }}">
-          {{ coalesce .Model "—" }}
+        <td class="px-4 py-2 font-mono max-w-xs" title="{{ coalesce .Model "" }}">
+          <div class="flex flex-col">
+            <span class="text-sm text-gray-700 truncate">{{ coalesce .Model "—" }}</span>
+            <span class="text-xs text-gray-400 truncate">{{ .Path }}</span>
+          </div>
         </td>
-        <td class="px-4 py-2 text-gray-500 font-mono text-xs">{{ .Path }}</td>
         <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .Timestamp }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens .InputTokens }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens .OutputTokens }}</td>
+        <td class="px-4 py-2 text-right" title="In: {{ fmtTokens .InputTokens }}&#10;Out: {{ fmtTokens .OutputTokens }}&#10;Cache creation: {{ fmtTokens .CacheCreationTokens }}&#10;Cache read: {{ fmtTokens .CacheReadTokens }}">{{ fmtTokens .TotalTokens }}</td>
         <td class="px-4 py-2 text-right text-gray-700">{{ fmtCost .Cost }}</td>
         <td class="px-4 py-2 text-gray-400 text-center">{{ if .IsStreaming }}✓{{ end }}</td>
       </tr>
       {{ else }}
       <tr>
-        <td colspan="9" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td>
+        <td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td>
       </tr>
       {{ end }}
     </tbody>
@@ -68,12 +67,10 @@
 
 <div class="mt-4 flex gap-4 text-sm">
   {{ if gt .Page 1 }}
-  <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">←
-    Previous</a>
+  <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">Previous</a>
   {{ end }}
   {{ if .HasNext }}
-  <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">Next
-    →</a>
+  <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "session_id" .SessionID }}" class="text-blue-600 hover:underline">Next</a>
   {{ end }}
 </div>
 {{ end }}
