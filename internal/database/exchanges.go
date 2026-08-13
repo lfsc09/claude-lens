@@ -205,6 +205,27 @@ func (db *DB) GetExchanges(ctx context.Context, filterQuery string, limit, offse
 	return out, rows.Err()
 }
 
+// CountExchanges returns how many exchanges match filterQuery (the same
+// grammar as GetExchanges), for computing pagination totals. Pass
+// filterQuery == "" for no filter.
+func (db *DB) CountExchanges(ctx context.Context, filterQuery string) (int, error) {
+	where, whereArgs, err := CompileExchangeFilter(filterQuery)
+	if err != nil {
+		return 0, err
+	}
+
+	query := "SELECT COUNT(*) FROM exchanges "
+	if where != "" {
+		query += "WHERE " + where
+	}
+
+	var total int
+	if err := db.sql.QueryRowContext(ctx, query, whereArgs...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 // GetExchangeDetail returns a single exchange, or nil if id doesn't exist.
 func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail, error) {
 	var e ExchangeDetail

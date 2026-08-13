@@ -12,8 +12,6 @@ import (
 	"github.com/lfsc09/claude-lens/internal/database"
 )
 
-const uiPageSize = 50
-
 func (h *handlers) uiDashboard(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -48,27 +46,36 @@ func (h *handlers) uiDashboard(c *gin.Context) {
 }
 
 func (h *handlers) uiExchanges(c *gin.Context) {
+	ctx := c.Request.Context()
 	q := c.Query("q")
-	page := 1
+	pageSize := normalizePageSize(c.Query("size"))
+
+	requestedPage := 1
 	if v := c.Query("page"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 1 {
-			page = n
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			requestedPage = n
 		}
 	}
-	offset := (page - 1) * uiPageSize
 
-	rows, err := h.db.GetExchanges(c.Request.Context(), q, uiPageSize+1, offset)
+	total, err := h.db.CountExchanges(ctx, q)
 	var filterErr string
 	if err != nil {
 		// A malformed query is a user input error, not a server failure —
 		// render the page with the parse error and no rows rather than a
 		// 500 or (worse) silently falling back to an unfiltered list.
 		filterErr = err.Error()
-		rows = nil
+		total = 0
 	}
-	hasNext := len(rows) > uiPageSize
-	if hasNext {
-		rows = rows[:uiPageSize]
+
+	page, totalPages, rangeFrom, rangeTo := paginate(requestedPage, pageSize, total)
+
+	var rows []database.ExchangeSummary
+	if filterErr == "" {
+		rows, err = h.db.GetExchanges(ctx, q, pageSize, (page-1)*pageSize)
+		if err != nil {
+			filterErr = err.Error()
+			rows = nil
+		}
 	}
 
 	// Only an exact `session = "..."` query (no other conditions) scopes the
@@ -83,7 +90,12 @@ func (h *handlers) uiExchanges(c *gin.Context) {
 		"FilterError": filterErr,
 		"SessionID":   sessionID,
 		"Page":        page,
-		"HasNext":     hasNext,
+		"PageSize":    pageSize,
+		"PageSizes":   pageSizes,
+		"Total":       total,
+		"TotalPages":  totalPages,
+		"RangeFrom":   rangeFrom,
+		"RangeTo":     rangeTo,
 	})
 }
 

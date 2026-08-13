@@ -220,6 +220,62 @@ func TestUIExchanges_EmptyState(t *testing.T) {
 	}
 }
 
+// TestUIExchanges_Pagination seeds enough rows to span three pages at a
+// custom page size and checks the resulting page/range math and
+// First/Previous/Next/Last affordances at each position, plus that an
+// out-of-range requested page clamps to the last page rather than erroring.
+func TestUIExchanges_Pagination(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	for i := 0; i < 30; i++ {
+		if err := db.SaveExchange(ctx, database.Exchange{
+			SessionID: "s", Path: "/v1/messages", Timestamp: float64(nowUnix()) + float64(i),
+			RawRequest: "{}", RawResponse: "{}",
+		}); err != nil {
+			t.Fatalf("SaveExchange %d: %v", i, err)
+		}
+	}
+
+	// size=25 over 30 rows gives exactly two pages: 1-25 and 26-30.
+	rec := doGet(t, s, "/ui/exchanges?size=25")
+	body := rec.Body.String()
+	if !strings.Contains(body, "1–25 of 30") {
+		t.Errorf("page 1: expected range '1–25 of 30', body: %s", body)
+	}
+	// html/template pads numeric substitutions inside <script> with spaces
+	// (JS-context auto-escaping), so match loosely rather than on exact
+	// "= 25;" spacing.
+	if !strings.Contains(body, "window._exchangesPageSize") || !strings.Contains(body, "25") {
+		t.Errorf("page 1: expected window._exchangesPageSize set to 25, body: %s", body)
+	}
+	if strings.Contains(body, ">Previous</a>") || strings.Contains(body, ">First</a>") {
+		t.Errorf("page 1: Previous/First should not be links, body: %s", body)
+	}
+	if !strings.Contains(body, ">Next</a>") || !strings.Contains(body, ">Last</a>") {
+		t.Errorf("page 1: expected Next/Last links, body: %s", body)
+	}
+
+	rec = doGet(t, s, "/ui/exchanges?size=25&page=2")
+	body = rec.Body.String()
+	if !strings.Contains(body, "26–30 of 30") {
+		t.Errorf("page 2: expected range '26–30 of 30', body: %s", body)
+	}
+	if !strings.Contains(body, ">Previous</a>") || !strings.Contains(body, ">First</a>") {
+		t.Errorf("page 2: expected Previous/First links, body: %s", body)
+	}
+	if strings.Contains(body, ">Next</a>") || strings.Contains(body, ">Last</a>") {
+		t.Errorf("last page: Next/Last should not be links, body: %s", body)
+	}
+
+	// Requesting page 99 (past the last page, which is 2) must clamp to 2
+	// rather than rendering empty or erroring.
+	rec = doGet(t, s, "/ui/exchanges?size=25&page=99")
+	body = rec.Body.String()
+	if !strings.Contains(body, "26–30 of 30") {
+		t.Errorf("out-of-range page: expected clamp to last page's range '26–30 of 30', body: %s", body)
+	}
+}
+
 func TestUIExchangeDetail_RendersAndNotFound(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()

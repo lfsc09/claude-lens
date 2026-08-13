@@ -1,6 +1,9 @@
 {{ define "title" }}Exchanges – claude-lens Admin{{ end }}
 {{ define "content" }}
-<script>window._exchangesPage = {{ .Page }};</script>
+<script>
+  window._exchangesPage = {{ .Page }};
+  window._exchangesPageSize = {{ .PageSize }};
+</script>
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-xl font-semibold">Exchanges</h1>
   <form action="{{ urlFor "ui_reset" }}" method="post"
@@ -14,6 +17,7 @@
 
 <form method="get" class="mb-4">
   <div class="flex gap-2">
+    <input type="hidden" name="size" value="{{ .PageSize }}">
     <input type="text" name="q" value="{{ .Query }}" placeholder='model like sonnet AND cost > 0.1'
       class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full font-mono focus:outline-none focus:ring-1 focus:ring-blue-500">
     <button type="submit" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700 whitespace-nowrap">
@@ -80,14 +84,93 @@
   </table>
 </div>
 
-<div class="mt-4 flex gap-4 text-sm">
-  {{ if gt .Page 1 }}
-  <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "q" .Query }}" class="text-blue-600 hover:underline">Previous</a>
-  {{ end }}
-  {{ if .HasNext }}
-  <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "q" .Query }}" class="text-blue-600 hover:underline">Next</a>
-  {{ end }}
+<div class="mt-4 flex flex-wrap items-center justify-between gap-4 text-sm">
+  <div class="flex items-center gap-2 text-gray-500">
+    <label for="page-size-select">Rows per page</label>
+    <select id="page-size-select"
+      class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+      {{ $pageSize := .PageSize }}
+      {{ range .PageSizes }}
+      <option value="{{ . }}" {{ if eq . $pageSize }}selected{{ end }}>{{ . }}</option>
+      {{ end }}
+    </select>
+    <span>
+      {{ if gt .Total 0 }}{{ .RangeFrom }}–{{ .RangeTo }} of {{ .Total }}{{ else }}0 of 0{{ end }} results
+    </span>
+  </div>
+
+  <div class="flex items-center gap-3">
+    {{ if gt .Page 1 }}
+    <a href="{{ urlFor "ui_exchanges" "page" 1 "size" .PageSize "q" .Query }}"
+      class="text-blue-600 hover:underline">First</a>
+    <a href="{{ urlFor "ui_exchanges" "page" (add .Page -1) "size" .PageSize "q" .Query }}"
+      class="text-blue-600 hover:underline">Previous</a>
+    {{ else }}
+    <span class="text-gray-300">First</span>
+    <span class="text-gray-300">Previous</span>
+    {{ end }}
+
+    <span class="flex items-center gap-1.5 text-gray-500">
+      Page
+      <input id="page-jump-input" type="number" min="1" max="{{ .TotalPages }}" value="{{ .Page }}"
+        class="border border-gray-300 rounded px-2 py-1 text-sm w-16 text-center focus:outline-none focus:ring-1 focus:ring-blue-500">
+      of {{ .TotalPages }}
+    </span>
+
+    {{ if lt .Page .TotalPages }}
+    <a href="{{ urlFor "ui_exchanges" "page" (add .Page 1) "size" .PageSize "q" .Query }}"
+      class="text-blue-600 hover:underline">Next</a>
+    <a href="{{ urlFor "ui_exchanges" "page" .TotalPages "size" .PageSize "q" .Query }}"
+      class="text-blue-600 hover:underline">Last</a>
+    {{ else }}
+    <span class="text-gray-300">Next</span>
+    <span class="text-gray-300">Last</span>
+    {{ end }}
+  </div>
 </div>
+{{ end }}
+
+{{ define "scripts" }}
+<script>
+  (() => {
+    const query = {{ toJSON .Query }};
+    const pageSize = {{ .PageSize }};
+    const totalPages = {{ .TotalPages }};
+
+    function navigate(page, size) {
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      params.set('size', size);
+      params.set('page', page);
+      window.location.href = '{{ urlFor "ui_exchanges" }}?' + params.toString();
+    }
+
+    const sizeSelect = document.getElementById('page-size-select');
+    if (sizeSelect) {
+      sizeSelect.addEventListener('change', () => {
+        navigate(1, sizeSelect.value);
+      });
+    }
+
+    const pageInput = document.getElementById('page-jump-input');
+    if (pageInput) {
+      pageInput.addEventListener('focus', () => {
+        pageInput.select();
+      });
+      pageInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        pageInput.blur();
+      });
+      pageInput.addEventListener('change', () => {
+        let page = parseInt(pageInput.value, 10);
+        if (!Number.isFinite(page)) page = 1;
+        page = Math.min(Math.max(page, 1), totalPages);
+        navigate(page, pageSize);
+      });
+    }
+  })();
+</script>
 {{ end }}
 
 {{ template "base" . }}
