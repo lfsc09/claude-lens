@@ -226,9 +226,9 @@
 
           const clr = LEVELS[getLevel(cost)];
           const txt = fmtCell(cost);
-          const tip = `${key}${cost > 0 ? `: $${cost.toFixed(6)}` : ': no activity'}`;
+          const tip = `<div class="flex gap-2"><b>${key}:</b><span>${cost > 0 ? `$${cost.toFixed(6)}` : 'no activity'}</span></div>`;
 
-          return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[9px] font-mono overflow-hidden cursor-default" title="${tip}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+          return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[9px] font-mono overflow-hidden cursor-default" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
         }).join('');
 
         return `<div class="flex flex-col gap-1 ${gapClass}">

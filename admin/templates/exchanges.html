@@ -61,17 +61,17 @@
         <td class="px-4 py-2">
           <a href="{{ urlFor "ui_exchange_detail" .ID }}" class="text-blue-600 hover:underline">{{ .ID }}</a>
         </td>
-        <td class="px-4 py-2 max-w-xs truncate text-gray-700" title="{{ .SessionID }}">
+        <td class="px-4 py-2 max-w-xs truncate text-gray-700">
           {{ coalesce .SessionName .SessionID }}
         </td>
-        <td class="px-4 py-2 font-mono max-w-xs" title="{{ coalesce .Model "" }}">
+        <td class="px-4 py-2 font-mono max-w-xs">
           <div class="flex flex-col">
             <span class="text-sm text-gray-700 truncate">{{ coalesce .Model "—" }}</span>
             <span class="text-xs text-gray-400 truncate">{{ .Path }}</span>
           </div>
         </td>
         <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .Timestamp }}</td>
-        <td class="px-4 py-2 text-right" title="In: {{ fmtTokens .InputTokens }}&#10;Out: {{ fmtTokens .OutputTokens }}&#10;Cache creation: {{ fmtTokens .CacheCreationTokens }}&#10;Cache read: {{ fmtTokens .CacheReadTokens }}">{{ fmtTokens .TotalTokens }}</td>
+        <td class="px-4 py-2 text-right">{{ fmtTokens .TotalTokens }}</td>
         <td class="px-4 py-2 text-right text-gray-700">{{ fmtCost .Cost }}</td>
         <td class="px-4 py-2 text-gray-400 text-center">{{ if .IsStreaming }}✓{{ end }}</td>
       </tr>

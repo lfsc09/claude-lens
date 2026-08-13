@@ -27,6 +27,65 @@
     {{ block "content" . }}{{ end }}
   </main>
 
+  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs px-2.5 py-1.5 rounded-md bg-gray-600 text-white text-xs leading-snug shadow-lg pointer-events-none whitespace-pre-line opacity-0 transition-opacity duration-150"></div>
+
+  <script>
+    // Single floating tooltip driven by [data-tip] elements. A per-cell
+    // absolutely-positioned tooltip would get clipped by the tables'
+    // overflow-x-auto wrappers, so this uses one fixed-position element
+    // repositioned on hover/focus instead.
+    (() => {
+      const tip = document.getElementById('app-tooltip');
+      let activeEl = null;
+
+      function positionTip(el) {
+        const rect = el.getBoundingClientRect();
+        const tipRect = tip.getBoundingClientRect();
+        let left = rect.left + rect.width / 2 - tipRect.width / 2;
+        left = Math.max(4, Math.min(left, window.innerWidth - tipRect.width - 4));
+        let top = rect.top - tipRect.height - 8;
+        if (top < 4) top = rect.bottom + 8;
+        tip.style.left = `${left}px`;
+        tip.style.top = `${top}px`;
+      }
+
+      function showTip(el) {
+        const textOrHtml = el.getAttribute('data-tip');
+        if (!textOrHtml) return;
+        tip.innerHTML = textOrHtml;
+        activeEl = el;
+        tip.classList.remove('opacity-0');
+        tip.classList.add('opacity-100');
+        positionTip(el);
+      }
+
+      function hideTip() {
+        activeEl = null;
+        tip.classList.remove('opacity-100');
+        tip.classList.add('opacity-0');
+      }
+
+      document.addEventListener('mouseover', (e) => {
+        const el = e.target.closest('[data-tip]');
+        if (el) showTip(el);
+      });
+      document.addEventListener('mouseout', (e) => {
+        if (activeEl && e.target.closest('[data-tip]') === activeEl) hideTip();
+      });
+      document.addEventListener('focusin', (e) => {
+        const el = e.target.closest('[data-tip]');
+        if (el) showTip(el);
+      });
+      document.addEventListener('focusout', (e) => {
+        if (activeEl && e.target.closest('[data-tip]') === activeEl) hideTip();
+      });
+      document.addEventListener('scroll', () => {
+        if (activeEl) positionTip(activeEl);
+      }, true);
+      window.addEventListener('resize', hideTip);
+    })();
+  </script>
+
   <script>
     // Mirrors admin/template.go's fmtTokens: values under 1000 render as
     // plain integers, larger values abbreviate to 1 decimal place (1.7k,
@@ -136,11 +195,11 @@
 
       function buildRowTokenTitle(row) {
         const parts = [];
-        if (row.input_tokens != null) parts.push(`In: ${fmtTokens(row.input_tokens)}`);
-        if (row.output_tokens != null) parts.push(`Out: ${fmtTokens(row.output_tokens)}`);
-        if (row.cache_creation_tokens != null) parts.push(`Cache creation: ${fmtTokens(row.cache_creation_tokens)}`);
-        if (row.cache_read_tokens != null) parts.push(`Cache read: ${fmtTokens(row.cache_read_tokens)}`);
-        return parts.join('\n');
+        if (row.input_tokens != null) parts.push(`<div class="flex justify-between"><b>Input:</b><span>${fmtTokens(row.input_tokens)}</span></div>`);
+        if (row.output_tokens != null) parts.push(`<div class="flex justify-between"><b>Output:</b><span>${fmtTokens(row.output_tokens)}</span></div>`);
+        if (row.cache_creation_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache creat:</b><span>${fmtTokens(row.cache_creation_tokens)}</span></div>`);
+        if (row.cache_read_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache read:</b><span>${fmtTokens(row.cache_read_tokens)}</span></div>`);
+        return parts.length ? '<div class="w-32 flex flex-col gap-0.5">' + parts.join('') + '</div>' : '';
       }
 
       function buildRow(row) {
@@ -151,15 +210,15 @@
         const modelLabel = esc(model || '—');
         return `<tr class="hover:bg-gray-50">
           <td class="px-4 py-2"><a href="/ui/exchanges/${id}" class="text-blue-600 hover:underline">${id}</a></td>
-          <td class="px-4 py-2 max-w-xs truncate text-gray-700" title="${esc(session_id)}">${label}</td>
-          <td class="px-4 py-2 font-mono max-w-xs" title="${esc(model || '')}">
+          <td class="px-4 py-2 max-w-xs truncate text-gray-700">${label}</td>
+          <td class="px-4 py-2 font-mono max-w-xs">
             <div class="flex flex-col">
               <span class="text-sm text-gray-700 truncate">${modelLabel}</span>
               <span class="text-xs text-gray-400 truncate">${esc(path)}</span>
             </div>
           </td>
           <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
-          <td class="px-4 py-2 text-right" title="${buildRowTokenTitle(row)}">${fmtTokens(total_tokens)}</td>
+          <td class="px-4 py-2 text-right" data-tip="${esc(buildRowTokenTitle(row))}">${fmtTokens(total_tokens)}</td>
           <td class="px-4 py-2 text-right text-gray-700">${fmtCost(cost)}</td>
           <td class="px-4 py-2 text-gray-400 text-center">${is_streaming ? '✓' : ''}</td>
           </tr>`;
