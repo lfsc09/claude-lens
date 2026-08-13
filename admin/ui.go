@@ -14,22 +14,14 @@ import (
 
 const uiPageSize = 50
 
-func startOfToday() float64 {
-	now := time.Now()
-	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	return float64(midnight.Unix())
-}
-
 func (h *handlers) uiDashboard(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	totals, err := h.db.GetTokenTotals(ctx, "", nil)
-	if err != nil {
-		c.String(http.StatusInternalServerError, "internal error")
-		return
-	}
-	since := startOfToday()
-	totalsToday, err := h.db.GetTokenTotals(ctx, "", &since)
+	rangeKey := normalizeDashboardRange(c.Query("range"))
+	now := time.Now()
+	since := sinceForRange(rangeKey, now)
+
+	totals, err := h.db.GetTokenTotals(ctx, "", &since)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "internal error")
 		return
@@ -47,9 +39,11 @@ func (h *handlers) uiDashboard(c *gin.Context) {
 
 	h.render(c, http.StatusOK, "dashboard.html", gin.H{
 		"Totals":       totals,
-		"TotalsToday":  totalsToday,
 		"SessionStats": stats,
 		"DailyCosts":   dailyCosts,
+		"Range":        rangeKey,
+		"RangeFrom":    time.Unix(int64(since), 0).In(now.Location()).Format("2006-01-02"),
+		"RangeTo":      now.Format("2006-01-02"),
 	})
 }
 

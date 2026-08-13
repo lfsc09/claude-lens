@@ -2,8 +2,35 @@
 {{ define "content" }}
 <h1 class="text-xl font-semibold mb-6">Dashboard</h1>
 
+<!-- ── Filters ─────────────────────────────────────────────────────────── -->
+<div class="w-full flex justify-between items-center mb-4 border-b border-gray-200 pb-4 gap-4 flex-wrap">
+  <div class="flex gap-2">
+    <div class="flex items-center justify-center gap-2 border border-gray-950/10 rounded-lg px-3 py-2">
+      <span class="text-xs font-medium text-gray-500">From:</span>
+      <span class="text-sm font-mono text-gray-900" id="date-from-value">{{ .RangeFrom }}</span>
+    </div>
+    <div class="flex items-center justify-center gap-2 border border-gray-950/10 rounded-lg px-3 py-2">
+      <span class="text-xs font-medium text-gray-500">To:</span>
+      <span class="text-sm font-mono text-gray-900" id="date-to-value">{{ .RangeTo }}</span>
+    </div>
+  </div>
+  <div class="flex gap-2">
+    <div class="flex flex-col gap-1">
+      <select id="predefined-date-filter" class="rounded-lg appearance-none border border-gray-950/10 px-3 py-2 text-sm font-mono">
+        <option value="today" {{ if eq .Range "today" }}selected{{ end }}>Today</option>
+        <option value="this-week" {{ if eq .Range "this-week" }}selected{{ end }}>This week</option>
+        <option value="this-month" {{ if eq .Range "this-month" }}selected{{ end }}>This month</option>
+        <option value="last-7-days" {{ if eq .Range "last-7-days" }}selected{{ end }}>Last 7 days</option>
+        <option value="last-15-days" {{ if eq .Range "last-15-days" }}selected{{ end }}>Last 15 days</option>
+        <option value="last-30-days" {{ if eq .Range "last-30-days" }}selected{{ end }}>Last 30 days</option>
+        <option value="last-60-days" {{ if eq .Range "last-60-days" }}selected{{ end }}>Last 60 days</option>
+      </select>
+    </div>
+  </div>
+</div>
+
 <!-- ── Stats cards ─────────────────────────────────────────────────────── -->
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
   <div class="bg-white rounded-lg border border-gray-200 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Input tokens</p>
     <p class="text-2xl font-bold" id="total-input-tokens">{{ fmtTokens .Totals.TotalInputTokens }}</p>
@@ -26,35 +53,6 @@
     <p class="text-2xl font-bold" id="total-tokens">{{ fmtTokens (add (add .Totals.TotalInputTokens
       .Totals.TotalOutputTokens) (add .Totals.TotalCacheCreationTokens .Totals.TotalCacheReadTokens)) }}</p>
     <p class="mt-1 text-sm text-gray-500" id="total-cost">{{ fmtCost .Totals.TotalCost }}</p>
-  </div>
-</div>
-
-<!-- ── Today's stats ───────────────────────────────────────────────────── -->
-<p class="text-xs text-gray-400 uppercase tracking-wide mb-2">Today</p>
-<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Input tokens</p>
-    <p class="text-2xl font-bold" id="today-input-tokens">{{ fmtTokens .TotalsToday.TotalInputTokens }}</p>
-    <p class="mt-1 text-sm text-gray-500" id="today-input-cost">{{ fmtCost .TotalsToday.TotalInputCost }}</p>
-  </div>
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Output tokens</p>
-    <p class="text-2xl font-bold" id="today-output-tokens">{{ fmtTokens .TotalsToday.TotalOutputTokens }}</p>
-    <p class="mt-1 text-sm text-gray-500" id="today-output-cost">{{ fmtCost .TotalsToday.TotalOutputCost }}</p>
-  </div>
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache tokens</p>
-    <p class="text-2xl font-bold" id="today-cache-tokens">{{ fmtTokens (add .TotalsToday.TotalCacheCreationTokens
-      .TotalsToday.TotalCacheReadTokens) }}</p>
-    <p class="mt-1 text-sm text-gray-500" id="today-cache-cost">{{ fmtCost (addCostPtr
-      .TotalsToday.TotalCacheCreationCost .TotalsToday.TotalCacheReadCost) }}</p>
-  </div>
-  <div class="bg-white rounded-lg border border-gray-200 p-4">
-    <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total tokens</p>
-    <p class="text-2xl font-bold" id="today-tokens">{{ fmtTokens (add (add .TotalsToday.TotalInputTokens
-      .TotalsToday.TotalOutputTokens) (add .TotalsToday.TotalCacheCreationTokens .TotalsToday.TotalCacheReadTokens)) }}
-    </p>
-    <p class="mt-1 text-sm text-gray-500" id="today-total-cost">{{ fmtCost .TotalsToday.TotalCost }}</p>
   </div>
 </div>
 
@@ -106,7 +104,7 @@
 <h2 class="text-base font-semibold mb-3">Daily spending — last 2 months</h2>
 <div class="bg-white rounded-lg border border-gray-200 p-5 mb-10">
   <div id="cost-heatmap" class="overflow-x-auto pb-1"></div>
-  <div id="heatmap-legend" class="mt-3 flex items-center gap-4 text-xs text-gray-500 flex-wrap"></div>
+  <div id="heatmap-legend" class="mt-6 flex items-center justify-end gap-4 text-xs text-gray-500 flex-wrap"></div>
 </div>
 
 {{ end }}
@@ -114,183 +112,192 @@
 {{ define "scripts" }}
 <script>
   (() => {
+    window.addEventListener('DOMContentLoaded', () => {
+      const predefinedSelect = document.getElementById('predefined-date-filter');
+      if (predefinedSelect) {
+        predefinedSelect.addEventListener('change', () => {
+          window.location.href = '/?range=' + encodeURIComponent(predefinedSelect.value);
+        });
+      }
+    });
+
     // ── Heatmap ───────────────────────────────────────────────────────────
     const _dailyCosts = {{ toJSON .DailyCosts }} ?? [];
 
-  function renderHeatmap() {
-    const container = document.getElementById('cost-heatmap');
-    if (!container) return;
+    function renderHeatmap() {
+      const container = document.getElementById('cost-heatmap');
+      if (!container) return;
 
-    const costByDay = {};
-    let maxCost = 0;
-    _dailyCosts.forEach((d) => {
-      costByDay[d.day] = d.daily_cost;
-      if (d.daily_cost > maxCost) maxCost = d.daily_cost;
-    });
+      const costByDay = {};
+      let maxCost = 0;
+      _dailyCosts.forEach((d) => {
+        costByDay[d.day] = d.daily_cost;
+        if (d.daily_cost > maxCost) maxCost = d.daily_cost;
+      });
 
-    function dayStr(date) {
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    }
-
-    // Relative thresholds based on max daily cost
-    const t1 = maxCost * 0.25;
-    const t2 = maxCost * 0.5;
-    const t3 = maxCost * 0.75;
-
-    const LEVELS = [
-      { bg: 'bg-gray-100 border border-gray-200', text: 'text-gray-300' },
-      { bg: 'bg-green-100', text: 'text-green-800' },
-      { bg: 'bg-green-300', text: 'text-green-900' },
-      { bg: 'bg-green-500', text: 'text-white' },
-      { bg: 'bg-green-700', text: 'text-white' },
-    ];
-
-    function getLevel(cost) {
-      if (!cost || cost === 0 || maxCost === 0) return 0;
-      if (cost < t1) return 1;
-      if (cost < t2) return 2;
-      if (cost < t3) return 3;
-      return 4;
-    }
-
-    // Adaptive precision so tiny costs don't round to $0.0000
-    function fmtCell(cost) {
-      if (!cost || cost === 0) return '';
-      if (cost < 0.0001) return `$${cost.toFixed(6)}`;
-      if (cost < 0.01) return `$${cost.toFixed(4)}`;
-      if (cost < 1) return `$${cost.toFixed(3)}`;
-      if (cost < 10) return `$${cost.toFixed(2)}`;
-      return `$${cost.toFixed(0)}`;
-    }
-
-    function fmtThreshold(v) {
-      if (v < 0.0001) return `$${v.toFixed(6)}`;
-      if (v < 0.01) return `$${v.toFixed(4)}`;
-      if (v < 1) return `$${v.toFixed(3)}`;
-      return `$${v.toFixed(2)}`;
-    }
-
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-
-    // Start 60 days back
-    const start = new Date(today);
-    start.setDate(start.getDate() - 59);
-    start.setHours(0, 0, 0, 0);
-
-    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-    const weeks = [];
-    const cur = new Date(start);
-    while (cur <= today) {
-      const week = [null, null, null, null, null, null, null];
-      const weekMonth = cur.getMonth();
-      const curDayOfWeek = cur.getDay();
-      for (let i = curDayOfWeek; i < 7; i++) {
-        week[i] = new Date(cur);
-        cur.setDate(cur.getDate() + 1);
-        if (cur.getMonth() !== weekMonth) break;  // Stop if month changes mid-week
+      function dayStr(date) {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
       }
-      weeks.push(week);
-    }
 
-    // Day label column — height matches cell h-7 + gap-1
-    const dayLabelsHtml = DAY_LABELS.map((d) => `<div class="text-xs text-gray-400 w-8 h-7 flex items-center">${d}</div>`).join('');
+      // Relative thresholds based on max daily cost
+      const t1 = maxCost * 0.25;
+      const t2 = maxCost * 0.5;
+      const t3 = maxCost * 0.75;
 
-    const monthLabelSeen = {};
+      const LEVELS = [
+        { bg: 'bg-gray-100 border border-gray-200', text: 'text-gray-300' },
+        { bg: 'bg-green-100', text: 'text-green-800' },
+        { bg: 'bg-green-300', text: 'text-green-900' },
+        { bg: 'bg-green-500', text: 'text-white' },
+        { bg: 'bg-green-700', text: 'text-white' },
+      ];
 
-    const weeksHtml = weeks.map((week) => {
-      const weekMonth = week.find((day) => day !== null)?.getMonth();
-      const gapClass = !monthLabelSeen[weekMonth] ? 'ml-5' : '';
-      // First week always shows its month; subsequent weeks show label only when month rolls over.
-      const monthLabel = !monthLabelSeen[weekMonth] ? MONTHS[weekMonth] ?? '' : '';
-      monthLabelSeen[weekMonth] = true;
+      function getLevel(cost) {
+        if (!cost || cost === 0 || maxCost === 0) return 0;
+        if (cost < t1) return 1;
+        if (cost < t2) return 2;
+        if (cost < t3) return 3;
+        return 4;
+      }
 
-      const daysHtml = week.map((date) => {
-        if (!date) return '<div class="w-16 h-7"></div>';
+      // Adaptive precision so tiny costs don't round to $0.0000
+      function fmtCell(cost) {
+        if (!cost || cost === 0) return '';
+        if (cost < 0.0001) return `$${cost.toFixed(6)}`;
+        if (cost < 0.01) return `$${cost.toFixed(4)}`;
+        if (cost < 1) return `$${cost.toFixed(3)}`;
+        if (cost < 10) return `$${cost.toFixed(2)}`;
+        return `$${cost.toFixed(0)}`;
+      }
 
-        const key = dayStr(date);
-        const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-        const cost = costByDay[key] ?? 0;
-        const isFuture = date > today;
+      function fmtThreshold(v) {
+        if (v < 0.0001) return `$${v.toFixed(6)}`;
+        if (v < 0.01) return `$${v.toFixed(4)}`;
+        if (v < 1) return `$${v.toFixed(3)}`;
+        return `$${v.toFixed(2)}`;
+      }
 
-        if (isFuture) return '<div class="w-16 h-7 rounded-sm"></div>';
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
 
-        const clr = LEVELS[getLevel(cost)];
-        const txt = fmtCell(cost);
-        const tip = `${key}${cost > 0 ? `: $${cost.toFixed(6)}` : ': no activity'}`;
+      // Start 60 days back
+      const start = new Date(today);
+      start.setDate(start.getDate() - 59);
+      start.setHours(0, 0, 0, 0);
 
-        return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[9px] font-mono overflow-hidden cursor-default" title="${tip}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+      const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+      const weeks = [];
+      const cur = new Date(start);
+      while (cur <= today) {
+        const week = [null, null, null, null, null, null, null];
+        const weekMonth = cur.getMonth();
+        const curDayOfWeek = cur.getDay();
+        for (let i = curDayOfWeek; i < 7; i++) {
+          week[i] = new Date(cur);
+          cur.setDate(cur.getDate() + 1);
+          if (cur.getMonth() !== weekMonth) break;  // Stop if month changes mid-week
+        }
+        weeks.push(week);
+      }
+
+      // Day label column — height matches cell h-7 + gap-1
+      const dayLabelsHtml = DAY_LABELS.map((d) => `<div class="text-xs text-gray-400 w-8 h-7 flex items-center">${d}</div>`).join('');
+
+      const monthLabelSeen = {};
+
+      const weeksHtml = weeks.map((week) => {
+        const weekMonth = week.find((day) => day !== null)?.getMonth();
+        const gapClass = !monthLabelSeen[weekMonth] ? 'ml-5' : '';
+        // First week always shows its month; subsequent weeks show label only when month rolls over.
+        const monthLabel = !monthLabelSeen[weekMonth] ? MONTHS[weekMonth] ?? '' : '';
+        monthLabelSeen[weekMonth] = true;
+
+        const daysHtml = week.map((date) => {
+          if (!date) return '<div class="w-16 h-7"></div>';
+
+          const key = dayStr(date);
+          const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+          const cost = costByDay[key] ?? 0;
+          const isFuture = date > today;
+
+          if (isFuture) return '<div class="w-16 h-7 rounded-sm"></div>';
+
+          const clr = LEVELS[getLevel(cost)];
+          const txt = fmtCell(cost);
+          const tip = `${key}${cost > 0 ? `: $${cost.toFixed(6)}` : ': no activity'}`;
+
+          return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[9px] font-mono overflow-hidden cursor-default" title="${tip}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+        }).join('');
+
+        return `<div class="flex flex-col gap-1 ${gapClass}">
+          <div class="text-xs text-gray-500 font-medium h-7 flex items-end pb-0.5 whitespace-nowrap">${monthLabel}</div>
+          ${daysHtml}
+          </div>`;
       }).join('');
 
-      return `<div class="flex flex-col gap-1 ${gapClass}">
-        <div class="text-xs text-gray-500 font-medium h-7 flex items-end pb-0.5 whitespace-nowrap">${monthLabel}</div>
-        ${daysHtml}
+      container.innerHTML = `<div class="flex gap-1 items-start">
+        <div class="flex flex-col gap-1 pt-8 flex-shrink-0 mr-1">${dayLabelsHtml}</div>
+        ${weeksHtml}
         </div>`;
-    }).join('');
 
-    container.innerHTML = `<div class="flex gap-1 items-start">
-      <div class="flex flex-col gap-1 pt-8 flex-shrink-0 mr-1">${dayLabelsHtml}</div>
-      ${weeksHtml}
-      </div>`;
-
-    // Populate dynamic legend with actual thresholds
-    const legend = document.getElementById('heatmap-legend');
-    if (legend) {
-      legend.innerHTML = maxCost === 0
-        ? '<span class="text-gray-400">No spending data yet.</span>'
-        : `<div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200 flex-shrink-0"></div><span>$0.00</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-100 flex-shrink-0"></div><span>&lt;${fmtThreshold(t1)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-300 flex-shrink-0"></div><span>&lt;${fmtThreshold(t2)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-500 flex-shrink-0"></div><span>&lt;${fmtThreshold(t3)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-700 flex-shrink-0"></div><span>&ge;${fmtThreshold(t3)}</span></div>`;
+      // Populate dynamic legend with actual thresholds
+      const legend = document.getElementById('heatmap-legend');
+      if (legend) {
+        legend.innerHTML = maxCost === 0
+          ? '<span class="text-gray-400">No spending data yet.</span>'
+          : `<div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200 flex-shrink-0"></div><span>$0.00</span></div>
+            <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-100 flex-shrink-0"></div><span>&lt;${fmtThreshold(t1)}</span></div>
+            <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-300 flex-shrink-0"></div><span>&lt;${fmtThreshold(t2)}</span></div>
+            <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-500 flex-shrink-0"></div><span>&lt;${fmtThreshold(t3)}</span></div>
+            <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-700 flex-shrink-0"></div><span>&ge;${fmtThreshold(t3)}</span></div>`;
+      }
     }
-  }
 
-  renderHeatmap();
+    renderHeatmap();
 
-  // ── Session table live update ──────────────────────────────────────────
-  function esc(s) {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+    // ── Session table live update ──────────────────────────────────────────
+    function esc(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
 
-  function pad(n) {
-    return String(n).padStart(2, '0');
-  }
+    function pad(n) {
+      return String(n).padStart(2, '0');
+    }
 
-  function buildSessionRow(s) {
-    const { session_id, session_name, exchange_count, total_input_tokens, total_output_tokens,
-      total_cache_creation_tokens, total_cache_read_tokens, total_cost, last_updated } = s;
-    const cacheTok = (total_cache_creation_tokens ?? 0) + (total_cache_read_tokens ?? 0);
-    const inputTok = total_input_tokens ?? 0;
-    const outputTok = total_output_tokens ?? 0;
-    const totalTok = inputTok + outputTok + cacheTok;
-    const cost = total_cost ?? 0;
-    const costStr = cost > 0 ? `$${cost.toFixed(4)}` : '—';
-    const d = new Date(last_updated * 1000);
-    const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    const sessionQuery = 'session = ' + JSON.stringify(session_id);
-    const nameHtml = `<a href="/ui/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-blue-600 hover:underline font-medium">${esc(session_name || session_id)}</a>${session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session_id)}</span>` : ''}`;
-    return `<tr class="hover:bg-gray-50">
-      <td class="px-4 py-2">${nameHtml}</td>
-      <td class="px-4 py-2 text-right">${exchange_count}</td>
-      <td class="px-4 py-2 text-right">${fmtTokens(inputTok)}</td>
-      <td class="px-4 py-2 text-right">${fmtTokens(outputTok)}</td>
-      <td class="px-4 py-2 text-right">${fmtTokens(cacheTok)}</td>
-      <td class="px-4 py-2 text-right">${fmtTokens(totalTok)}</td>
-      <td class="px-4 py-2 text-right">${costStr}</td>
-      <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
-      </tr>`;
-  }
+    function buildSessionRow(s) {
+      const { session_id, session_name, exchange_count, total_input_tokens, total_output_tokens,
+        total_cache_creation_tokens, total_cache_read_tokens, total_cost, last_updated } = s;
+      const cacheTok = (total_cache_creation_tokens ?? 0) + (total_cache_read_tokens ?? 0);
+      const inputTok = total_input_tokens ?? 0;
+      const outputTok = total_output_tokens ?? 0;
+      const totalTok = inputTok + outputTok + cacheTok;
+      const cost = total_cost ?? 0;
+      const costStr = cost > 0 ? `$${cost.toFixed(4)}` : '—';
+      const d = new Date(last_updated * 1000);
+      const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      const sessionQuery = 'session = ' + JSON.stringify(session_id);
+      const nameHtml = `<a href="/ui/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-blue-600 hover:underline font-medium">${esc(session_name || session_id)}</a>${session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session_id)}</span>` : ''}`;
+      return `<tr class="hover:bg-gray-50">
+        <td class="px-4 py-2">${nameHtml}</td>
+        <td class="px-4 py-2 text-right">${exchange_count}</td>
+        <td class="px-4 py-2 text-right">${fmtTokens(inputTok)}</td>
+        <td class="px-4 py-2 text-right">${fmtTokens(outputTok)}</td>
+        <td class="px-4 py-2 text-right">${fmtTokens(cacheTok)}</td>
+        <td class="px-4 py-2 text-right">${fmtTokens(totalTok)}</td>
+        <td class="px-4 py-2 text-right">${costStr}</td>
+        <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
+        </tr>`;
+    }
 
-  window._onNewExchange = async () => {
-    const res = await fetch('/session-stats');
-    const rows = await res.json();
-    const tbody = document.getElementById('session-stats-tbody');
-    if (!tbody || !rows.length) return;
-    tbody.innerHTML = rows.map(buildSessionRow).join('');
-  };
+    window._onNewExchange = async () => {
+      const res = await fetch('/session-stats');
+      const rows = await res.json();
+      const tbody = document.getElementById('session-stats-tbody');
+      if (!tbody || !rows.length) return;
+      tbody.innerHTML = rows.map(buildSessionRow).join('');
+    };
   })();
 </script>
 {{ end }}

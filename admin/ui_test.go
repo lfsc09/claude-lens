@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
 )
@@ -79,6 +80,57 @@ func TestUIDashboard_RendersCacheTokensAndCost(t *testing.T) {
 	// 200 + 40 cache tokens comma-grouped.
 	if !strings.Contains(body, "240") {
 		t.Error("cache token total not rendered")
+	}
+}
+
+// TestUIDashboard_RangeFiltersTotals proves the dashboard's stat cards are
+// actually windowed by ?range=, not just displaying an unbounded all-time
+// total that happens to render a "From/To" label (see admin/date_range.go).
+func TestUIDashboard_RangeFiltersTotals(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+
+	recentTok := 111
+	midOldTok := 222
+	now := time.Now()
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "recent", Path: "/p", Timestamp: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
+		InputTokens: &recentTok,
+	}); err != nil {
+		t.Fatalf("SaveExchange(recent): %v", err)
+	}
+	// Outside "today"/"this-week"/"last-30-days", but inside "last-60-days".
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "mid-old", Path: "/p", Timestamp: float64(now.AddDate(0, 0, -50).Unix()), RawRequest: "{}", RawResponse: "{}",
+		InputTokens: &midOldTok,
+	}); err != nil {
+		t.Fatalf("SaveExchange(mid-old): %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		path   string
+		want   string // substring expected in the Input tokens card
+		notFor string // substring that must NOT be there (empty = skip)
+	}{
+		{"default (this-week) excludes 50-day-old row", "/", `id="total-input-tokens">111<`, "333"},
+		{"today excludes 50-day-old row", "/?range=today", `id="total-input-tokens">111<`, "333"},
+		{"last-60-days includes both", "/?range=last-60-days", `id="total-input-tokens">333<`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doGet(t, s, tt.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tt.want) {
+				t.Errorf("body missing %q, body: %s", tt.want, body)
+			}
+			if tt.notFor != "" && strings.Contains(body, tt.notFor) {
+				t.Errorf("body unexpectedly contains %q (range leaked out-of-window data), body: %s", tt.notFor, body)
+			}
+		})
 	}
 }
 
@@ -305,4 +357,9 @@ func TestNoRoute_Renders404Page(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
-func nowUnix() int64          { return 1700000000 }
+
+// nowUnix returns the real current time rather than a fixed constant: the
+// dashboard's stat cards are now windowed by the "range" filter (see
+// admin/date_range.go), computed against actual time.Now(), so fixture rows
+// need a genuinely-current timestamp to land inside the default window.
+func nowUnix() int64 { return time.Now().Unix() }

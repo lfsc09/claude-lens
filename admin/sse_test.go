@@ -21,7 +21,7 @@ func TestSSEStream_PushesPeriodicPayloads(t *testing.T) {
 
 	s, db := newTestServer(t)
 	if err := db.SaveExchange(context.Background(), database.Exchange{
-		SessionID: "s1", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/p", Timestamp: float64(time.Now().Unix()), RawRequest: "{}", RawResponse: "{}",
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestSSEStream_ReflectsStatusChanges(t *testing.T) {
 	h := &handlers{db: db, status: st}
 	ctx := context.Background()
 
-	p1, err := h.buildSSEPayload(ctx)
+	p1, err := h.buildSSEPayload(ctx, "")
 	if err != nil {
 		t.Fatalf("buildSSEPayload: %v", err)
 	}
@@ -111,12 +111,60 @@ func TestSSEStream_ReflectsStatusChanges(t *testing.T) {
 	}
 
 	st.Set(status.OK)
-	p2, err := h.buildSSEPayload(ctx)
+	p2, err := h.buildSSEPayload(ctx, "")
 	if err != nil {
 		t.Fatalf("buildSSEPayload: %v", err)
 	}
 	if p2.ProxyStatus != "ok" {
 		t.Errorf("ProxyStatus = %q, want ok after status change", p2.ProxyStatus)
+	}
+}
+
+// TestBuildSSEPayload_RangeFiltersTotals proves /stream's totals respect the
+// same ?range= window as the dashboard page (admin/date_range.go), rather
+// than always reporting an unbounded all-time count.
+func TestBuildSSEPayload_RangeFiltersTotals(t *testing.T) {
+	db, err := database.Open(context.Background(), tempDBPath(t))
+	if err != nil {
+		t.Fatalf("database.Open: %v", err)
+	}
+	defer db.Close()
+
+	h := &handlers{db: db, status: status.New()}
+	ctx := context.Background()
+
+	recentTok, midOldTok := 111, 222
+	now := time.Now()
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "recent", Path: "/p", Timestamp: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
+		InputTokens: &recentTok,
+	}); err != nil {
+		t.Fatalf("SaveExchange(recent): %v", err)
+	}
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "mid-old", Path: "/p", Timestamp: float64(now.AddDate(0, 0, -50).Unix()), RawRequest: "{}", RawResponse: "{}",
+		InputTokens: &midOldTok,
+	}); err != nil {
+		t.Fatalf("SaveExchange(mid-old): %v", err)
+	}
+
+	weekly, err := h.buildSSEPayload(ctx, "this-week")
+	if err != nil {
+		t.Fatalf("buildSSEPayload(this-week): %v", err)
+	}
+	if weekly.Totals.TotalInputTokens != int64(recentTok) {
+		t.Errorf("this-week TotalInputTokens = %d, want %d (50-day-old row must be excluded)",
+			weekly.Totals.TotalInputTokens, recentTok)
+	}
+
+	last60, err := h.buildSSEPayload(ctx, "last-60-days")
+	if err != nil {
+		t.Fatalf("buildSSEPayload(last-60-days): %v", err)
+	}
+	wantBoth := int64(recentTok + midOldTok)
+	if last60.Totals.TotalInputTokens != wantBoth {
+		t.Errorf("last-60-days TotalInputTokens = %d, want %d (both rows included)",
+			last60.Totals.TotalInputTokens, wantBoth)
 	}
 }
 

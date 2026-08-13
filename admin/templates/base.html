@@ -45,13 +45,17 @@
     }
 
     (() => {
-      const es = new EventSource('/stream');
+      // Keeps the dashboard's stat cards in sync with whichever range is
+      // selected there (?range=...) — see admin/date_range.go. Other pages
+      // don't have a "range" param or matching totals-* elements, so this
+      // just falls through to the server's default range harmlessly.
+      const range = new URLSearchParams(window.location.search).get('range');
+      const es = new EventSource('/stream' + (range ? `?range=${encodeURIComponent(range)}` : ''));
 
       es.onmessage = (e) => {
         const data = JSON.parse(e.data);
         updateProxyStatus(data.proxy_status);
         updateTotals(data.totals);
-        updateTotalsToday(data.totals_today);
         checkExchangesUpdate(data.latest_exchange_id);
       };
 
@@ -106,21 +110,6 @@
         setText('total-cache-cost', fmtCost(addCost(totals.total_cache_creation_cost, totals.total_cache_read_cost)));
         setText('total-tokens', fmtTokens(inputTokens + outputTokens + cacheTokens));
         setText('total-cost', fmtCost(totals.total_cost));
-      }
-
-      function updateTotalsToday(totals) {
-        if (!totals) return;
-        const inputTokens = totals.total_input_tokens ?? 0;
-        const outputTokens = totals.total_output_tokens ?? 0;
-        const cacheTokens = (totals.total_cache_creation_tokens ?? 0) + (totals.total_cache_read_tokens ?? 0);
-        setText('today-input-tokens', fmtTokens(inputTokens));
-        setText('today-input-cost', fmtCost(totals.total_input_cost));
-        setText('today-output-tokens', fmtTokens(outputTokens));
-        setText('today-output-cost', fmtCost(totals.total_output_cost));
-        setText('today-cache-tokens', fmtTokens(cacheTokens));
-        setText('today-cache-cost', fmtCost(addCost(totals.total_cache_creation_cost, totals.total_cache_read_cost)));
-        setText('today-tokens', fmtTokens(inputTokens + outputTokens + cacheTokens));
-        setText('today-total-cost', fmtCost(totals.total_cost));
       }
 
       let _knownLatestId = 0;

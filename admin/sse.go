@@ -18,7 +18,6 @@ var sseInterval = 3 * time.Second
 type ssePayload struct {
 	ProxyStatus      string          `json:"proxy_status"`
 	Totals           database.Totals `json:"totals"`
-	TotalsToday      database.Totals `json:"totals_today"`
 	LatestExchangeID int64           `json:"latest_exchange_id"`
 }
 
@@ -32,6 +31,8 @@ type ssePayload struct {
 // doesn't exist here — this is a plain per-connection loop, no special
 // worker mode or cooperative-scheduling library needed.
 func (h *handlers) sseStream(c *gin.Context) {
+	rangeKey := normalizeDashboardRange(c.Query("range"))
+
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
@@ -41,7 +42,7 @@ func (h *handlers) sseStream(c *gin.Context) {
 	defer ticker.Stop()
 
 	for {
-		payload, err := h.buildSSEPayload(c.Request.Context())
+		payload, err := h.buildSSEPayload(c.Request.Context(), rangeKey)
 		if err != nil {
 			h.logger.Error("failed to build SSE payload", "error", err)
 		} else {
@@ -64,13 +65,13 @@ func (h *handlers) sseStream(c *gin.Context) {
 	}
 }
 
-func (h *handlers) buildSSEPayload(ctx context.Context) (ssePayload, error) {
-	totals, err := h.db.GetTokenTotals(ctx, "", nil)
-	if err != nil {
-		return ssePayload{}, err
-	}
-	since := startOfToday()
-	totalsToday, err := h.db.GetTokenTotals(ctx, "", &since)
+// buildSSEPayload resolves rangeKey to a since-timestamp fresh on every
+// call (rather than once at connection-open time), so a long-lived stream
+// self-corrects across day/week/month rollovers without needing the client
+// to reconnect.
+func (h *handlers) buildSSEPayload(ctx context.Context, rangeKey string) (ssePayload, error) {
+	since := sinceForRange(normalizeDashboardRange(rangeKey), time.Now())
+	totals, err := h.db.GetTokenTotals(ctx, "", &since)
 	if err != nil {
 		return ssePayload{}, err
 	}
@@ -81,7 +82,6 @@ func (h *handlers) buildSSEPayload(ctx context.Context) (ssePayload, error) {
 	return ssePayload{
 		ProxyStatus:      string(h.status.Get()),
 		Totals:           totals,
-		TotalsToday:      totalsToday,
 		LatestExchangeID: latestID,
 	}, nil
 }
