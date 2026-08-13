@@ -31,13 +31,7 @@ import (
 // total_tokens column computed in GetExchanges (a plain "+" across nullable
 // columns would collapse to NULL if any single column — e.g. a pre-cache-
 // tracking historical row's cache_creation_tokens — is NULL).
-const totalTokensExpr = `CASE WHEN input_tokens IS NULL AND output_tokens IS NULL
-                               AND cache_creation_tokens IS NULL AND cache_read_tokens IS NULL
-                          THEN NULL
-                          ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-                               + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0)
-                     END`
-
+const totalTokensExpr = `CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_creation_tokens IS NULL AND cache_read_tokens IS NULL THEN NULL ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0) END`
 const cacheTokensExpr = `(COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0))`
 
 type filterFieldKind int
