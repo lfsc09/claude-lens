@@ -5,6 +5,8 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
@@ -40,6 +42,16 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, version
 
 	r := gin.New()
 	r.Use(gin.Recovery(), slogMiddleware(logger))
+
+	// Static assets (favicon, logo), embedded via static.go's staticFS.
+	staticContent, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("sub static fs: %w", err)
+	}
+	r.StaticFS("/static", http.FS(staticContent))
+	r.GET("/favicon.ico", func(c *gin.Context) {
+		c.FileFromFS("favicon.ico", http.FS(staticContent))
+	})
 
 	// JSON API
 	r.GET("/health", h.health)

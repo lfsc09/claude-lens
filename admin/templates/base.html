@@ -6,6 +6,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ block "title" . }}claude-lens Admin{{ end }}</title>
+  <link rel="icon" href="/favicon.ico">
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
@@ -13,7 +14,10 @@
 
   <header class="bg-white border-b border-gray-200 px-6 py-3">
     <nav class="flex items-center gap-6 text-sm font-medium">
-      <span class="text-base font-bold text-gray-900">claude-lens</span>
+      <span class="flex items-center gap-2">
+        <img src="/static/logo.png" alt="" class="h-6 w-6 rounded-md">
+        <span class="text-base font-bold text-gray-900">claude-lens</span>
+      </span>
       <a href="{{ urlFor "ui_dashboard" }}" class="text-gray-600 hover:text-gray-900">Dashboard</a>
       <a href="{{ urlFor "ui_exchanges" }}" class="text-gray-600 hover:text-gray-900">Exchanges</a>
       <a href="{{ urlFor "ui_prices" }}" class="text-gray-600 hover:text-gray-900">Prices</a>
