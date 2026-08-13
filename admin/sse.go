@@ -3,9 +3,8 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
-
-	"github.com/gin-gonic/gin"
 
 	"github.com/lfsc09/claude-lens/internal/database"
 )
@@ -30,19 +29,25 @@ type ssePayload struct {
 // net/http gives every connection its own goroutine, so that constraint
 // doesn't exist here — this is a plain per-connection loop, no special
 // worker mode or cooperative-scheduling library needed.
-func (h *handlers) sseStream(c *gin.Context) {
-	rangeKey := normalizeDashboardRange(c.Query("range"))
+func (h *handlers) sseStream(w http.ResponseWriter, r *http.Request) {
+	rangeKey := normalizeDashboardRange(r.URL.Query().Get("range"))
 
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(200)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
 
 	ticker := time.NewTicker(sseInterval)
 	defer ticker.Stop()
 
 	for {
-		payload, err := h.buildSSEPayload(c.Request.Context(), rangeKey)
+		payload, err := h.buildSSEPayload(r.Context(), rangeKey)
 		if err != nil {
 			h.logger.Error("failed to build SSE payload", "error", err)
 		} else {
@@ -50,15 +55,15 @@ func (h *handlers) sseStream(c *gin.Context) {
 			if err != nil {
 				h.logger.Error("failed to marshal SSE payload", "error", err)
 			} else {
-				c.Writer.WriteString("data: ")
-				c.Writer.Write(b)
-				c.Writer.WriteString("\n\n")
-				c.Writer.Flush()
+				w.Write([]byte("data: "))
+				w.Write(b)
+				w.Write([]byte("\n\n"))
+				flusher.Flush()
 			}
 		}
 
 		select {
-		case <-c.Request.Context().Done():
+		case <-r.Context().Done():
 			return
 		case <-ticker.C:
 		}

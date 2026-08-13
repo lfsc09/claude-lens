@@ -26,19 +26,19 @@ func TestSSEStream_PushesPeriodicPayloads(t *testing.T) {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
-	server := httptest.NewServer(s.engine)
+	server := httptest.NewServer(s.handler)
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/stream", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/stream", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("GET /stream: %v", err)
+		t.Fatalf("GET /api/stream: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -121,7 +121,7 @@ func TestSSEStream_ReflectsStatusChanges(t *testing.T) {
 }
 
 // TestBuildSSEPayload_RangeFiltersTotals proves /stream's totals respect the
-// same ?range= window as the dashboard page (admin/date_range.go), rather
+// same ?range= window as the dashboard page (admin/dashboard_range.go), rather
 // than always reporting an unbounded all-time count.
 func TestBuildSSEPayload_RangeFiltersTotals(t *testing.T) {
 	db, err := database.Open(context.Background(), tempDBPath(t))

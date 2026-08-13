@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title id="page-title">Exchange – claude-lens Admin</title>
+  <link rel="icon" href="/favicon.ico">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-50 min-h-screen text-gray-800">
+
+  <!-- ── Navigation ──────────────────────────────────────────────────── -->
+  <header class="bg-white border-b border-gray-200 px-6 py-3">
+    <nav class="flex items-center gap-6 text-sm font-medium">
+      <span class="flex items-center gap-2">
+        <img src="/img/logo.png" alt="" class="h-6 w-6 rounded-md">
+        <span class="text-base font-bold text-gray-900">claude-lens</span>
+      </span>
+      <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+      <a href="/exchanges" class="text-gray-600 hover:text-gray-900">Exchanges</a>
+      <a href="/prices" class="text-gray-600 hover:text-gray-900">Prices</a>
+      <span id="proxy-status" class="ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500">
+        Proxy Service
+      </span>
+    </nav>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    <div class="mb-5">
+      <a href="/exchanges" class="text-sm text-blue-600 hover:underline">← Exchanges</a>
+    </div>
+
+    <div id="exchange-content">
+      <p class="py-24 text-center text-gray-400">Loading…</p>
+    </div>
+
+    <div id="not-found-content" class="hidden text-center py-24">
+      <p class="text-5xl font-bold text-gray-200 mb-4">404</p>
+      <p class="text-gray-500 mb-6" id="not-found-message">Exchange not found.</p>
+      <a href="/exchanges" class="text-sm text-blue-600 hover:underline">← Back to exchanges</a>
+    </div>
+  </main>
+
+  <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
+  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs px-2.5 py-1.5 rounded-md bg-gray-600 text-white text-xs leading-snug shadow-lg pointer-events-none whitespace-pre-line opacity-0 transition-opacity duration-150"></div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/exchange.js"></script>
+</body>
+
+</html>

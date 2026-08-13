@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/pricing"
@@ -51,13 +52,25 @@ func doJSON(t *testing.T, s *Server, method, path string, body any) *httptest.Re
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	s.engine.ServeHTTP(rec, req)
+	s.handler.ServeHTTP(rec, req)
 	return rec
 }
 
+func doGet(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func strPtr(s string) *string { return &s }
+
+func nowUnix() int64 { return time.Now().Unix() }
+
 func TestHealth(t *testing.T) {
 	s, _ := newTestServer(t)
-	rec := doJSON(t, s, http.MethodGet, "/health", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/health", nil)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -77,19 +90,26 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestExchangesList_EmptyIsJSONArrayNotNull(t *testing.T) {
+func TestExchangesList_EmptyRowsNotNull(t *testing.T) {
 	s, _ := newTestServer(t)
-	rec := doJSON(t, s, http.MethodGet, "/exchanges", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/exchanges", nil)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if got := rec.Body.String(); got != "[]" {
-		t.Errorf("body = %q, want %q (must be an empty array, not null)", got, "[]")
+	var resp exchangesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Rows == nil {
+		t.Error("rows must be an empty array, not null")
+	}
+	if resp.Total != 0 {
+		t.Errorf("total = %d, want 0", resp.Total)
 	}
 }
 
-func TestExchangesList_FilterAndPagination(t *testing.T) {
+func TestExchangesList_FilterPaginationAndSessionID(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for i, sess := range []string{"a", "a", "b"} {
@@ -100,21 +120,24 @@ func TestExchangesList_FilterAndPagination(t *testing.T) {
 		}
 	}
 
-	rec := doJSON(t, s, http.MethodGet, "/exchanges?q="+url.QueryEscape(`session = "a"`), nil)
-	var rows []database.ExchangeSummary
-	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+	rec := doJSON(t, s, http.MethodGet, "/api/exchanges?q="+url.QueryEscape(`session = "a"`), nil)
+	var resp exchangesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows for session a, want 2", len(rows))
+	if len(resp.Rows) != 2 || resp.Total != 2 {
+		t.Fatalf("got %d rows (total %d) for session a, want 2 (total 2)", len(resp.Rows), resp.Total)
+	}
+	if resp.SessionID != "a" {
+		t.Errorf("session_id = %q, want %q (exact single-session filter)", resp.SessionID, "a")
 	}
 
-	rec = doJSON(t, s, http.MethodGet, "/exchanges?limit=abc", nil)
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges?limit=abc", nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("non-integer limit: status = %d, want 400", rec.Code)
 	}
 
-	rec = doJSON(t, s, http.MethodGet, "/exchanges?q="+url.QueryEscape(`bogus_field = 1`), nil)
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges?q="+url.QueryEscape(`bogus_field = 1`), nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("unknown filter field: status = %d, want 400", rec.Code)
 	}
@@ -122,7 +145,7 @@ func TestExchangesList_FilterAndPagination(t *testing.T) {
 
 func TestExchangesList_LimitClampedTo1000(t *testing.T) {
 	s, _ := newTestServer(t)
-	rec := doJSON(t, s, http.MethodGet, "/exchanges?limit=5000", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/exchanges?limit=5000", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -133,7 +156,7 @@ func TestExchangesList_LimitClampedTo1000(t *testing.T) {
 
 func TestExchangeDetail_NotFound(t *testing.T) {
 	s, _ := newTestServer(t)
-	rec := doJSON(t, s, http.MethodGet, "/exchanges/999", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/exchanges/999", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
@@ -146,7 +169,7 @@ func TestExchangeDetail_NotFound(t *testing.T) {
 
 func TestExchangeDetail_NonIntegerIDIs404(t *testing.T) {
 	s, _ := newTestServer(t)
-	rec := doJSON(t, s, http.MethodGet, "/exchanges/not-a-number", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/exchanges/not-a-number", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
@@ -162,7 +185,7 @@ func TestExchangeDetail_Found(t *testing.T) {
 	}
 	rows, _ := db.GetExchanges(ctx, "", 1, 0)
 
-	rec := doJSON(t, s, http.MethodGet, fmt.Sprintf("/exchanges/%d", rows[0].ID), nil)
+	rec := doJSON(t, s, http.MethodGet, fmt.Sprintf("/api/exchanges/%d", rows[0].ID), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -187,13 +210,41 @@ func TestTotals(t *testing.T) {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
-	rec := doJSON(t, s, http.MethodGet, "/totals", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/totals", nil)
 	var totals database.Totals
 	if err := json.Unmarshal(rec.Body.Bytes(), &totals); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if totals.Count != 1 || totals.TotalInputTokens != 10 {
 		t.Errorf("unexpected totals: %+v", totals)
+	}
+}
+
+func TestTotals_RangeExcludesOlderExchanges(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	now := time.Now()
+	oldTok, newTok := 100, 5
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "old", Path: "/p", Timestamp: float64(now.AddDate(0, 0, -90).Unix()), RawRequest: "{}", RawResponse: "{}",
+		InputTokens: &oldTok,
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "new", Path: "/p", Timestamp: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
+		InputTokens: &newTok,
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+
+	rec := doJSON(t, s, http.MethodGet, "/api/totals?range=today", nil)
+	var totals database.Totals
+	if err := json.Unmarshal(rec.Body.Bytes(), &totals); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if totals.Count != 1 || totals.TotalInputTokens != 5 {
+		t.Errorf("range=today should only include the recent exchange, got: %+v", totals)
 	}
 }
 
@@ -204,13 +255,37 @@ func TestSessionStats(t *testing.T) {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
-	rec := doJSON(t, s, http.MethodGet, "/session-stats", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/session-stats", nil)
 	var rows []database.SessionStat
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(rows) != 1 || rows[0].SessionID != "s1" {
 		t.Errorf("unexpected session stats: %+v", rows)
+	}
+}
+
+func TestDailyCosts(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	cost := 1.5
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "s1", Path: "/p", Timestamp: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
+		InputCost: &cost,
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+
+	rec := doJSON(t, s, http.MethodGet, "/api/daily-costs", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var rows []database.DailyCost
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 1 || rows[0].DailyCost != 1.5 {
+		t.Errorf("unexpected daily costs: %+v", rows)
 	}
 }
 
@@ -223,7 +298,7 @@ func TestResetExchanges(t *testing.T) {
 		}
 	}
 
-	rec := doJSON(t, s, http.MethodDelete, "/exchanges?session_id=a", nil)
+	rec := doJSON(t, s, http.MethodDelete, "/api/exchanges?session_id=a", nil)
 	var body map[string]int64
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -241,14 +316,14 @@ func TestResetExchanges(t *testing.T) {
 func TestPricesCRUD(t *testing.T) {
 	s, _ := newTestServer(t)
 
-	rec := doJSON(t, s, http.MethodGet, "/prices", nil)
+	rec := doJSON(t, s, http.MethodGet, "/api/prices", nil)
 	var seeded []database.Price
 	json.Unmarshal(rec.Body.Bytes(), &seeded)
 	if len(seeded) == 0 {
 		t.Fatal("expected seeded default prices")
 	}
 
-	rec = doJSON(t, s, http.MethodPut, "/prices/my-custom-model", map[string]float64{
+	rec = doJSON(t, s, http.MethodPut, "/api/prices/my-custom-model", map[string]float64{
 		"input_per_m": 2.5, "output_per_m": 12,
 	})
 	if rec.Code != http.StatusOK {
@@ -260,17 +335,17 @@ func TestPricesCRUD(t *testing.T) {
 		t.Errorf("unexpected upserted price: %+v", upserted)
 	}
 
-	rec = doJSON(t, s, http.MethodPut, "/prices/bad-model", map[string]string{"input_per_m": "not-a-number"})
+	rec = doJSON(t, s, http.MethodPut, "/api/prices/bad-model", map[string]string{"input_per_m": "not-a-number"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("malformed PUT body: status = %d, want 400", rec.Code)
 	}
 
-	rec = doJSON(t, s, http.MethodDelete, "/prices/my-custom-model", nil)
+	rec = doJSON(t, s, http.MethodDelete, "/api/prices/my-custom-model", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rec.Code)
 	}
 
-	rec = doJSON(t, s, http.MethodGet, "/prices", nil)
+	rec = doJSON(t, s, http.MethodGet, "/api/prices", nil)
 	var afterDelete []database.Price
 	json.Unmarshal(rec.Body.Bytes(), &afterDelete)
 	for _, p := range afterDelete {
@@ -284,7 +359,7 @@ func TestUpsertPrice_CacheRatesOptional(t *testing.T) {
 	s, _ := newTestServer(t)
 
 	// Create with explicit cache rates.
-	rec := doJSON(t, s, http.MethodPut, "/prices/cache-model", map[string]float64{
+	rec := doJSON(t, s, http.MethodPut, "/api/prices/cache-model", map[string]float64{
 		"input_per_m": 2.0, "output_per_m": 10.0, "cache_write_per_m": 2.5, "cache_read_per_m": 0.2,
 	})
 	if rec.Code != http.StatusOK {
@@ -298,7 +373,7 @@ func TestUpsertPrice_CacheRatesOptional(t *testing.T) {
 
 	// Update input/output only, omitting cache rates — they must be
 	// preserved, not reset to 0.
-	rec = doJSON(t, s, http.MethodPut, "/prices/cache-model", map[string]float64{
+	rec = doJSON(t, s, http.MethodPut, "/api/prices/cache-model", map[string]float64{
 		"input_per_m": 3.0, "output_per_m": 11.0,
 	})
 	if rec.Code != http.StatusOK {
@@ -317,7 +392,7 @@ func TestUpsertPrice_RefreshesEstimatorImmediately(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 
-	rec := doJSON(t, s, http.MethodPut, "/prices/brand-new", map[string]float64{
+	rec := doJSON(t, s, http.MethodPut, "/api/prices/brand-new", map[string]float64{
 		"input_per_m": 9, "output_per_m": 9,
 	})
 	if rec.Code != http.StatusOK {
@@ -339,5 +414,24 @@ func TestUpsertPrice_RefreshesEstimatorImmediately(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("brand-new price not persisted")
+	}
+}
+
+func TestStaticFrontend_PagesServed(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	for _, path := range []string{"/", "/exchanges", "/exchanges/123", "/prices", "/favicon.ico", "/img/logo.png", "/js/app.js"} {
+		rec := doGet(t, s, path)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: status = %d, want 200", path, rec.Code)
+		}
+	}
+}
+
+func TestStaticFrontend_UnknownPathIs404(t *testing.T) {
+	s, _ := newTestServer(t)
+	rec := doGet(t, s, "/no-such-page")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }

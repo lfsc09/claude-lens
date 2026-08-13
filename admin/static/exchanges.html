@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exchanges – claude-lens Admin</title>
+  <link rel="icon" href="/favicon.ico">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-50 min-h-screen text-gray-800">
+
+  <!-- ── Navigation ──────────────────────────────────────────────────── -->
+  <header class="bg-white border-b border-gray-200 px-6 py-3">
+    <nav class="flex items-center gap-6 text-sm font-medium">
+      <span class="flex items-center gap-2">
+        <img src="/img/logo.png" alt="" class="h-6 w-6 rounded-md">
+        <span class="text-base font-bold text-gray-900">claude-lens</span>
+      </span>
+      <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+      <a href="/exchanges" class="text-gray-600 hover:text-gray-900">Exchanges</a>
+      <a href="/prices" class="text-gray-600 hover:text-gray-900">Prices</a>
+      <span id="proxy-status" class="ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500">
+        Proxy Service
+      </span>
+    </nav>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-xl font-semibold">Exchanges</h1>
+      <form id="delete-form" class="inline">
+        <button type="submit" id="delete-btn" class="text-sm text-red-500 hover:text-red-700 hover:underline">Clear all</button>
+      </form>
+    </div>
+
+    <!-- ── Search Form ───────────────────────────────────────────────────── -->
+    <form method="get" action="/exchanges" class="mb-4">
+      <div class="flex gap-2">
+        <input type="hidden" name="size" id="search-size" value="50">
+        <input type="text" name="q" id="search-input" placeholder='model like sonnet AND cost > 0.1'
+          class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full font-mono focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <button type="submit" class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700 whitespace-nowrap">
+          Search
+        </button>
+        <a href="/exchanges" id="search-clear" class="hidden text-sm text-gray-500 self-center hover:underline whitespace-nowrap">Clear</a>
+      </div>
+      <p id="filter-error" class="mt-1.5 text-xs text-red-600 hidden"></p>
+      <div id="filter-help">
+        <p class="mt-1.5 text-xs text-gray-400">
+          <b>Fields</b>: id, session, model, path, date, input_tokens, output_tokens, cache_tokens, total_tokens, cost, stream
+        </p>
+        <ul class="mt-1.5">
+          <li class="mt-0.5 ms-2 text-xs text-gray-400">Text fields take: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">like</code></li>
+          <li class="mt-0.5 ms-2 text-xs text-gray-400">Numbers/dates take: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&lt;</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&gt;</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">!=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&lt;=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&gt;=</code></li>
+          <li class="mt-0.5 ms-2 text-xs text-gray-400">Combine with: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">AND</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">OR</code> and <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">(…)</code></li>
+        </ul>
+      </div>
+    </form>
+
+    <!-- ── Exchanges Charts ─────────────────────────────────────────────── -->
+    <div class="grid grid-cols-1 gap-4 mb-6">
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium text-gray-700">Cost over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
+          <div id="cost-chart-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+        </div>
+        <svg id="cost-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" class="w-full h-56"></svg>
+      </div>
+
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium text-gray-700">Tokens over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
+          <div id="tokens-chart-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+        </div>
+        <svg id="tokens-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" class="w-full h-56"></svg>
+      </div>
+    </div>
+
+    <!-- ── Exchanges Table ─────────────────────────────────────────────── -->
+    <div class="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b border-gray-200 text-left text-gray-500">
+          <tr>
+            <th class="px-4 py-2 font-medium">ID</th>
+            <th class="px-4 py-2 font-medium">Session</th>
+            <th class="px-4 py-2 font-medium">Model</th>
+            <th class="px-4 py-2 font-medium">Time</th>
+            <th class="px-4 py-2 font-medium text-right">Tokens</th>
+            <th class="px-4 py-2 font-medium text-right">Cost</th>
+            <th class="px-4 py-2 font-medium">Stream</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100" id="exchanges-tbody">
+          <tr>
+            <td colspan="7" class="px-4 py-10 text-center text-gray-400">Loading…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── Pagination Controls ─────────────────────────────────────────── -->
+    <div id="pagination-controls" class="mt-4 flex flex-wrap items-center justify-between gap-4 text-sm"></div>
+  </main>
+
+  <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
+  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs px-2.5 py-1.5 rounded-md bg-gray-600 text-white text-xs leading-snug shadow-lg pointer-events-none whitespace-pre-line opacity-0 transition-opacity duration-150"></div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/exchanges.js"></script>
+</body>
+
+</html>
