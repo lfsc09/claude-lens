@@ -137,7 +137,7 @@ func costTooltip(inputCost, outputCost, cacheCreationCost, cacheReadCost *float6
 	}{
 		{"Input", inputCost},
 		{"Output", outputCost},
-		{"Cache creat", cacheCreationCost},
+		{"Cache create", cacheCreationCost},
 		{"Cache read", cacheReadCost},
 	}
 	var parts strings.Builder
@@ -169,7 +169,7 @@ func tokensTooltip(inputTokens, outputTokens, cacheCreationTokens, cacheReadToke
 	}{
 		{"Input", inputTokens},
 		{"Output", outputTokens},
-		{"Cache creat", cacheCreationTokens},
+		{"Cache create", cacheCreationTokens},
 		{"Cache read", cacheReadTokens},
 	}
 	var parts strings.Builder
