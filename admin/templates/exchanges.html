@@ -42,6 +42,24 @@
   {{ end }}
 </form>
 
+<div class="grid grid-cols-1 gap-4 mb-6">
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-medium text-gray-700">Cost over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
+      <div id="cost-chart-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+    </div>
+    <svg id="cost-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" class="w-full h-56"></svg>
+  </div>
+
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-sm font-medium text-gray-700">Tokens over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
+      <div id="tokens-chart-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+    </div>
+    <svg id="tokens-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" class="w-full h-56"></svg>
+  </div>
+</div>
+
 <div class="bg-white rounded-lg border border-gray-200 overflow-x-auto">
   <table class="w-full text-sm">
     <thead class="bg-gray-50 border-b border-gray-200 text-left text-gray-500">
@@ -169,6 +187,179 @@
         navigate(page, pageSize);
       });
     }
+
+    // ── Charts ──────────────────────────────────────────────────────────
+    // fetchLatestExchanges/renderLineChart are shared by both charts below.
+    // Independent of the table's own page-size limiter — always pulls the
+    // latest 200 matching the current search filter, newest-first from the
+    // API, reversed to chronological for left-to-right plotting.
+    const SVGNS = 'http://www.w3.org/2000/svg';
+
+    function esc(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function fmtCostShort(c) {
+      if (c == null) return '—';
+      return `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}`;
+    }
+
+    // Mirrors admin/template.go's fmtTokens (and base.html's copy): under
+    // 1000 renders as a plain integer, larger values abbreviate to 1
+    // decimal place (1.7k, 6.3M, 1.2B).
+    function fmtTokensShort(n) {
+      if (n == null) return '—';
+      const abs = Math.abs(n);
+      let suffix, divisor;
+      if (abs >= 1000000000) { suffix = 'B'; divisor = 1000000000; }
+      else if (abs >= 1000000) { suffix = 'M'; divisor = 1000000; }
+      else if (abs >= 1000) { suffix = 'k'; divisor = 1000; }
+      else return `${abs}`;
+      return `${(abs / divisor).toFixed(1).replace(/\.0$/, '')}${suffix}`;
+    }
+
+    async function fetchLatestExchanges(limit, q) {
+      const params = new URLSearchParams();
+      params.set('limit', limit);
+      if (q) params.set('q', q);
+      const res = await fetch('/exchanges?' + params.toString());
+      if (!res.ok) return [];
+      const rows = await res.json();
+      return rows.reverse();
+    }
+
+    function renderLineChart(svg, rows, series, opts = {}) {
+      const W = 1000, H = 260;
+      const marginLeft = 46, marginRight = 12, marginTop = 10, marginBottom = 24;
+      const plotW = W - marginLeft - marginRight;
+      const plotH = H - marginTop - marginBottom;
+
+      svg.innerHTML = '';
+
+      if (!rows.length) {
+        const text = document.createElementNS(SVGNS, 'text');
+        text.setAttribute('x', W / 2);
+        text.setAttribute('y', H / 2);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('fill', '#9ca3af');
+        text.setAttribute('font-size', '12');
+        text.textContent = 'No data yet.';
+        svg.appendChild(text);
+        return;
+      }
+
+      const n = rows.length;
+      let maxV = 0;
+      rows.forEach((r) => {
+        series.forEach((s) => {
+          const v = s.get(r);
+          if (v != null && v > maxV) maxV = v;
+        });
+      });
+      if (maxV === 0) maxV = 1;
+
+      const x = (i) => (n === 1 ? marginLeft + plotW / 2 : marginLeft + (i * plotW) / (n - 1));
+      const y = (v) => marginTop + plotH - (v / maxV) * plotH;
+
+      const yTicks = 4;
+      for (let t = 0; t <= yTicks; t++) {
+        const v = (maxV * t) / yTicks;
+        const yy = y(v);
+        const line = document.createElementNS(SVGNS, 'line');
+        line.setAttribute('x1', marginLeft);
+        line.setAttribute('x2', W - marginRight);
+        line.setAttribute('y1', yy);
+        line.setAttribute('y2', yy);
+        line.setAttribute('stroke', '#e5e7eb');
+        line.setAttribute('stroke-width', '1');
+        svg.appendChild(line);
+
+        const label = document.createElementNS(SVGNS, 'text');
+        label.setAttribute('x', marginLeft - 6);
+        label.setAttribute('y', yy + 3);
+        label.setAttribute('text-anchor', 'end');
+        label.setAttribute('fill', '#9ca3af');
+        label.setAttribute('font-size', '9');
+        label.textContent = opts.fmtY ? opts.fmtY(v) : v;
+        svg.appendChild(label);
+      }
+
+      const xTickCount = Math.min(6, n);
+      for (let t = 0; t < xTickCount; t++) {
+        const i = xTickCount === 1 ? 0 : Math.round((t * (n - 1)) / (xTickCount - 1));
+        const label = document.createElementNS(SVGNS, 'text');
+        label.setAttribute('x', x(i));
+        label.setAttribute('y', H - marginBottom + 14);
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('fill', '#9ca3af');
+        label.setAttribute('font-size', '9');
+        label.textContent = opts.fmtX ? opts.fmtX(rows[i]) : i;
+        svg.appendChild(label);
+      }
+
+      series.forEach((s) => {
+        let d = '';
+        let started = false;
+        rows.forEach((r, i) => {
+          const v = s.get(r);
+          if (v == null) { started = false; return; }
+          d += `${started ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)} `;
+          started = true;
+        });
+        if (!d) return;
+        const path = document.createElementNS(SVGNS, 'path');
+        path.setAttribute('d', d.trim());
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', s.color);
+        path.setAttribute('stroke-width', s.width || 1.5);
+        path.setAttribute('stroke-linejoin', 'round');
+        path.setAttribute('stroke-linecap', 'round');
+        svg.appendChild(path);
+      });
+    }
+
+    function renderChartLegend(container, series) {
+      container.innerHTML = series.map((s) =>
+        `<span class="inline-flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>${esc(s.label)}</span>`
+      ).join('');
+    }
+
+    // Input/Output share the blue family, Cache creation/read share the
+    // purple family (darker = "write" side, lighter = "read" side within
+    // each pair), so hue alone tells cache lines apart from non-cache ones.
+    const costSeries = [
+      { label: 'Total', color: '#111827', width: 2, get: (r) => r.cost },
+      { label: 'Input', color: '#1d4ed8', get: (r) => r.input_cost },
+      { label: 'Output', color: '#93c5fd', get: (r) => r.output_cost },
+      { label: 'Cache creat', color: '#9333ea', get: (r) => r.cache_creation_cost },
+      { label: 'Cache read', color: '#c084fc', get: (r) => r.cache_read_cost },
+    ];
+
+    const tokensSeries = [
+      { label: 'Total', color: '#111827', width: 2, get: (r) => r.total_tokens },
+      { label: 'Input', color: '#1d4ed8', get: (r) => r.input_tokens },
+      { label: 'Output', color: '#93c5fd', get: (r) => r.output_tokens },
+      { label: 'Cache creat', color: '#9333ea', get: (r) => r.cache_creation_tokens },
+      { label: 'Cache read', color: '#c084fc', get: (r) => r.cache_read_tokens },
+    ];
+
+    // Both charts plot the same 200 rows, so a refresh (initial load or a
+    // live SSE update) fetches once and redraws both from it.
+    async function refreshCharts() {
+      const rows = await fetchLatestExchanges(200, query);
+      const costSvg = document.getElementById('cost-chart');
+      if (costSvg) renderLineChart(costSvg, rows, costSeries, { fmtY: fmtCostShort, fmtX: (r) => '#' + r.id });
+      const tokensSvg = document.getElementById('tokens-chart');
+      if (tokensSvg) renderLineChart(tokensSvg, rows, tokensSeries, { fmtY: fmtTokensShort, fmtX: (r) => '#' + r.id });
+    }
+
+    const costLegend = document.getElementById('cost-chart-legend');
+    if (costLegend) renderChartLegend(costLegend, costSeries);
+    const tokensLegend = document.getElementById('tokens-chart-legend');
+    if (tokensLegend) renderChartLegend(tokensLegend, tokensSeries);
+    refreshCharts();
+
+    window._onNewExchange = refreshCharts;
   })();
 </script>
 {{ end }}
