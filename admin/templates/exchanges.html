@@ -70,9 +70,9 @@
             <span class="text-xs text-gray-400 truncate">{{ .Path }}</span>
           </div>
         </td>
-        <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .Timestamp }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens .TotalTokens }}</td>
-        <td class="px-4 py-2 text-right text-gray-700">{{ fmtCost .Cost }}</td>
+        <td class="px-4 py-2 text-gray-700 whitespace-nowrap">{{ fmtTime .Timestamp }}</td>
+        <td class="px-4 py-2 text-right text-gray-700" data-tip="{{ tokensTooltip .InputTokens .OutputTokens .CacheCreationTokens .CacheReadTokens }}">{{ fmtTokens .TotalTokens }}</td>
+        <td class="px-4 py-2 text-right text-gray-700" data-tip="{{ costTooltip .InputCost .OutputCost .CacheCreationCost .CacheReadCost }}">{{ fmtCost .Cost }}</td>
         <td class="px-4 py-2 text-gray-400 text-center">{{ if .IsStreaming }}✓{{ end }}</td>
       </tr>
       {{ else }}

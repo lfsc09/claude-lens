@@ -121,6 +121,70 @@ func fmtCost(c *float64) string {
 	return fmt.Sprintf("$%.2f", *c)
 }
 
+// costTooltip builds the HTML markup for a [data-tip] attribute breaking a
+// total cost down into its input/output/cache components — mirrors
+// buildRowCostTitle in base.html, which must build the identical markup for
+// SSE-live-inserted rows. Returned as a plain string (not template.HTML) so
+// html/template's attribute escaper encodes it the same way the JS esc()
+// helper does; the tooltip script then decodes it back via getAttribute and
+// assigns it to innerHTML. A component that's nil (unpriced) is omitted
+// rather than shown as "—", so an exchange with e.g. no cache activity
+// doesn't clutter the tooltip with two meaningless rows.
+func costTooltip(inputCost, outputCost, cacheCreationCost, cacheReadCost *float64) string {
+	rows := []struct {
+		label string
+		cost  *float64
+	}{
+		{"Input", inputCost},
+		{"Output", outputCost},
+		{"Cache creat", cacheCreationCost},
+		{"Cache read", cacheReadCost},
+	}
+	var parts strings.Builder
+	for _, r := range rows {
+		if r.cost == nil {
+			continue
+		}
+		fmt.Fprintf(&parts, `<div class="flex justify-between"><b>%s:</b><span>%s</span></div>`, r.label, fmtCost(r.cost))
+	}
+	if parts.Len() == 0 {
+		return ""
+	}
+	return `<div class="w-32 flex flex-col gap-0.5">` + parts.String() + `</div>`
+}
+
+// tokensTooltip builds the HTML markup for a [data-tip] attribute breaking a
+// total token count down into its input/output/cache components — mirrors
+// buildRowTokenTitle in base.html, which must build the identical markup for
+// SSE-live-inserted rows. Returned as a plain string (not template.HTML) so
+// html/template's attribute escaper encodes it the same way the JS esc()
+// helper does; the tooltip script then decodes it back via getAttribute and
+// assigns it to innerHTML. A component that's nil is omitted rather than
+// shown as "—", so an exchange with e.g. no cache activity doesn't clutter
+// the tooltip with two meaningless rows.
+func tokensTooltip(inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens *int) string {
+	rows := []struct {
+		label string
+		v     *int
+	}{
+		{"Input", inputTokens},
+		{"Output", outputTokens},
+		{"Cache creat", cacheCreationTokens},
+		{"Cache read", cacheReadTokens},
+	}
+	var parts strings.Builder
+	for _, r := range rows {
+		if r.v == nil {
+			continue
+		}
+		fmt.Fprintf(&parts, `<div class="flex justify-between"><b>%s:</b><span>%s</span></div>`, r.label, fmtTokens(r.v))
+	}
+	if parts.Len() == 0 {
+		return ""
+	}
+	return `<div class="w-32 flex flex-col gap-0.5">` + parts.String() + `</div>`
+}
+
 // fmtInt comma-groups an integer, mirroring Python's "{:,}".format(n).
 // Accepts int, int64, or a pointer to either; nil renders as "—".
 func fmtInt(v any) string {
@@ -340,8 +404,10 @@ func FuncMap() template.FuncMap {
 	return template.FuncMap{
 		"urlFor":             urlFor,
 		"fmtCost":            fmtCost,
+		"costTooltip":        costTooltip,
 		"fmtInt":             fmtInt,
 		"fmtTokens":          fmtTokens,
+		"tokensTooltip":      tokensTooltip,
 		"fmtTime":            fmtTime,
 		"coalesce":           coalesce,
 		"toJSON":             toJSON,
