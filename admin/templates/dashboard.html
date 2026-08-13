@@ -82,14 +82,14 @@
           <span class="block text-xs text-gray-400 font-mono">{{ .SessionID }}</span>
           {{ end }}
         </td>
-        <td class="px-4 py-2 text-right">{{ .ExchangeCount }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens .TotalInputTokens }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens .TotalOutputTokens }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens (add .TotalCacheCreationTokens .TotalCacheReadTokens) }}</td>
-        <td class="px-4 py-2 text-right">{{ fmtTokens (add (add .TotalInputTokens .TotalOutputTokens) (add
+        <td class="px-4 py-2 text-right text-gray-700">{{ .ExchangeCount }}</td>
+        <td class="px-4 py-2 text-right text-gray-700">{{ fmtTokens .TotalInputTokens }}</td>
+        <td class="px-4 py-2 text-right text-gray-700">{{ fmtTokens .TotalOutputTokens }}</td>
+        <td class="px-4 py-2 text-right text-gray-700">{{ fmtTokens (add .TotalCacheCreationTokens .TotalCacheReadTokens) }}</td>
+        <td class="px-4 py-2 text-right text-gray-700">{{ fmtTokens (add (add .TotalInputTokens .TotalOutputTokens) (add
           .TotalCacheCreationTokens .TotalCacheReadTokens)) }}</td>
-        <td class="px-4 py-2 text-right">{{ if .TotalCost }}{{ printf "$%.4f" .TotalCost }}{{ else }}—{{ end }}</td>
-        <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ fmtTime .LastUpdated }}</td>
+        <td class="px-4 py-2 text-right text-gray-700">{{ if .TotalCost }}{{ printf "$%.4f" .TotalCost }}{{ else }}—{{ end }}</td>
+        <td class="px-4 py-2 text-gray-400 whitespace-nowrap">{{ fmtTime .LastUpdated }}</td>
       </tr>
       {{ else }}
       <tr>
@@ -281,13 +281,13 @@
       const nameHtml = `<a href="/ui/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-blue-600 hover:underline font-medium">${esc(session_name || session_id)}</a>${session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session_id)}</span>` : ''}`;
       return `<tr class="hover:bg-gray-50">
         <td class="px-4 py-2">${nameHtml}</td>
-        <td class="px-4 py-2 text-right">${exchange_count}</td>
-        <td class="px-4 py-2 text-right">${fmtTokens(inputTok)}</td>
-        <td class="px-4 py-2 text-right">${fmtTokens(outputTok)}</td>
-        <td class="px-4 py-2 text-right">${fmtTokens(cacheTok)}</td>
-        <td class="px-4 py-2 text-right">${fmtTokens(totalTok)}</td>
-        <td class="px-4 py-2 text-right">${costStr}</td>
-        <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${ts}</td>
+        <td class="px-4 py-2 text-right text-gray-700">${exchange_count}</td>
+        <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(inputTok)}</td>
+        <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(outputTok)}</td>
+        <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(cacheTok)}</td>
+        <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(totalTok)}</td>
+        <td class="px-4 py-2 text-right text-gray-700">${costStr}</td>
+        <td class="px-4 py-2 text-gray-400 whitespace-nowrap">${ts}</td>
         </tr>`;
     }
 
