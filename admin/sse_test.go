@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,12 +15,73 @@ import (
 	"github.com/lfsc09/claude-lens/internal/status"
 )
 
-func TestSSEStream_PushesPeriodicPayloads(t *testing.T) {
+// sseEventReader reads "data: ...\n\n" events off an SSE response body on a
+// background goroutine, so tests can assert both "an event arrives" (read
+// with a timeout) and "no event arrives" (nothing shows up before a
+// timeout) without blocking forever on a stream that, by design, may stay
+// silent for many ticks.
+type sseEventReader struct {
+	lines chan string
+	errs  chan error
+}
+
+func newSSEEventReader(body io.Reader) *sseEventReader {
+	r := &sseEventReader{lines: make(chan string), errs: make(chan error, 1)}
+	go func() {
+		reader := bufio.NewReader(body)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				r.errs <- err
+				return
+			}
+			if strings.HasPrefix(line, "data: ") {
+				r.lines <- line
+			}
+		}
+	}()
+	return r
+}
+
+// next waits up to timeout for the next event, decoding its payload. It
+// fails the test if no event arrives in time.
+func (r *sseEventReader) next(t *testing.T, timeout time.Duration) ssePayload {
+	t.Helper()
+	select {
+	case line := <-r.lines:
+		var p ssePayload
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(line), "data: ")), &p); err != nil {
+			t.Fatalf("decode event: %v", err)
+		}
+		return p
+	case err := <-r.errs:
+		t.Fatalf("reading event: %v", err)
+		return ssePayload{}
+	case <-time.After(timeout):
+		t.Fatalf("no event received within %v", timeout)
+		return ssePayload{}
+	}
+}
+
+// expectQuiet fails the test if an event arrives before timeout — used to
+// prove the stream doesn't push when nothing has changed.
+func (r *sseEventReader) expectQuiet(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	select {
+	case line := <-r.lines:
+		t.Fatalf("received unexpected event while quiet: %q", line)
+	case err := <-r.errs:
+		t.Fatalf("reading event: %v", err)
+	case <-time.After(timeout):
+	}
+}
+
+func TestSSEStream_PushesOnConnectThenOnlyOnChange(t *testing.T) {
 	old := sseInterval
 	sseInterval = 30 * time.Millisecond
 	defer func() { sseInterval = old }()
 
-	s, db := newTestServer(t)
+	s, db, st, fresh := newTestServerWithStatus(t)
 	if err := db.SaveExchange(context.Background(), database.Exchange{
 		SessionID: "s1", Path: "/p", Timestamp: float64(time.Now().Unix()), RawRequest: "{}", RawResponse: "{}",
 	}); err != nil {
@@ -29,7 +91,7 @@ func TestSSEStream_PushesPeriodicPayloads(t *testing.T) {
 	server := httptest.NewServer(s.handler)
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/stream", nil)
 	if err != nil {
@@ -49,41 +111,39 @@ func TestSSEStream_PushesPeriodicPayloads(t *testing.T) {
 		t.Errorf("Cache-Control = %q, want no-cache", cc)
 	}
 
-	reader := bufio.NewReader(resp.Body)
-	var payloads []ssePayload
-	for i := 0; i < 3; i++ {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatalf("reading event %d: %v", i, err)
-		}
-		if !strings.HasPrefix(line, "data: ") {
-			t.Fatalf("event %d: line = %q, want data: prefix", i, line)
-		}
-		var p ssePayload
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(line), "data: ")), &p); err != nil {
-			t.Fatalf("event %d: decode: %v", i, err)
-		}
-		payloads = append(payloads, p)
+	events := newSSEEventReader(resp.Body)
 
-		blank, err := reader.ReadString('\n')
-		if err != nil || blank != "\n" {
-			t.Fatalf("event %d: expected trailing blank line, got %q (err=%v)", i, blank, err)
-		}
+	// A newly connected client gets an immediate payload regardless of
+	// change tracking.
+	initial := events.next(t, time.Second)
+	if initial.LatestExchangeID != 1 {
+		t.Errorf("initial: LatestExchangeID = %d, want 1", initial.LatestExchangeID)
+	}
+	if initial.Totals.Count != 1 {
+		t.Errorf("initial: Totals.Count = %d, want 1", initial.Totals.Count)
 	}
 
-	if len(payloads) != 3 {
-		t.Fatalf("got %d payloads, want 3", len(payloads))
+	// Several quiet ticks with no new exchange and no status change should
+	// produce no further events.
+	events.expectQuiet(t, 200*time.Millisecond)
+
+	// The proxy saving a new exchange bumps Fresh — the next tick should
+	// push a fresh payload.
+	fresh.Bump()
+	afterFresh := events.next(t, time.Second)
+	if afterFresh.ProxyStatus != "unreachable" {
+		t.Errorf("afterFresh: ProxyStatus = %q, want unreachable", afterFresh.ProxyStatus)
 	}
-	for i, p := range payloads {
-		if p.ProxyStatus != "unreachable" {
-			t.Errorf("payload %d: ProxyStatus = %q, want unreachable (fresh status.Flag)", i, p.ProxyStatus)
-		}
-		if p.LatestExchangeID != 1 {
-			t.Errorf("payload %d: LatestExchangeID = %d, want 1", i, p.LatestExchangeID)
-		}
-		if p.Totals.Count != 1 {
-			t.Errorf("payload %d: Totals.Count = %d, want 1", i, p.Totals.Count)
-		}
+
+	// Quiet again after the fresh-triggered push.
+	events.expectQuiet(t, 200*time.Millisecond)
+
+	// A proxy status change should also trigger a push, even with no new
+	// exchange.
+	st.Set(status.OK)
+	afterStatus := events.next(t, time.Second)
+	if afterStatus.ProxyStatus != "ok" {
+		t.Errorf("afterStatus: ProxyStatus = %q, want ok", afterStatus.ProxyStatus)
 	}
 }
 

@@ -17,6 +17,7 @@ type handlers struct {
 	db      *database.DB
 	est     *pricing.Estimator
 	status  *status.Flag
+	fresh   *status.Fresh
 	logger  *slog.Logger
 	version string
 }

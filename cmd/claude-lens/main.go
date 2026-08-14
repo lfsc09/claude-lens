@@ -1,5 +1,6 @@
 // Command claude-lens runs the proxy and admin servers as goroutines in a
-// single process, sharing one *database.DB and one status.Flag.
+// single process, sharing one *database.DB, one status.Flag, and one
+// status.Fresh.
 package main
 
 import (
@@ -45,14 +46,15 @@ func main() {
 	}
 
 	st := status.New()
+	fresh := status.NewFresh()
 
-	proxySrv, err := proxy.NewServer(cfg, db, est, st)
+	proxySrv, err := proxy.NewServer(cfg, db, est, st, fresh)
 	if err != nil {
 		slog.Error("failed to build proxy server", "error", err)
 		os.Exit(1)
 	}
 
-	adminSrv, err := admin.NewServer(db, est, st, Version)
+	adminSrv, err := admin.NewServer(db, est, st, fresh, Version)
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
 		os.Exit(1)

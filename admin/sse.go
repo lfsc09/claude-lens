@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/status"
 )
 
 // sseInterval is how often /stream pushes a new payload. It's a package
@@ -46,20 +47,36 @@ func (h *handlers) sseStream(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(sseInterval)
 	defer ticker.Stop()
 
+	// lastVersion/lastStatus/first gate pushes on this connection actually
+	// having something new to report — h.fresh.Version() and h.status.Get()
+	// are cheap in-process reads, so checking them costs nothing on a quiet
+	// tick, unlike buildSSEPayload which hits the database. The very first
+	// iteration always pushes so a newly connected client isn't left with
+	// nothing until the next change.
+	var lastVersion uint64
+	var lastStatus status.Value
+	first := true
+
 	for {
-		payload, err := h.buildSSEPayload(r.Context(), rangeKey)
-		if err != nil {
-			h.logger.Error("failed to build SSE payload", "error", err)
-		} else {
-			b, err := json.Marshal(payload)
+		version := h.fresh.Version()
+		current := h.status.Get()
+
+		if first || version != lastVersion || current != lastStatus {
+			payload, err := h.buildSSEPayload(r.Context(), rangeKey)
 			if err != nil {
-				h.logger.Error("failed to marshal SSE payload", "error", err)
+				h.logger.Error("failed to build SSE payload", "error", err)
 			} else {
-				w.Write([]byte("data: "))
-				w.Write(b)
-				w.Write([]byte("\n\n"))
-				flusher.Flush()
+				b, err := json.Marshal(payload)
+				if err != nil {
+					h.logger.Error("failed to marshal SSE payload", "error", err)
+				} else {
+					w.Write([]byte("data: "))
+					w.Write(b)
+					w.Write([]byte("\n\n"))
+					flusher.Flush()
+				}
 			}
+			lastVersion, lastStatus, first = version, current, false
 		}
 
 		select {

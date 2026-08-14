@@ -19,6 +19,16 @@ import (
 
 func newTestServer(t *testing.T) (*Server, *database.DB) {
 	t.Helper()
+	s, db, _, _ := newTestServerWithStatus(t)
+	return s, db
+}
+
+// newTestServerWithStatus is like newTestServer but also hands back the
+// *status.Flag and *status.Fresh wired into the server, so a test can drive
+// SSE push conditions (proxy status changes, fresh-exchange signals)
+// directly instead of only through the HTTP surface.
+func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag, *status.Fresh) {
+	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("database.Open: %v", err)
@@ -30,11 +40,13 @@ func newTestServer(t *testing.T) (*Server, *database.DB) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	s, err := NewServer(db, est, status.New(), "test")
+	st := status.New()
+	fresh := status.NewFresh()
+	s, err := NewServer(db, est, st, fresh, "test")
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	return s, db
+	return s, db, st, fresh
 }
 
 func doJSON(t *testing.T, s *Server, method, path string, body any) *httptest.ResponseRecorder {

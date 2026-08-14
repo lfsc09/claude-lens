@@ -34,7 +34,7 @@ func newTestHandler(t *testing.T, upstreamURL string) (*Handler, *database.DB) {
 	}
 
 	cfg := config.Config{AnthropicBaseURL: upstreamURL}
-	h, err := NewHandler(cfg, db, est, status.New())
+	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestAuthTokenAndCustomHeaders_AreInjectedUpstream(t *testing.T) {
 		AnthropicAuthToken:     "sk-test-token",
 		AnthropicCustomHeaders: "X-Team: platform",
 	}
-	h, err := NewHandler(cfg, db, est, status.New())
+	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestUpstreamUnreachable_Returns502(t *testing.T) {
 	st := status.New()
 	// Port 1 is not something a fake upstream will ever be listening on.
 	cfg := config.Config{AnthropicBaseURL: "http://127.0.0.1:1"}
-	h, err := NewHandler(cfg, db, est, st)
+	h, err := NewHandler(cfg, db, est, st, status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
