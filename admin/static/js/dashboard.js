@@ -68,7 +68,7 @@
     const cost = s.total_cost ?? 0;
     const costStr = cost > 0 ? `$${cost.toFixed(4)}` : '—';
     const sessionQuery = 'session = ' + JSON.stringify(s.session_id);
-    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-blue-600 hover:underline font-medium">${esc(s.session_name || s.session_id)}</a>${s.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(s.session_id)}</span>` : ''}`;
+    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 hover:underline font-medium">${esc(s.session_name || s.session_id)}</a>${s.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(s.session_id)}</span>` : ''}`;
     return `<tr class="hover:bg-gray-50">
       <td class="px-4 py-2">${nameHtml}</td>
       <td class="px-4 py-2 text-right text-gray-700">${s.exchange_count}</td>
@@ -117,10 +117,10 @@
 
     const LEVELS = [
       { bg: 'bg-gray-100 border border-gray-200', text: 'text-gray-300' },
-      { bg: 'bg-green-100', text: 'text-green-800' },
-      { bg: 'bg-green-300', text: 'text-green-900' },
-      { bg: 'bg-green-500', text: 'text-white' },
-      { bg: 'bg-green-700', text: 'text-white' },
+      { bg: 'bg-emerald-100', text: 'text-emerald-800' },
+      { bg: 'bg-emerald-300', text: 'text-emerald-900' },
+      { bg: 'bg-emerald-500', text: 'text-white' },
+      { bg: 'bg-emerald-700', text: 'text-white' },
     ];
 
     function getLevel(cost) {
@@ -131,13 +131,16 @@
       return 4;
     }
 
-    // Adaptive precision so tiny costs don't round to $0.0000
+    /**
+     * Adaptive precision up to 2 decimal, then 0 decimal for larger values.
+     * If precision ends up $0.00, it will show ~$0.00, which is fine for a heatmap.
+     */
     function fmtCell(cost) {
       if (!cost || cost === 0) return '';
-      if (cost < 0.0001) return `$${cost.toFixed(6)}`;
-      if (cost < 0.01) return `$${cost.toFixed(4)}`;
-      if (cost < 1) return `$${cost.toFixed(3)}`;
+      if (cost < 0.01) return `~$${cost.toFixed(2)}`;
       if (cost < 10) return `$${cost.toFixed(2)}`;
+      if (cost < 100) return `$${cost.toFixed(1)}`;
+      if (cost > 999) return `(╯°□°)╯`;
       return `$${cost.toFixed(0)}`;
     }
 
@@ -199,7 +202,7 @@
         const txt = fmtCell(cost);
         const tip = `<div class="flex gap-2"><b>${key}:</b><span>${cost > 0 ? `$${cost.toFixed(6)}` : 'no activity'}</span></div>`;
 
-        return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[9px] font-mono overflow-hidden cursor-default" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+        return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[.7rem] font-mono overflow-hidden cursor-default" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
       }).join('');
 
       return `<div class="flex flex-col gap-1 ${gapClass}">
@@ -219,10 +222,10 @@
       legend.innerHTML = maxCost === 0
         ? '<span class="text-gray-400">No spending data yet.</span>'
         : `<div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200 flex-shrink-0"></div><span>$0.00</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-100 flex-shrink-0"></div><span>&lt;${fmtThreshold(t1)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-300 flex-shrink-0"></div><span>&lt;${fmtThreshold(t2)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-500 flex-shrink-0"></div><span>&lt;${fmtThreshold(t3)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-green-700 flex-shrink-0"></div><span>&ge;${fmtThreshold(t3)}</span></div>`;
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-100 flex-shrink-0"></div><span>&lt;${fmtThreshold(t1)}</span></div>
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-300 flex-shrink-0"></div><span>&lt;${fmtThreshold(t2)}</span></div>
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-500 flex-shrink-0"></div><span>&lt;${fmtThreshold(t3)}</span></div>
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-700 flex-shrink-0"></div><span>&ge;${fmtThreshold(t3)}</span></div>`;
     }
   }
 

@@ -1,93 +1,224 @@
 (() => {
   const id = window.location.pathname.split('/').filter(Boolean).pop();
+  const tabSize = 4;
+  let derivedExchange = null;
 
-  // prettyJSON mirrors admin's old server-side prettyJSON: a value that
-  // isn't valid JSON (or is absent) renders unchanged, rather than erroring.
+  /**
+   * Pretty-print a JSON string, or return the original string if it's not valid JSON.
+   */
   function prettyJSON(s) {
     if (s == null) return '';
     try {
-      return JSON.stringify(JSON.parse(s), null, 2);
+      return JSON.stringify(JSON.parse(s), null, tabSize);
     } catch {
       return s;
     }
   }
 
-  function section(title, bodyHtml) {
-    return `<section class="mb-6">
-      <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">${title}</h2>
-      ${bodyHtml}
-      </section>`;
+  /**
+   * Derive additional fields for each input message.
+   */
+  async function deriveInputMessages(inputMessages) {
+    await Promise.all(inputMessages.map(async (msg, index) => {
+      msg.index = index;
+      msg.number = index + 1;
+      msg.hash = await hashStr(valueToStr(msg, 0));
+      msg.content_text = valueToStr(msg?.content, tabSize);
+      msg.content_bytes = estimateBytes(msg.content_text);
+    }));
+    return inputMessages;
   }
 
-  function render(row) {
-    document.getElementById('page-title').textContent = `Exchange #${row.id} – claude-lens Admin`;
+  /**
+   * Parse an exchange object, adding derived fields.
+   */
+  async function deriveExchange(exchange) {
+    if (!exchange) return exchange;
+    exchange.raw_request_bytes = estimateBytes(exchange.raw_request);
+    exchange.raw_response_bytes = estimateBytes(exchange.raw_response);
+    exchange.input_messages_bytes = estimateBytes(exchange.input_messages);
+    exchange.input_messages = await deriveInputMessages(JSON.parse(exchange.input_messages || '[]'));
+    exchange.input_messages_length = exchange.input_messages.length;
+    exchange.input = exchange.input_messages?.at(-1) || null;
+    exchange.output_bytes = estimateBytes(exchange.output_text);
+    return exchange;
+  }
+
+  function renderInputMessages(inputMessages) {
+    let html = '<ol class="relative border-s border-default flex flex-col gap-16">';
+
+    // Render from end to start
+    for (let i = inputMessages.length - 1; i >= 0; i--) {
+      const msg = inputMessages[i];
+      html += `
+        <li class="ms-10 flex items-center overflow-x-hidden">
+          <span class="absolute bg-white w-20 flex items-center justify-center text-xs text-gray-500 font-mono mt-1.5 -start-10 py-2">${msg.number}</span>
+          <div class="flex flex-col gap-2 border-l-2 border-gray-200 rounded-lg px-2">
+            <span class="font-mono text-xs text-gray-500 hover:text-emerald-500">${msg.hash}</span>
+            <div class="flex items-center gap-2">
+              <span class="bg-gray-50 border border-gray-200 text-heading text-xs font-medium px-1.5 py-0.5 rounded w-fit">${msg.role || '—'}</span>
+              <span class="bg-gray-50 border border-gray-200 text-heading text-[.7rem] font-medium px-1.5 py-0.5 rounded w-fit">${fmtBytes(msg.content_bytes)}</span>
+            </div>
+            <div class="font-mono text-gray-700 text-xs text-nowrap cursor-pointer hover:text-emerald-500" open-message-dialog="${msg.index}">${esc(msg.content_text || '—')}</div>
+          </div>
+        </li>
+      `;
+    }
+
+    html += '</ol>';
+    return html;
+  }
+
+  function render(exchange) {
+    document.getElementById('page-title').textContent = `Exchange #${exchange.id} – claude-lens Admin`;
 
     const content = document.getElementById('exchange-content');
-    let html = `<h1 class="text-xl font-semibold mb-6">Exchange #${row.id}</h1>
-      <div class="bg-white rounded-lg border border-gray-200 p-5 mb-6 grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 text-sm">
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Session ID</p>
-          <p class="mt-1 font-mono text-xs break-all">${esc(row.session_id)}</p>
+    let html = `
+      <h1 class="text-xl font-semibold">Exchange #${exchange.id}</h1>
+      <section class="flex flex-col gap-3">
+        <div class="bg-white rounded-lg border border-gray-200 p-5 grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 text-sm">
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Session ID</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${esc(exchange.session_id)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Session name</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${esc(exchange.session_name || '—')}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Time</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtTime(exchange.timestamp)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Path</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm">${esc(exchange.path)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Model</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm">${esc(exchange.model || '—')}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Cost</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtCost(exchange.cost)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Was Streaming</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${exchange.is_streaming ? 'Yes' : 'No'}</p>
+          </div>
         </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Session name</p>
-          <p class="mt-1">${esc(row.session_name || '—')}</p>
+        <div class="bg-white rounded-lg border border-gray-200 p-5 grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 text-sm">
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Input tokens</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtInt(exchange.input_tokens)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Output tokens</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtInt(exchange.output_tokens)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Cache creation tokens</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtInt(exchange.cache_creation_tokens)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Cache read tokens</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtInt(exchange.cache_read_tokens)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Context size</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtBytes(exchange.input_messages_bytes)}</p>
+          </div>
         </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Time</p>
-          <p class="mt-1">${fmtTime(row.timestamp)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Path</p>
-          <p class="mt-1 font-mono text-xs">${esc(row.path)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Input tokens</p>
-          <p class="mt-1">${fmtInt(row.input_tokens)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Output tokens</p>
-          <p class="mt-1">${fmtInt(row.output_tokens)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Cache creation tokens</p>
-          <p class="mt-1">${fmtInt(row.cache_creation_tokens)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Cache read tokens</p>
-          <p class="mt-1">${fmtInt(row.cache_read_tokens)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Model</p>
-          <p class="mt-1 font-mono text-xs">${esc(row.model || '—')}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Cost</p>
-          <p class="mt-1">${fmtCost(row.cost)}</p>
-        </div>
-        <div>
-          <p class="text-xs text-gray-500 uppercase tracking-wide">Streaming</p>
-          <p class="mt-1">${row.is_streaming ? 'Yes' : 'No'}</p>
-        </div>
-      </div>`;
+      </section>
+    `;
 
-    if (row.output_text) {
-      html += section('Output', `<div class="bg-white rounded-lg border border-gray-200 p-4 text-sm whitespace-pre-wrap leading-relaxed">${esc(row.output_text)}</div>`);
-    }
-    if (row.input_messages) {
-      html += section('Input messages', `<pre class="bg-white rounded-lg border border-gray-200 p-4 text-xs overflow-x-auto leading-relaxed">${esc(prettyJSON(row.input_messages))}</pre>`);
+    if (exchange.input) {
+      const id = randomId();
+      html += `
+        <section class="flex flex-col gap-0.5">
+          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between cursor-pointer" trigger-content-e="${id}">
+            <div class="flex items-center gap-2">
+              <h2 class="font-semibold uppercase tracking-wide">Input</h2>
+              <div class="flex flex-col items-start gap-2 border-l-2 border-gray-200 rounded-lg p-2">
+                <span class="font-mono text-xs text-gray-500" data-tip="Position of this prompt in the input messages (context)">${fmtInt(exchange.input.number)} of ${fmtInt(exchange.input_messages_length)}</span>
+                <span class="font-mono text-xs text-gray-500 hover:text-emerald-500" data-tip="Hash of this prompt in the input messages (context)">${exchange.input.hash}</span>
+              </div>
+            </div>
+            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.input.bytes)}</span>
+          </div>
+          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto" e-content-id="${id}">${esc(exchange.input.content_text)}</div>
+        </section>
+      `;
     }
 
-    html += `<details class="mb-3 group">
-      <summary class="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide select-none">Raw request</summary>
-      <pre class="mt-2 bg-white rounded-lg border border-gray-200 p-4 text-xs overflow-x-auto leading-relaxed">${esc(row.raw_request || '')}</pre>
-      </details>
-      <details class="group">
-      <summary class="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide select-none">Raw response</summary>
-      <pre class="mt-2 bg-white rounded-lg border border-gray-200 p-4 text-xs overflow-x-auto leading-relaxed">${esc(row.raw_response || '')}</pre>
-      </details>`;
+    if (exchange.output_text) {
+      const id = randomId();
+      html += `
+        <section class="flex flex-col gap-0.5">
+          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between cursor-pointer" trigger-content-e="${id}">
+            <h2 class="font-semibold uppercase tracking-wide">Output</h2>
+            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.output_bytes)}</span>
+          </div>
+          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto" e-content-id="${id}">${esc(exchange.output_text)}</div>
+        </section>
+      `;
+    }
+
+    if (exchange.input_messages.length > 0) {
+      html += `
+        <section class="flex flex-col gap-0.5">
+          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between cursor-pointer" trigger-content-e="${id}">
+            <h2 class="font-semibold uppercase tracking-wide">Context Messages</h2>
+            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.input_messages_bytes)}</span>
+          </div>
+          <div class="flex flex-col gap-0.5" e-content-id="${id}">
+            <div class="bg-white border border-gray-200 p-4">
+              <input type="search" id="input-messages-search" placeholder="Search…" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            </div>
+            <div class="bg-white rounded-b-lg border border-gray-200 py-8 px-10 max-h-[750px] overflow-y-auto">${renderInputMessages(exchange.input_messages)}</div>
+          </div>
+        </section>
+      `;
+    }
+
+    if (exchange.raw_request) {
+      const id = randomId();
+      html += `
+        <section class="flex flex-col gap-0.5">
+          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between cursor-pointer rounded-b-lg border-dashed border-2" trigger-content-e="${id}">
+            <h2 class="font-semibold uppercase tracking-wide">Raw Request</h2>
+            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.raw_request_bytes)}</span>
+          </div>
+          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto hidden" e-content-id="${id}">${esc(prettyJSON(exchange.raw_request))}</div>
+        </section>
+      `;
+    }
+
+    if (exchange.raw_response) {
+      const id = randomId();
+      html += `
+        <section class="flex flex-col gap-0.5">
+          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between cursor-pointer rounded-b-lg border-dashed border-2" trigger-content-e="${id}">
+            <h2 class="font-semibold uppercase tracking-wide">Raw Response</h2>
+            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.raw_response_bytes)}</span>
+          </div>
+          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto hidden" e-content-id="${id}">${esc(exchange.raw_response)}</div>
+        </section>
+      `;
+    }
 
     content.innerHTML = html;
+  }
+
+  function toggleContent(e) {
+    const trigger = e.target.closest('[trigger-content-e]');
+    if (!trigger) return;
+    const id = trigger.getAttribute('trigger-content-e');
+    const content = document.querySelector(`[e-content-id="${id}"]`);
+    if (!content) return;
+    content.classList.toggle('hidden');
+    trigger.classList.toggle('rounded-b-lg');
+    trigger.classList.toggle('border-dashed');
+    trigger.classList.toggle('border-2');
   }
 
   function showNotFound() {
@@ -103,13 +234,73 @@
       showNotFound();
       return;
     }
+
     const res = await fetch(`/api/exchanges/${id}`);
     if (!res.ok) {
       showNotFound();
       return;
     }
-    render(await res.json());
+
+    derivedExchange = await deriveExchange(await res.json());
+
+    console.log('Derived exchange:', derivedExchange);
+
+    render(derivedExchange);
   }
+
+  document.addEventListener('click', toggleContent);
+  document.addEventListener('click', (e) => {
+    const trigger = e.target.closest('[open-message-dialog]');
+    if (!trigger) return;
+    const msgIndex = trigger.getAttribute('open-message-dialog');
+    const msg = derivedExchange.input_messages[msgIndex];
+    if (!msg || !msg.content_text) return;
+    const dialog = document.getElementById('message-dialog');
+    const dialogContent = document.getElementById('message-dialog-content');
+    dialogContent.textContent = msg.content_text;
+    document.getElementById('message-dialog-search').value = '';
+    dialog.showModal();
+  });
+  // TODO: Not working
+  document.addEventListener('input', (e) => {
+    const inputMessageSearch = e.target.closest('#input-messages-search');
+    if (!inputMessageSearch) return;
+    const searchTerm = inputMessageSearch.value.toLowerCase();
+    const inputMessagesContainer = document.querySelector('[e-content-id]');
+    const messages = inputMessagesContainer.querySelectorAll('li');
+
+    messages.forEach((msg) => {
+      const msgText = msg.textContent.toLowerCase();
+      if (msgText.includes(searchTerm)) {
+        msg.style.display = '';
+      } else {
+        msg.style.display = 'none';
+      }
+    });
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const messageDialogSearch = document.getElementById('message-dialog-search');
+
+    // Highlight search terms in the message dialog content as the user types
+    messageDialogSearch.addEventListener('input', (e) => {
+      const dialogContent = document.getElementById('message-dialog-content');
+      const searchTerm = e.target.value.toLowerCase();
+      const originalText = document.getElementById('message-dialog-content').textContent;
+
+      if (!searchTerm) {
+        dialogContent.textContent = originalText;
+        return;
+      }
+
+      const highlightedText = originalText.replace(
+        new RegExp(`(${searchTerm})`, 'gi'),
+        '<mark>$1</mark>'
+      );
+
+      dialogContent.innerHTML = highlightedText;
+    });
+  });
 
   load();
   initNav();

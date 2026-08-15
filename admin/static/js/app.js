@@ -2,6 +2,7 @@
 // wiring, and the SSE client that drives the nav's "Proxy Service" badge
 // plus each page's own live-update hook. Loaded before any page-specific
 // <script>, as plain globals (no bundler, no modules).
+const txtEncoder = new TextEncoder();
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -9,6 +10,28 @@ function pad(n) {
 
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function randomId() {
+  return crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
+}
+
+/**
+ * Compute the SHA-256 hash of a string and return it as a hex string.
+ */
+async function hashStr(str) {
+  if (!str) return null;
+  const msgUint8 = txtEncoder.encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
+  return new Uint8Array(hashBuffer).reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
+}
+
+/**
+ * Estimate the number of bytes in a string when encoded as UTF-8.
+ */
+function estimateBytes(str) {
+  if (!str) return 0;
+  return txtEncoder.encode(String(str)).length;
 }
 
 // Under 1000 renders as a plain integer; larger values abbreviate to 1
@@ -41,6 +64,21 @@ function fmtTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function fmtBytes(bytes) {
+  if (bytes == null) return '—';
+  if (bytes < 1024) return `${bytes} Bytes`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function valueToStr(content, tabSize = 2) {
+  if (typeof content === 'object') {
+    return JSON.stringify(content, null, tabSize);
+  }
+  return String(content || '');
 }
 
 // nil only when both inputs are nil, so an unpriced cache rate on one side
@@ -137,19 +175,19 @@ function updateProxyStatusBadge(statusValue) {
   switch (statusValue) {
     case 'ok':
       el.textContent = 'Proxy Service: OK';
-      el.className = 'ml-auto px-2 py-1 border border-green-300 border-dashed text-xs text-gray-500 bg-green-100 text-green-800';
+      el.className = 'ml-auto px-2 py-1 border border-emerald-300 border-dashed text-xs text-gray-500 rounded-lg bg-emerald-100 text-emerald-800';
       break;
     case 'degraded':
       el.textContent = 'Proxy Service: Degraded';
-      el.className = 'ml-auto px-2 py-1 border border-yellow-300 border-dashed text-xs text-gray-500 bg-yellow-100 text-yellow-800';
+      el.className = 'ml-auto px-2 py-1 border border-yellow-300 border-dashed text-xs text-gray-500 rounded-lg bg-yellow-100 text-yellow-800';
       break;
     case 'unreachable':
       el.textContent = 'Proxy Service: Unreachable';
-      el.className = 'ml-auto px-2 py-1 border border-red-300 border-dashed text-xs text-gray-500 bg-red-100 text-red-800 animate-pulse';
+      el.className = 'ml-auto px-2 py-1 border border-red-300 border-dashed text-xs text-gray-500 rounded-lg bg-red-100 text-red-800 animate-pulse';
       break;
     default:
       el.textContent = 'Proxy Service: Unknown';
-      el.className = 'ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500 bg-gray-100 text-gray-800';
+      el.className = 'ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500 rounded-lg bg-gray-100 text-gray-800';
   }
 }
 

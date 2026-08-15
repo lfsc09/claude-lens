@@ -66,7 +66,7 @@
     const label = esc(row.session_name || row.session_id);
     const modelLabel = esc(row.model || '—');
     return `<tr class="hover:bg-gray-50">
-      <td class="px-4 py-2"><a href="/exchanges/${row.id}" class="text-blue-600 hover:underline">${row.id}</a></td>
+      <td class="px-4 py-2"><a href="/exchanges/${row.id}" class="text-emerald-600 hover:underline">${row.id}</a></td>
       <td class="px-4 py-2 max-w-xs truncate text-gray-700">${label}</td>
       <td class="px-4 py-2 font-mono max-w-xs">
         <div class="flex flex-col">
@@ -99,13 +99,13 @@
     if (!container) return;
 
     const navLink = (label, targetPage, enabled) => enabled
-      ? `<a href="#" data-page="${targetPage}" class="pagination-link text-blue-600 hover:underline">${label}</a>`
+      ? `<a href="#" data-page="${targetPage}" class="pagination-link text-emerald-600 hover:underline">${label}</a>`
       : `<span class="text-gray-300">${label}</span>`;
 
     container.innerHTML = `
       <div class="flex items-center gap-2 text-gray-500">
         <label for="page-size-select">Rows per page</label>
-        <select id="page-size-select" class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <select id="page-size-select" class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500">
           ${PAGE_SIZES.map((s) => `<option value="${s}" ${s === pageSize ? 'selected' : ''}>${s}</option>`).join('')}
         </select>
         <span>${total > 0 ? `${from}–${to} of ${total}` : '0 of 0'} results</span>
@@ -116,7 +116,7 @@
         <span class="flex items-center gap-1.5 text-gray-500">
           Page
           <input id="page-jump-input" type="number" min="1" max="${totalPages}" value="${page}"
-            class="border border-gray-300 rounded px-2 py-1 text-sm w-16 text-center focus:outline-none focus:ring-1 focus:ring-blue-500">
+            class="border border-gray-300 rounded px-2 py-1 text-sm w-16 text-center focus:outline-none focus:ring-1 focus:ring-emerald-500">
           of ${totalPages}
         </span>
         ${navLink('Next', page + 1, page < totalPages)}
@@ -312,7 +312,7 @@
     return `${(abs / divisor).toFixed(1).replace(/\.0$/, '')}${suffix}`;
   }
 
-  // Input/Output share the blue family, Cache creation/read share the
+  // Input/Output share the emerald family, Cache creation/read share the
   // purple family (darker = "write" side, lighter = "read" side within
   // each pair), so hue alone tells cache lines apart from non-cache ones.
   const costSeries = [

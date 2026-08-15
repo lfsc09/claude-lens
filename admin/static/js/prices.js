@@ -7,24 +7,24 @@
       <td class="px-4 py-2 font-mono text-xs">${esc(price.model_prefix)}</td>
       <td class="px-4 py-2 text-right">
         <input form="${formID}" type="number" step="0.01" min="0" name="input_per_m" value="${price.input_per_m}"
-          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-blue-500">
+          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-emerald-500">
       </td>
       <td class="px-4 py-2 text-right">
         <input form="${formID}" type="number" step="0.01" min="0" name="output_per_m" value="${price.output_per_m}"
-          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-blue-500">
+          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-emerald-500">
       </td>
       <td class="px-4 py-2 text-right">
         <input form="${formID}" type="number" step="0.01" min="0" name="cache_write_per_m" value="${price.cache_write_per_m}"
-          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-blue-500">
+          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-emerald-500">
       </td>
       <td class="px-4 py-2 text-right">
         <input form="${formID}" type="number" step="0.01" min="0" name="cache_read_per_m" value="${price.cache_read_per_m}"
-          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-blue-500">
+          class="border border-gray-300 rounded px-2 py-1 text-sm w-24 text-right focus:outline-none focus:ring-1 focus:ring-emerald-500">
       </td>
       <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${fmtTime(price.updated_at)}</td>
       <td class="px-4 py-2 text-right whitespace-nowrap">
         <form id="${formID}" class="hidden"></form>
-        <button form="${formID}" type="submit" class="save-btn text-sm text-blue-600 hover:underline mr-3">Save</button>
+        <button form="${formID}" type="submit" class="save-btn text-sm text-emerald-600 hover:underline mr-3">Save</button>
         <button type="button" class="delete-btn text-sm text-red-500 hover:text-red-700 hover:underline">Delete</button>
       </td>
       </tr>`;
