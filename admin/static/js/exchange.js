@@ -3,6 +3,22 @@
   const tabSize = 4;
   let derivedExchange = null;
 
+  /**
+   * Go back to the previous page if the referrer is from the same origin, otherwise do nothing.
+   */
+  function goBackToExchanges(e) {
+    const referrer = document.referrer;
+    const sameOriginReferrer = referrer && new URL(referrer).origin === window.location.origin;
+    if (!sameOriginReferrer) return;
+    e.preventDefault();
+    if (window.history.length > 1) window.history.back();
+    else window.location.href = referrer;
+  }
+  const backLink = document.getElementById('back-link');
+  if (backLink) backLink.addEventListener('click', goBackToExchanges);
+  const notFoundBackLink = document.getElementById('not-found-back-link');
+  if (notFoundBackLink) notFoundBackLink.addEventListener('click', goBackToExchanges);
+
   function debounce(fn, delay = 200) {
     let timer;
     return (...args) => {
@@ -151,7 +167,7 @@
                 <span class="font-mono text-xs text-gray-500 hover:text-emerald-500" data-tip="Hash of this prompt in the input messages (context)">${exchange.input.hash}</span>
               </div>
             </div>
-            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.input.bytes)}</span>
+            <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.input.content_bytes)}</span>
           </div>
           <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto" e-content-id="${id}">${esc(exchange.input.content_text)}</div>
         </section>
@@ -250,8 +266,6 @@
     }
 
     derivedExchange = await deriveExchange(await res.json());
-
-    console.log('Derived exchange:', derivedExchange);
 
     render(derivedExchange);
   }
