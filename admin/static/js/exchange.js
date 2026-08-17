@@ -3,6 +3,14 @@
   const tabSize = 4;
   let derivedExchange = null;
 
+  function debounce(fn, delay = 200) {
+    let timer;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+
   /**
    * Pretty-print a JSON string, or return the original string if it's not valid JSON.
    */
@@ -45,7 +53,7 @@
   }
 
   function renderInputMessages(inputMessages) {
-    let html = '<ol class="relative border-s border-default flex flex-col gap-16">';
+    let html = '<ol class="relative border-s border-default flex flex-col gap-16" role="list" e-input-messages-content>';
 
     // Render from end to start
     for (let i = inputMessages.length - 1; i >= 0; i--) {
@@ -261,45 +269,55 @@
     document.getElementById('message-dialog-search').value = '';
     dialog.showModal();
   });
-  // TODO: Not working
-  document.addEventListener('input', (e) => {
+  document.addEventListener('input', debounce((e) => {
     const inputMessageSearch = e.target.closest('#input-messages-search');
-    if (!inputMessageSearch) return;
-    const searchTerm = inputMessageSearch.value.toLowerCase();
-    const inputMessagesContainer = document.querySelector('[e-content-id]');
+    if (!inputMessageSearch) {
+      const inputMessagesContainer = document.querySelector('[e-input-messages-content]');
+      if (inputMessagesContainer) {
+        inputMessagesContainer.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+      }
+      return;
+    }
+    const searchTerm = inputMessageSearch.value;
+    const inputMessagesContainer = document.querySelector('[e-input-messages-content]');
+    if (!inputMessagesContainer) return;
     const messages = inputMessagesContainer.querySelectorAll('li');
 
+    let firstMatch = null;
     messages.forEach((msg) => {
-      const msgText = msg.textContent.toLowerCase();
-      if (msgText.includes(searchTerm)) {
-        msg.style.display = '';
-      } else {
-        msg.style.display = 'none';
-      }
+      const visible = msg.textContent.includes(searchTerm);
+      msg.style.display = visible ? '' : 'none';
+      if (visible && !firstMatch) firstMatch = msg;
     });
-  });
+
+    if (firstMatch) firstMatch.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+    else inputMessagesContainer.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }));
 
   document.addEventListener('DOMContentLoaded', () => {
     const messageDialogSearch = document.getElementById('message-dialog-search');
 
     // Highlight search terms in the message dialog content as the user types
-    messageDialogSearch.addEventListener('input', (e) => {
+    messageDialogSearch.addEventListener('input', debounce((e) => {
       const dialogContent = document.getElementById('message-dialog-content');
-      const searchTerm = e.target.value.toLowerCase();
-      const originalText = document.getElementById('message-dialog-content').textContent;
+      const searchTerm = e.target.value;
+      const originalText = dialogContent.textContent;
 
       if (!searchTerm) {
         dialogContent.textContent = originalText;
+        dialogContent.scrollTo({ top: 0, left: 0, behavior: 'instant' });
         return;
       }
 
-      const highlightedText = originalText.replace(
+      dialogContent.innerHTML = originalText.replace(
         new RegExp(`(${searchTerm})`, 'gi'),
         '<mark>$1</mark>'
       );
 
-      dialogContent.innerHTML = highlightedText;
-    });
+      const firstMark = dialogContent.querySelector('mark');
+      if (firstMark) firstMark.scrollIntoView({ behavior: 'instant', block: 'nearest' });
+      else dialogContent.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }));
   });
 
   load();
