@@ -201,36 +201,48 @@
     }
   }
 
+  // Cancels a superseded request (e.g. a fast onNewExchange event firing
+  // again before the previous refresh finished) so a slow earlier response
+  // can't land after a newer one and overwrite it with stale data.
+  let loadExchangesAbort = null;
   async function loadExchanges() {
+    loadExchangesAbort?.abort();
+    const controller = new AbortController();
+    loadExchangesAbort = controller;
+
     const p = new URLSearchParams();
     if (q) p.set('q', q);
     p.set('limit', pageSize);
     p.set('offset', (requestedPage - 1) * pageSize);
 
-    const res = await fetch('/api/exchanges?' + p.toString());
-    const tbody = document.getElementById('exchanges-tbody');
+    try {
+      const res = await fetch('/api/exchanges?' + p.toString(), { signal: controller.signal });
+      const tbody = document.getElementById('exchanges-tbody');
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      showFilterError(body.error || 'Invalid query.');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
-      renderPaginationControls(1, 1, 0, 0, 0);
-      return;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        showFilterError(body.error || 'Invalid query.');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
+        renderPaginationControls(1, 1, 0, 0, 0);
+        return;
+      }
+
+      showFilterError('');
+      const data = await res.json();
+      setDeleteSessionOption(data.session_id, data.session_active);
+
+      if (tbody) {
+        tbody.innerHTML = data.rows.length
+          ? data.rows.map(buildRow).join('')
+          : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
+      }
+
+      const pagination = computePagination(requestedPage, pageSize, data.total);
+      currentPage = pagination.page;
+      renderPaginationControls(pagination.page, pagination.totalPages, pagination.from, pagination.to, data.total);
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
     }
-
-    showFilterError('');
-    const data = await res.json();
-    setDeleteSessionOption(data.session_id, data.session_active);
-
-    if (tbody) {
-      tbody.innerHTML = data.rows.length
-        ? data.rows.map(buildRow).join('')
-        : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
-    }
-
-    const pagination = computePagination(requestedPage, pageSize, data.total);
-    currentPage = pagination.page;
-    renderPaginationControls(pagination.page, pagination.totalPages, pagination.from, pagination.to, data.total);
   }
 
   // ── Charts ──────────────────────────────────────────────────────────────
@@ -239,11 +251,11 @@
   // API, reversed to chronological for left-to-right plotting.
   const SVGNS = 'http://www.w3.org/2000/svg';
 
-  async function fetchLatestExchanges(limit, query) {
+  async function fetchLatestExchanges(limit, query, signal) {
     const p = new URLSearchParams();
     p.set('limit', limit);
     if (query) p.set('q', query);
-    const res = await fetch('/api/exchanges?' + p.toString());
+    const res = await fetch('/api/exchanges?' + p.toString(), { signal });
     if (!res.ok) return [];
     const data = await res.json();
     return (data.rows || []).reverse();
@@ -380,8 +392,18 @@
     { label: 'Cache read', color: '#c084fc', get: (r) => r.cache_read_tokens },
   ];
 
+  let refreshChartsAbort = null;
   async function refreshCharts() {
-    const rows = await fetchLatestExchanges(200, q);
+    refreshChartsAbort?.abort();
+    const controller = new AbortController();
+    refreshChartsAbort = controller;
+    let rows;
+    try {
+      rows = await fetchLatestExchanges(200, q, controller.signal);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      throw err;
+    }
     const costSvg = document.getElementById('cost-chart');
     if (costSvg) renderLineChart(costSvg, rows, costSeries, { fmtY: fmtCostShort, fmtX: (r) => '#' + r.id });
     const tokensSvg = document.getElementById('tokens-chart');

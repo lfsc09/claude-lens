@@ -207,3 +207,21 @@ function initNav(range, handlers = {}) {
     }
   });
 }
+
+// initNavPolling is a lighter alternative to initNav for pages that only
+// need the proxy-status badge and have no use for live totals/new-exchange
+// events (exchange detail, prices). A permanent EventSource per tab eats
+// into the browser's per-origin connection cap for no benefit on these
+// pages, so poll /api/health instead. Returns the interval id for cleanup.
+function initNavPolling(intervalMs = 15000) {
+  async function poll() {
+    try {
+      const res = await fetch('/api/health');
+      updateProxyStatusBadge(res.ok ? (await res.json()).proxy : 'unreachable');
+    } catch {
+      updateProxyStatusBadge('unreachable');
+    }
+  }
+  poll();
+  return setInterval(poll, intervalMs);
+}

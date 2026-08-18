@@ -108,5 +108,5 @@
   }
 
   loadPrices();
-  initNav();
+  initNavPolling();
 })();

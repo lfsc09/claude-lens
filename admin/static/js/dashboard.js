@@ -7,12 +7,7 @@
   if (!RANGES.includes(range)) range = DEFAULT_RANGE;
 
   const select = document.getElementById('predefined-date-filter');
-  if (select) {
-    select.value = range;
-    select.addEventListener('change', () => {
-      window.location.href = '/?range=' + encodeURIComponent(select.value);
-    });
-  }
+  if (select) select.value = range;
 
   function setText(id, text) {
     const el = document.getElementById(id);
@@ -39,9 +34,12 @@
     }
   }
 
-  const now = new Date();
-  setText('date-from-value', dateStr(rangeFrom(range, now)));
-  setText('date-to-value', dateStr(now));
+  function updateDateLabels() {
+    const now = new Date();
+    setText('date-from-value', dateStr(rangeFrom(range, now)));
+    setText('date-to-value', dateStr(now));
+  }
+  updateDateLabels();
 
   // ── Stats cards ─────────────────────────────────────────────────────────
   function renderTotals(totals) {
@@ -81,15 +79,28 @@
       </tr>`;
   }
 
+  // AbortControllers below cancel a request that's superseded before it
+  // resolves — e.g. two onNewExchange events firing in quick succession, or
+  // a filter switch racing with the previous range's in-flight fetch. Each
+  // fetch aborts its own predecessor rather than sharing one controller, so
+  // unrelated calls (totals vs. daily-costs) never cancel each other.
+  let sessionStatsAbort = null;
   async function refreshSessionStats() {
-    const res = await fetch('/api/session-stats');
-    if (!res.ok) return;
-    const rows = await res.json();
-    const tbody = document.getElementById('session-stats-tbody');
-    if (!tbody) return;
-    tbody.innerHTML = rows.length
-      ? rows.map(buildSessionRow).join('')
-      : '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
+    sessionStatsAbort?.abort();
+    const controller = new AbortController();
+    sessionStatsAbort = controller;
+    try {
+      const res = await fetch('/api/session-stats', { signal: controller.signal });
+      if (!res.ok) return;
+      const rows = await res.json();
+      const tbody = document.getElementById('session-stats-tbody');
+      if (!tbody) return;
+      tbody.innerHTML = rows.length
+        ? rows.map(buildSessionRow).join('')
+        : '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    }
   }
 
   // ── Heatmap ─────────────────────────────────────────────────────────────
@@ -229,34 +240,83 @@
     }
   }
 
+  let dailyCostsAbort = null;
   async function refreshDailyCosts() {
-    const res = await fetch('/api/daily-costs?days=60');
-    if (!res.ok) return;
-    _dailyCosts = await res.json();
-    renderHeatmap();
+    dailyCostsAbort?.abort();
+    const controller = new AbortController();
+    dailyCostsAbort = controller;
+    try {
+      const res = await fetch('/api/daily-costs?days=60', { signal: controller.signal });
+      if (!res.ok) return;
+      _dailyCosts = await res.json();
+      renderHeatmap();
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    }
   }
+
+  // range-dependent, unlike refreshSessionStats/refreshDailyCosts above —
+  // used both for the initial load and for switchRange below.
+  let totalsAbort = null;
+  async function fetchTotals(rangeKey) {
+    totalsAbort?.abort();
+    const controller = new AbortController();
+    totalsAbort = controller;
+    try {
+      const res = await fetch('/api/totals?range=' + encodeURIComponent(rangeKey), { signal: controller.signal });
+      if (res.ok) renderTotals(await res.json());
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    }
+  }
+
+  // ── Live updates ──────────────────────────────────────────────────────────
+  // The SSE connection's range is fixed at connect time (the server computes
+  // `since` from it once), so changing range requires closing and reopening
+  // it rather than just updating a variable.
+  let navHandle = null;
+  function reconnectNav() {
+    navHandle?.close();
+    navHandle = initNav(range, {
+      onTotals: renderTotals,
+      onNewExchange: () => {
+        refreshSessionStats();
+        refreshDailyCosts();
+      },
+    });
+  }
+
+  // ── Filter switching (SPA-style, no full page reload) ──────────────────────
+  function switchRange(newRange) {
+    if (!RANGES.includes(newRange) || newRange === range) return;
+    range = newRange;
+    history.pushState(null, '', '/?range=' + encodeURIComponent(range));
+    updateDateLabels();
+    fetchTotals(range);
+    reconnectNav();
+  }
+
+  if (select) {
+    select.addEventListener('change', () => switchRange(select.value));
+  }
+
+  window.addEventListener('popstate', () => {
+    const p = new URLSearchParams(window.location.search);
+    let r = p.get('range');
+    if (!RANGES.includes(r)) r = DEFAULT_RANGE;
+    if (r === range) return;
+    range = r;
+    if (select) select.value = range;
+    updateDateLabels();
+    fetchTotals(range);
+    reconnectNav();
+  });
 
   // ── Initial load ──────────────────────────────────────────────────────────
   async function loadDashboard() {
-    const [totalsRes, dailyRes] = await Promise.all([
-      fetch('/api/totals?range=' + encodeURIComponent(range)),
-      fetch('/api/daily-costs?days=60'),
-    ]);
-    if (totalsRes.ok) renderTotals(await totalsRes.json());
-    if (dailyRes.ok) {
-      _dailyCosts = await dailyRes.json();
-      renderHeatmap();
-    }
-    await refreshSessionStats();
+    await Promise.all([fetchTotals(range), refreshDailyCosts(), refreshSessionStats()]);
   }
 
   loadDashboard();
-
-  initNav(range, {
-    onTotals: renderTotals,
-    onNewExchange: () => {
-      refreshSessionStats();
-      refreshDailyCosts();
-    },
-  });
+  reconnectNav();
 })();

@@ -335,5 +335,5 @@
   });
 
   load();
-  initNav();
+  initNavPolling();
 })();
