@@ -41,24 +41,73 @@
     window.location.href = '/exchanges?' + p.toString();
   }
 
-  // ── Delete (Clear session / Clear all) ─────────────────────────────────
-  let currentSessionID = '';
-  const deleteForm = document.getElementById('delete-form');
-  const deleteBtn = document.getElementById('delete-btn');
+  // ── Delete (Clear session) ────────────────────────────────────────────
+  const DIALOG_MESSAGE_STYLES = {
+    warning: ['text-amber-700', 'bg-amber-50', 'border-amber-200'],
+    error: ['text-red-700', 'bg-red-50', 'border-red-200'],
+  };
 
-  function updateDeleteButton(sessionID) {
-    currentSessionID = sessionID || '';
-    if (deleteBtn) deleteBtn.textContent = currentSessionID ? 'Clear session' : 'Clear all';
+  // Shared message area inside the delete dialog: shows the "session may
+  // still be active" warning and any error the DELETE call comes back with,
+  // so failures are visible in the UI instead of only in the console.
+  function setDialogMessage(type, text) {
+    const el = document.getElementById('delete-dialog-message');
+    if (!el) return;
+    Object.values(DIALOG_MESSAGE_STYLES).forEach((cls) => el.classList.remove(...cls));
+    if (!text) {
+      el.classList.add('hidden');
+      el.textContent = '';
+      return;
+    }
+    el.classList.remove('hidden');
+    el.classList.add(...DIALOG_MESSAGE_STYLES[type]);
+    el.textContent = text;
   }
 
-  if (deleteForm) {
-    deleteForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!confirm(`Delete ${currentSessionID ? 'exchanges for this session' : 'all exchanges'}?`)) return;
-      const url = '/api/exchanges' + (currentSessionID ? `?session_id=${encodeURIComponent(currentSessionID)}` : '');
-      await fetch(url, { method: 'DELETE' });
-      window.location.href = currentSessionID ? '/exchanges?q=' + encodeURIComponent(q) : '/exchanges';
-    });
+  function setDeleteSessionOption(sessionID, sessionActive) {
+    const currentSessionID = sessionID || '';
+    const isSessionActive = !!sessionActive;
+
+    const checkbox = document.getElementById('also-delete-claude-session');
+    function updateActiveWarning() {
+      if (isSessionActive && checkbox?.checked) {
+        setDialogMessage('warning', 'This session had Claude Code activity in the last 30 minutes and may still be open in a terminal. Deleting its files now could corrupt or lose data from that session.');
+      } else {
+        setDialogMessage(null, '');
+      }
+    }
+    if (checkbox) checkbox.onchange = updateActiveWarning;
+
+    // Toogle the visibility of the "Delete Session" button based on whether a session ID is present
+    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+    if (confirmDeleteBtn) {
+      confirmDeleteBtn.classList.toggle('hidden', !currentSessionID);
+      confirmDeleteBtn.onclick = () => {
+        const dialog = document.getElementById('delete-confirmation-dialog');
+        if (dialog) {
+          dialog.querySelector('#delete-session-id').textContent = currentSessionID;
+          if (checkbox) checkbox.checked = false;
+          updateActiveWarning();
+          dialog.showModal();
+        }
+      };
+    }
+
+    // Set the onclick handler for the "Delete Session" button to open the confirmation dialog
+    const submitDeleteBtn = document.getElementById('submit-delete-btn');
+    if (submitDeleteBtn) {
+      submitDeleteBtn.onclick = async () => {
+        const alsoDeleteClaudeSession = checkbox?.checked;
+        const url = '/api/exchanges' + (currentSessionID ? `?session_id=${encodeURIComponent(currentSessionID)}` : '') + (alsoDeleteClaudeSession ? '&also_delete_claude_session=true' : '');
+        const response = await fetch(url, { method: 'DELETE' });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          setDialogMessage('error', body.error || response.statusText || 'Failed to delete exchanges.');
+          return;
+        }
+        window.location.href = !alsoDeleteClaudeSession ? '/exchanges?q=' + encodeURIComponent(q) : '/exchanges';
+      };
+    }
   }
 
   // ── Table ───────────────────────────────────────────────────────────────
@@ -171,7 +220,7 @@
 
     showFilterError('');
     const data = await res.json();
-    updateDeleteButton(data.session_id);
+    setDeleteSessionOption(data.session_id, data.session_active);
 
     if (tbody) {
       tbody.innerHTML = data.rows.length

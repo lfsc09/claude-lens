@@ -370,17 +370,33 @@ func (db *DB) GetDailyCosts(ctx context.Context, days int) ([]DailyCost, error) 
 	return out, rows.Err()
 }
 
-// DeleteExchanges deletes all exchanges, or only those for a specific
-// session (sessionID == "" deletes everything). Returns the number of rows
-// deleted.
-func (db *DB) DeleteExchanges(ctx context.Context, sessionID string) (int64, error) {
-	var res sql.Result
-	var err error
-	if sessionID != "" {
-		res, err = db.sql.ExecContext(ctx, "DELETE FROM exchanges WHERE session_id = ?", sessionID)
-	} else {
-		res, err = db.sql.ExecContext(ctx, "DELETE FROM exchanges")
+// SessionActiveWithin reports whether sessionID has any exchange timestamped
+// within window of now. Used to warn before deleting on-disk Claude Code
+// session files out from under a session that might still be open in a
+// terminal — a proxied request in the last few minutes is the best signal
+// claude-lens has that a session is still live.
+func (db *DB) SessionActiveWithin(ctx context.Context, sessionID string, window time.Duration, now time.Time) (bool, error) {
+	if sessionID == "" {
+		return false, nil
 	}
+	var last sql.NullFloat64
+	if err := db.sql.QueryRowContext(ctx, "SELECT MAX(timestamp) FROM exchanges WHERE session_id = ?", sessionID).Scan(&last); err != nil {
+		return false, err
+	}
+	if !last.Valid {
+		return false, nil
+	}
+	return last.Float64 >= float64(now.Add(-window).Unix()), nil
+}
+
+// DeleteExchanges deletes all exchanges for a specific session. sessionID is
+// required; it no longer supports deleting every exchange in one call.
+// Returns the number of rows deleted.
+func (db *DB) DeleteExchanges(ctx context.Context, sessionID string) (int64, error) {
+	if sessionID == "" {
+		return 0, errors.New("session_id is required")
+	}
+	res, err := db.sql.ExecContext(ctx, "DELETE FROM exchanges WHERE session_id = ?", sessionID)
 	if err != nil {
 		slog.Error("delete exchanges failed", "error", err, "session_id", sessionID)
 		return 0, err

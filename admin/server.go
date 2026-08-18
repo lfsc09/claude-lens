@@ -66,7 +66,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/exchanges", h.listExchanges)
 	mux.HandleFunc("GET /api/exchanges/{id}", h.exchangeDetail)
-	mux.HandleFunc("DELETE /api/exchanges", h.resetExchanges)
+	mux.HandleFunc("DELETE /api/exchanges", h.deleteExchanges)
 	mux.HandleFunc("GET /api/totals", h.totals)
 	mux.HandleFunc("GET /api/session-stats", h.sessionStats)
 	mux.HandleFunc("GET /api/daily-costs", h.dailyCosts)

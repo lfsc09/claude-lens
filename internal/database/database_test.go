@@ -442,12 +442,48 @@ func TestDeleteExchanges(t *testing.T) {
 		t.Fatalf("unexpected remaining rows: %+v", remaining)
 	}
 
-	n, err = db.DeleteExchanges(ctx, "")
-	if err != nil {
-		t.Fatalf("DeleteExchanges(all): %v", err)
+	if _, err = db.DeleteExchanges(ctx, ""); err == nil {
+		t.Fatal("DeleteExchanges(\"\"): want error, got nil")
 	}
-	if n != 1 {
-		t.Fatalf("deleted %d rows, want 1", n)
+	remaining, err = db.GetExchanges(ctx, "", 100, 0)
+	if err != nil {
+		t.Fatalf("GetExchanges: %v", err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("empty session_id should not delete rows: got %d remaining, want 1", len(remaining))
+	}
+}
+
+func TestSessionActiveWithin(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	if active, err := db.SessionActiveWithin(ctx, "unknown", 30*time.Minute, now); err != nil || active {
+		t.Fatalf("unknown session: active=%v err=%v, want false, nil", active, err)
+	}
+
+	recent := Exchange{SessionID: "s", Path: "/p", Timestamp: float64(now.Add(-5 * time.Minute).Unix()), RawRequest: "{}", RawResponse: "{}"}
+	if err := db.SaveExchange(ctx, recent); err != nil {
+		t.Fatalf("SaveExchange(recent): %v", err)
+	}
+	if active, err := db.SessionActiveWithin(ctx, "s", 30*time.Minute, now); err != nil || !active {
+		t.Fatalf("recent exchange: active=%v err=%v, want true, nil", active, err)
+	}
+	if active, err := db.SessionActiveWithin(ctx, "s", 1*time.Minute, now); err != nil || active {
+		t.Fatalf("recent exchange outside narrower window: active=%v err=%v, want false, nil", active, err)
+	}
+
+	stale := Exchange{SessionID: "old", Path: "/p", Timestamp: float64(now.Add(-2 * time.Hour).Unix()), RawRequest: "{}", RawResponse: "{}"}
+	if err := db.SaveExchange(ctx, stale); err != nil {
+		t.Fatalf("SaveExchange(stale): %v", err)
+	}
+	if active, err := db.SessionActiveWithin(ctx, "old", 30*time.Minute, now); err != nil || active {
+		t.Fatalf("stale exchange: active=%v err=%v, want false, nil", active, err)
+	}
+
+	if active, err := db.SessionActiveWithin(ctx, "", 30*time.Minute, now); err != nil || active {
+		t.Fatalf("empty session_id: active=%v err=%v, want false, nil", active, err)
 	}
 }
 

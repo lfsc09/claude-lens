@@ -301,7 +301,42 @@ func TestDailyCosts(t *testing.T) {
 	}
 }
 
-func TestResetExchanges(t *testing.T) {
+func TestListExchanges_SessionActive(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	now := float64(time.Now().Unix())
+
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "recent", Path: "/p", Timestamp: now - 300, RawRequest: "{}", RawResponse: "{}",
+	}); err != nil {
+		t.Fatalf("SaveExchange(recent): %v", err)
+	}
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "stale", Path: "/p", Timestamp: now - 3600, RawRequest: "{}", RawResponse: "{}",
+	}); err != nil {
+		t.Fatalf("SaveExchange(stale): %v", err)
+	}
+
+	rec := doJSON(t, s, http.MethodGet, "/api/exchanges?q="+url.QueryEscape(`session = "recent"`), nil)
+	var recentResp exchangesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &recentResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !recentResp.SessionActive {
+		t.Error("recent session: SessionActive = false, want true")
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges?q="+url.QueryEscape(`session = "stale"`), nil)
+	var staleResp exchangesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &staleResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if staleResp.SessionActive {
+		t.Error("stale session: SessionActive = true, want false")
+	}
+}
+
+func TestDeleteExchanges(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for _, sess := range []string{"a", "a", "b"} {
@@ -311,17 +346,26 @@ func TestResetExchanges(t *testing.T) {
 	}
 
 	rec := doJSON(t, s, http.MethodDelete, "/api/exchanges?session_id=a", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
 	var body map[string]int64
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["deleted"] != 2 {
-		t.Errorf("deleted = %d, want 2", body["deleted"])
+	if body["deletedRows"] != 2 {
+		t.Errorf("deletedRows = %d, want 2", body["deletedRows"])
 	}
 
 	remaining, _ := db.GetExchanges(ctx, "", 100, 0)
 	if len(remaining) != 1 {
 		t.Fatalf("got %d remaining, want 1", len(remaining))
+	}
+
+	// session_id is now required — no more "clear everything" mode.
+	rec = doJSON(t, s, http.MethodDelete, "/api/exchanges", nil)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for missing session_id", rec.Code)
 	}
 }
 

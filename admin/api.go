@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/files"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
 )
@@ -50,7 +51,17 @@ type exchangesResponse struct {
 	Rows      []database.ExchangeSummary `json:"rows"`
 	Total     int                        `json:"total"`
 	SessionID string                     `json:"session_id,omitempty"`
+	// SessionActive is only meaningful alongside SessionID: it's true when
+	// that session had a proxied request within claudeSessionActiveWindow,
+	// which the UI uses to warn before deleting its on-disk Claude Code
+	// files out from under a still-open terminal.
+	SessionActive bool `json:"session_active,omitempty"`
 }
+
+// claudeSessionActiveWindow is how recent a session's last proxied request
+// must be for the delete dialog to warn that it might still be open in a
+// terminal.
+const claudeSessionActiveWindow = 30 * time.Minute
 
 func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
@@ -91,7 +102,15 @@ func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID, _ := database.ExtractExactSession(q)
-	writeJSON(w, http.StatusOK, exchangesResponse{Rows: rows, Total: total, SessionID: sessionID})
+	var sessionActive bool
+	if sessionID != "" {
+		sessionActive, err = h.db.SessionActiveWithin(r.Context(), sessionID, claudeSessionActiveWindow, time.Now())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, exchangesResponse{Rows: rows, Total: total, SessionID: sessionID, SessionActive: sessionActive})
 }
 
 func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
@@ -113,15 +132,23 @@ func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, row)
 }
 
-func (h *handlers) resetExchanges(w http.ResponseWriter, r *http.Request) {
+func (h *handlers) deleteExchanges(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("session_id")
+	alsoDeleteClaudeSession := r.URL.Query().Get("also_delete_claude_session") == "true"
 	n, err := h.db.DeleteExchanges(r.Context(), sessionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	h.logger.Info("reset exchanges", "deleted", n, "session_id", sessionID)
-	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+	var deletedQtd int
+	// Try to delete the Claude session if requested, but don't fail the request if it fails.
+	if alsoDeleteClaudeSession && sessionID != "" {
+		if deletedQtd, err = files.TryDeleteClaudeSession(sessionID); err != nil {
+			h.logger.Error("failed to delete Claude session", "error", err, "session_id", sessionID, "deleted", deletedQtd)
+		}
+	}
+	h.logger.Info("delete exchanges", "deletedRows", n, "session_id", sessionID, "also_delete_claude_session", alsoDeleteClaudeSession, "deleted_files", deletedQtd)
+	writeJSON(w, http.StatusOK, map[string]int64{"deletedRows": n, "deletedFiles": int64(deletedQtd)})
 }
 
 // totals accepts either ?session_id= or ?range= (never both in practice —
