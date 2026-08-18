@@ -18,8 +18,10 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
-  // Mirrors admin/dashboard_range.go's sinceForRange — every range's upper bound
-  // is implicitly "now", so only the lower bound varies by preset.
+  /**
+   * Mirrors admin/dashboard_range.go's sinceForRange — every range's upper
+   * bound is implicitly "now", so only the lower bound varies by preset.
+   */
   function rangeFrom(rangeKey, now) {
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     switch (rangeKey) {
@@ -58,53 +60,40 @@
   }
 
   // ── Per-session table ─────────────────────────────────────────────────────
-  function buildSessionRow(s) {
-    const cacheTok = (s.total_cache_creation_tokens ?? 0) + (s.total_cache_read_tokens ?? 0);
-    const inputTok = s.total_input_tokens ?? 0;
-    const outputTok = s.total_output_tokens ?? 0;
+  function buildSessionRow(session) {
+    const cacheTok = (session.total_cache_creation_tokens ?? 0) + (session.total_cache_read_tokens ?? 0);
+    const inputTok = session.total_input_tokens ?? 0;
+    const outputTok = session.total_output_tokens ?? 0;
     const totalTok = inputTok + outputTok + cacheTok;
-    const cost = s.total_cost ?? 0;
+    const cost = session.total_cost ?? 0;
     const costStr = cost > 0 ? `$${cost.toFixed(4)}` : '—';
-    const sessionQuery = 'session = ' + JSON.stringify(s.session_id);
-    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 hover:underline font-medium">${esc(s.session_name || s.session_id)}</a>${s.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(s.session_id)}</span>` : ''}`;
+    const sessionQuery = 'session = ' + JSON.stringify(session.session_id);
+    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 hover:underline font-medium">${esc(session.session_name || session.session_id)}</a>${session.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session.session_id)}</span>` : ''}`;
     return `<tr class="hover:bg-gray-50">
       <td class="px-4 py-2">${nameHtml}</td>
-      <td class="px-4 py-2 text-right text-gray-700">${s.exchange_count}</td>
+      <td class="px-4 py-2 text-right text-gray-700">${session.exchange_count}</td>
       <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(inputTok)}</td>
       <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(outputTok)}</td>
       <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(cacheTok)}</td>
       <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(totalTok)}</td>
       <td class="px-4 py-2 text-right text-gray-700">${costStr}</td>
-      <td class="px-4 py-2 text-gray-400 whitespace-nowrap">${fmtTime(s.last_updated)}</td>
+      <td class="px-4 py-2 text-gray-400 whitespace-nowrap">${fmtTime(session.last_updated)}</td>
       </tr>`;
   }
 
-  // AbortControllers below cancel a request that's superseded before it
-  // resolves — e.g. two onNewExchange events firing in quick succession, or
-  // a filter switch racing with the previous range's in-flight fetch. Each
-  // fetch aborts its own predecessor rather than sharing one controller, so
-  // unrelated calls (totals vs. daily-costs) never cancel each other.
-  let sessionStatsAbort = null;
-  async function refreshSessionStats() {
-    sessionStatsAbort?.abort();
-    const controller = new AbortController();
-    sessionStatsAbort = controller;
-    try {
-      const res = await fetch('/api/session-stats', { signal: controller.signal });
-      if (!res.ok) return;
-      const rows = await res.json();
-      const tbody = document.getElementById('session-stats-tbody');
-      if (!tbody) return;
-      tbody.innerHTML = rows.length
-        ? rows.map(buildSessionRow).join('')
-        : '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
-    } catch (err) {
-      if (err.name !== 'AbortError') throw err;
-    }
-  }
+  const refreshSessionStats = makeAbortable(async (signal) => {
+    const res = await fetch('/api/session-stats', { signal });
+    if (!res.ok) return;
+    const rows = await res.json();
+    const tbody = document.getElementById('session-stats-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = rows.length
+      ? rows.map(buildSessionRow).join('')
+      : '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
+  });
 
   // ── Heatmap ─────────────────────────────────────────────────────────────
-  let _dailyCosts = [];
+  let dailyCosts = [];
 
   function renderHeatmap() {
     const container = document.getElementById('cost-heatmap');
@@ -112,19 +101,15 @@
 
     const costByDay = {};
     let maxCost = 0;
-    _dailyCosts.forEach((d) => {
+    dailyCosts.forEach((d) => {
       costByDay[d.day] = d.daily_cost;
       if (d.daily_cost > maxCost) maxCost = d.daily_cost;
     });
 
-    function dayStr(date) {
-      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    }
-
     // Relative thresholds based on max daily cost
-    const t1 = maxCost * 0.25;
-    const t2 = maxCost * 0.5;
-    const t3 = maxCost * 0.75;
+    const lowThreshold = maxCost * 0.25;
+    const midThreshold = maxCost * 0.5;
+    const highThreshold = maxCost * 0.75;
 
     const LEVELS = [
       { bg: 'bg-gray-100 border border-gray-200', text: 'text-gray-300' },
@@ -133,34 +118,6 @@
       { bg: 'bg-emerald-500', text: 'text-white' },
       { bg: 'bg-emerald-700', text: 'text-white' },
     ];
-
-    function getLevel(cost) {
-      if (!cost || cost === 0 || maxCost === 0) return 0;
-      if (cost < t1) return 1;
-      if (cost < t2) return 2;
-      if (cost < t3) return 3;
-      return 4;
-    }
-
-    /**
-     * Adaptive precision up to 2 decimal, then 0 decimal for larger values.
-     * If precision ends up $0.00, it will show ~$0.00, which is fine for a heatmap.
-     */
-    function fmtCell(cost) {
-      if (!cost || cost === 0) return '';
-      if (cost < 0.01) return `~$${cost.toFixed(2)}`;
-      if (cost < 10) return `$${cost.toFixed(2)}`;
-      if (cost < 100) return `$${cost.toFixed(1)}`;
-      if (cost > 999) return `(╯°□°)╯`;
-      return `$${cost.toFixed(0)}`;
-    }
-
-    function fmtThreshold(v) {
-      if (v < 0.0001) return `$${v.toFixed(6)}`;
-      if (v < 0.01) return `$${v.toFixed(4)}`;
-      if (v < 1) return `$${v.toFixed(3)}`;
-      return `$${v.toFixed(2)}`;
-    }
 
     const today = new Date();
     today.setHours(23, 59, 59, 999);
@@ -209,11 +166,12 @@
 
         if (isFuture) return '<div class="w-16 h-7 rounded-sm"></div>';
 
-        const clr = LEVELS[getLevel(cost)];
+        const level = getLevel(cost, maxCost, lowThreshold, midThreshold, highThreshold);
+        const clr = LEVELS[level];
         const txt = fmtCell(cost);
         const tip = `<div class="flex gap-2"><b>${key}:</b><span>${cost > 0 ? `$${cost.toFixed(6)}` : 'no activity'}</span></div>`;
 
-        return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && getLevel(cost) === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[.7rem] font-mono overflow-hidden cursor-default" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+        return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && level === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[.7rem] font-mono overflow-hidden cursor-default" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
       }).join('');
 
       return `<div class="flex flex-col gap-1 ${gapClass}">
@@ -233,42 +191,26 @@
       legend.innerHTML = maxCost === 0
         ? '<span class="text-gray-400">No spending data yet.</span>'
         : `<div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200 flex-shrink-0"></div><span>$0.00</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-100 flex-shrink-0"></div><span>&lt;${fmtThreshold(t1)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-300 flex-shrink-0"></div><span>&lt;${fmtThreshold(t2)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-500 flex-shrink-0"></div><span>&lt;${fmtThreshold(t3)}</span></div>
-          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-700 flex-shrink-0"></div><span>&ge;${fmtThreshold(t3)}</span></div>`;
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-100 flex-shrink-0"></div><span>&lt;${fmtThreshold(lowThreshold)}</span></div>
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-300 flex-shrink-0"></div><span>&lt;${fmtThreshold(midThreshold)}</span></div>
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-500 flex-shrink-0"></div><span>&lt;${fmtThreshold(highThreshold)}</span></div>
+          <div class="flex items-center gap-1.5"><div class="w-3 h-3 rounded-sm bg-emerald-700 flex-shrink-0"></div><span>&ge;${fmtThreshold(highThreshold)}</span></div>`;
     }
   }
 
-  let dailyCostsAbort = null;
-  async function refreshDailyCosts() {
-    dailyCostsAbort?.abort();
-    const controller = new AbortController();
-    dailyCostsAbort = controller;
-    try {
-      const res = await fetch('/api/daily-costs?days=60', { signal: controller.signal });
-      if (!res.ok) return;
-      _dailyCosts = await res.json();
-      renderHeatmap();
-    } catch (err) {
-      if (err.name !== 'AbortError') throw err;
-    }
-  }
+  const refreshDailyCosts = makeAbortable(async (signal) => {
+    const res = await fetch('/api/daily-costs?days=60', { signal });
+    if (!res.ok) return;
+    dailyCosts = await res.json();
+    renderHeatmap();
+  });
 
   // range-dependent, unlike refreshSessionStats/refreshDailyCosts above —
   // used both for the initial load and for switchRange below.
-  let totalsAbort = null;
-  async function fetchTotals(rangeKey) {
-    totalsAbort?.abort();
-    const controller = new AbortController();
-    totalsAbort = controller;
-    try {
-      const res = await fetch('/api/totals?range=' + encodeURIComponent(rangeKey), { signal: controller.signal });
-      if (res.ok) renderTotals(await res.json());
-    } catch (err) {
-      if (err.name !== 'AbortError') throw err;
-    }
-  }
+  const fetchTotals = makeAbortable(async (signal, rangeKey) => {
+    const res = await fetch('/api/totals?range=' + encodeURIComponent(rangeKey), { signal });
+    if (res.ok) renderTotals(await res.json());
+  });
 
   // ── Live updates ──────────────────────────────────────────────────────────
   // The SSE connection's range is fixed at connect time (the server computes
@@ -301,11 +243,11 @@
   }
 
   window.addEventListener('popstate', () => {
-    const p = new URLSearchParams(window.location.search);
-    let r = p.get('range');
-    if (!RANGES.includes(r)) r = DEFAULT_RANGE;
-    if (r === range) return;
-    range = r;
+    const searchParams = new URLSearchParams(window.location.search);
+    let rangeParam = searchParams.get('range');
+    if (!RANGES.includes(rangeParam)) rangeParam = DEFAULT_RANGE;
+    if (rangeParam === range) return;
+    range = rangeParam;
     if (select) select.value = range;
     updateDateLabels();
     fetchTotals(range);

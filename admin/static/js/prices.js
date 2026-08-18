@@ -43,8 +43,7 @@
       }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      alert(body.error || 'Failed to save price.');
+      alert(await extractErrorMessage(res, 'Failed to save price.'));
       return;
     }
     loadPrices();
@@ -98,8 +97,7 @@
         }),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(body.error || 'Failed to add price.');
+        alert(await extractErrorMessage(res, 'Failed to add price.'));
         return;
       }
       addForm.reset();

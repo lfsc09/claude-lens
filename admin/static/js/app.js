@@ -16,9 +16,6 @@ function randomId() {
   return crypto.getRandomValues(new Uint32Array(1))[0].toString(16);
 }
 
-/**
- * Compute the SHA-256 hash of a string and return it as a hex string.
- */
 async function hashStr(str) {
   if (!str) return null;
   const msgUint8 = txtEncoder.encode(str);
@@ -26,17 +23,16 @@ async function hashStr(str) {
   return new Uint8Array(hashBuffer).reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
 }
 
-/**
- * Estimate the number of bytes in a string when encoded as UTF-8.
- */
 function estimateBytes(str) {
   if (!str) return 0;
   return txtEncoder.encode(String(str)).length;
 }
 
-// Under 1000 renders as a plain integer; larger values abbreviate to 1
-// decimal place (1.7k, 6.3M, 1.2B). Use for summarized counts (tables,
-// cards); use fmtInt for exact values (exchange detail page).
+/**
+ * Abbreviate a token count to 1 decimal place above 1000 (1.7k, 6.3M, 1.2B),
+ * or render it plain below that. Use for summarized counts (tables, cards);
+ * use fmtInt for exact values (exchange detail page).
+ */
 function fmtTokens(n) {
   if (n == null) return '—';
   const neg = n < 0;
@@ -81,8 +77,23 @@ function valueToStr(content, tabSize = 2) {
   return String(content || '');
 }
 
-// nil only when both inputs are nil, so an unpriced cache rate on one side
-// still shows the other's cost instead of collapsing to "—".
+/**
+ * Pretty-print a JSON string, or return the original string if it's not valid JSON.
+ */
+function prettyJSON(jsonStr, tabSize = 2) {
+  if (jsonStr == null) return '';
+  try {
+    return JSON.stringify(JSON.parse(jsonStr), null, tabSize);
+  } catch {
+    return jsonStr;
+  }
+}
+
+/**
+ * Sum two nullable costs. Result is nil only when both inputs are nil, so an
+ * unpriced cache rate on one side still shows the other's cost instead of
+ * collapsing to "—".
+ */
 function addCost(a, b) {
   if (a == null && b == null) return null;
   return (a ?? 0) + (b ?? 0);
@@ -104,6 +115,42 @@ function tokensTooltip(row) {
   if (row.cache_creation_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache create:</b><span>${fmtTokens(row.cache_creation_tokens)}</span></div>`);
   if (row.cache_read_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache read:</b><span>${fmtTokens(row.cache_read_tokens)}</span></div>`);
   return parts.length ? '<div class="w-32 flex flex-col gap-0.5">' + parts.join('') + '</div>' : '';
+}
+
+function dayStr(date) {
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Bucket a daily cost into one of 5 heatmap levels (0 = no activity, 4 =
+ * highest) using thresholds relative to the max cost across the visible range.
+ */
+function getLevel(cost, maxCost, lowThreshold, midThreshold, highThreshold) {
+  if (!cost || cost === 0 || maxCost === 0) return 0;
+  if (cost < lowThreshold) return 1;
+  if (cost < midThreshold) return 2;
+  if (cost < highThreshold) return 3;
+  return 4;
+}
+
+/**
+ * Adaptive precision up to 2 decimal, then 0 decimal for larger values.
+ * If precision ends up $0.00, it will show ~$0.00, which is fine for a heatmap.
+ */
+function fmtCell(cost) {
+  if (!cost || cost === 0) return '';
+  if (cost < 0.01) return `~$${cost.toFixed(2)}`;
+  if (cost < 10) return `$${cost.toFixed(2)}`;
+  if (cost < 100) return `$${cost.toFixed(1)}`;
+  if (cost > 999) return `(╯°□°)╯`;
+  return `$${cost.toFixed(0)}`;
+}
+
+function fmtThreshold(v) {
+  if (v < 0.0001) return `$${v.toFixed(6)}`;
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  if (v < 1) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
 }
 
 // Single floating tooltip driven by [data-tip] elements. A per-cell
@@ -163,10 +210,10 @@ function tokensTooltip(row) {
 })();
 
 function connectSSE(range, onMessage) {
-  const es = new EventSource('/api/stream' + (range ? `?range=${encodeURIComponent(range)}` : ''));
-  es.onmessage = (e) => onMessage(JSON.parse(e.data));
-  es.onerror = () => onMessage({ proxy_status: 'unreachable' });
-  return es;
+  const eventSource = new EventSource('/api/stream' + (range ? `?range=${encodeURIComponent(range)}` : ''));
+  eventSource.onmessage = (e) => onMessage(JSON.parse(e.data));
+  eventSource.onerror = () => onMessage({ proxy_status: 'unreachable' });
+  return eventSource;
 }
 
 function updateProxyStatusBadge(statusValue) {
@@ -191,10 +238,12 @@ function updateProxyStatusBadge(statusValue) {
   }
 }
 
-// initNav wires the nav's proxy-status badge on every page and, when given
-// handlers, forwards SSE-pushed totals/new-exchange events to the calling
-// page. onNewExchange only fires when latest_exchange_id actually
-// increases, so pages don't each need their own dedup bookkeeping.
+/**
+ * Wire the nav's proxy-status badge on every page and, when given handlers,
+ * forward SSE-pushed totals/new-exchange events to the calling page.
+ * onNewExchange only fires when latest_exchange_id actually increases, so
+ * pages don't each need their own dedup bookkeeping.
+ */
 function initNav(range, handlers = {}) {
   const { onTotals, onNewExchange } = handlers;
   let knownLatestId = 0;
@@ -208,11 +257,13 @@ function initNav(range, handlers = {}) {
   });
 }
 
-// initNavPolling is a lighter alternative to initNav for pages that only
-// need the proxy-status badge and have no use for live totals/new-exchange
-// events (exchange detail, prices). A permanent EventSource per tab eats
-// into the browser's per-origin connection cap for no benefit on these
-// pages, so poll /api/health instead. Returns the interval id for cleanup.
+/**
+ * Lighter alternative to initNav for pages that only need the proxy-status
+ * badge and have no use for live totals/new-exchange events (exchange
+ * detail, prices). A permanent EventSource per tab eats into the browser's
+ * per-origin connection cap for no benefit on these pages, so poll
+ * /api/health instead. Returns the interval id for cleanup.
+ */
 function initNavPolling(intervalMs = 15000) {
   async function poll() {
     try {
@@ -224,4 +275,33 @@ function initNavPolling(intervalMs = 15000) {
   }
   poll();
   return setInterval(poll, intervalMs);
+}
+
+/**
+ * Wrap an async task so a new call cancels its predecessor via AbortSignal,
+ * instead of letting a slow, superseded response overwrite fresher data.
+ * The wrapped function forwards its own args after the injected signal, e.g.
+ * makeAbortable(async (signal, rangeKey) => {...}) is called as fn(rangeKey).
+ */
+function makeAbortable(taskFn) {
+  let currentController = null;
+  return async (...args) => {
+    currentController?.abort();
+    const controller = new AbortController();
+    currentController = controller;
+    try {
+      await taskFn(controller.signal, ...args);
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    }
+  };
+}
+
+/**
+ * Extract the "error" field from a JSON error response, falling back to a
+ * caller-supplied message when the body is missing or isn't valid JSON.
+ */
+async function extractErrorMessage(res, fallback) {
+  const body = await res.json().catch(() => ({}));
+  return body.error || fallback;
 }

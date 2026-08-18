@@ -34,11 +34,11 @@
   }
 
   function navigate(page, size, query) {
-    const p = new URLSearchParams();
-    if (query) p.set('q', query);
-    p.set('size', size);
-    p.set('page', page);
-    window.location.href = '/exchanges?' + p.toString();
+    const searchParams = new URLSearchParams();
+    if (query) searchParams.set('q', query);
+    searchParams.set('size', size);
+    searchParams.set('page', page);
+    window.location.href = '/exchanges?' + searchParams.toString();
   }
 
   // ── Delete (Clear session) ────────────────────────────────────────────
@@ -47,9 +47,11 @@
     error: ['text-red-700', 'bg-red-50', 'border-red-200'],
   };
 
-  // Shared message area inside the delete dialog: shows the "session may
-  // still be active" warning and any error the DELETE call comes back with,
-  // so failures are visible in the UI instead of only in the console.
+  /**
+   * Shared message area inside the delete dialog: shows the "session may
+   * still be active" warning and any error the DELETE call comes back with,
+   * so failures are visible in the UI instead of only in the console.
+   */
   function setDialogMessage(type, text) {
     const el = document.getElementById('delete-dialog-message');
     if (!el) return;
@@ -78,7 +80,7 @@
     }
     if (checkbox) checkbox.onchange = updateActiveWarning;
 
-    // Toogle the visibility of the "Delete Session" button based on whether a session ID is present
+    // Toggle the visibility of the "Delete Session" button based on whether a session ID is present
     const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
     if (confirmDeleteBtn) {
       confirmDeleteBtn.classList.toggle('hidden', !currentSessionID);
@@ -101,8 +103,7 @@
         const url = '/api/exchanges' + (currentSessionID ? `?session_id=${encodeURIComponent(currentSessionID)}` : '') + (alsoDeleteClaudeSession ? '&also_delete_claude_session=true' : '');
         const response = await fetch(url, { method: 'DELETE' });
         if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          setDialogMessage('error', body.error || response.statusText || 'Failed to delete exchanges.');
+          setDialogMessage('error', await extractErrorMessage(response, response.statusText || 'Failed to delete exchanges.'));
           return;
         }
         window.location.href = !alsoDeleteClaudeSession ? '/exchanges?q=' + encodeURIComponent(q) : '/exchanges';
@@ -131,9 +132,11 @@
   }
 
   // ── Pagination ──────────────────────────────────────────────────────────
-  // Mirrors the clamping behavior of the old admin/pagination.go's
-  // paginate(): a stale bookmarked page (or one typed past the last page)
-  // degrades to the nearest valid page instead of rendering empty.
+  /**
+   * Mirrors the clamping behavior of the old admin/pagination.go's
+   * paginate(): a stale bookmarked page (or one typed past the last page)
+   * degrades to the nearest valid page instead of rendering empty.
+   */
   function computePagination(reqPage, size, total) {
     const totalPages = Math.max(1, Math.ceil(total / size));
     const page = Math.min(Math.max(reqPage, 1), totalPages);
@@ -172,10 +175,10 @@
         ${navLink('Last', totalPages, page < totalPages)}
       </div>`;
 
-    container.querySelectorAll('.pagination-link').forEach((a) => {
-      a.addEventListener('click', (e) => {
+    container.querySelectorAll('.pagination-link').forEach((link) => {
+      link.addEventListener('click', (e) => {
         e.preventDefault();
-        navigate(Number(a.dataset.page), pageSize, q);
+        navigate(Number(link.dataset.page), pageSize, q);
       });
     });
 
@@ -201,49 +204,36 @@
     }
   }
 
-  // Cancels a superseded request (e.g. a fast onNewExchange event firing
-  // again before the previous refresh finished) so a slow earlier response
-  // can't land after a newer one and overwrite it with stale data.
-  let loadExchangesAbort = null;
-  async function loadExchanges() {
-    loadExchangesAbort?.abort();
-    const controller = new AbortController();
-    loadExchangesAbort = controller;
+  const loadExchanges = makeAbortable(async (signal) => {
+    const searchParams = new URLSearchParams();
+    if (q) searchParams.set('q', q);
+    searchParams.set('limit', pageSize);
+    searchParams.set('offset', (requestedPage - 1) * pageSize);
 
-    const p = new URLSearchParams();
-    if (q) p.set('q', q);
-    p.set('limit', pageSize);
-    p.set('offset', (requestedPage - 1) * pageSize);
+    const res = await fetch('/api/exchanges?' + searchParams.toString(), { signal });
+    const tbody = document.getElementById('exchanges-tbody');
 
-    try {
-      const res = await fetch('/api/exchanges?' + p.toString(), { signal: controller.signal });
-      const tbody = document.getElementById('exchanges-tbody');
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        showFilterError(body.error || 'Invalid query.');
-        if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
-        renderPaginationControls(1, 1, 0, 0, 0);
-        return;
-      }
-
-      showFilterError('');
-      const data = await res.json();
-      setDeleteSessionOption(data.session_id, data.session_active);
-
-      if (tbody) {
-        tbody.innerHTML = data.rows.length
-          ? data.rows.map(buildRow).join('')
-          : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
-      }
-
-      const pagination = computePagination(requestedPage, pageSize, data.total);
-      currentPage = pagination.page;
-      renderPaginationControls(pagination.page, pagination.totalPages, pagination.from, pagination.to, data.total);
-    } catch (err) {
-      if (err.name !== 'AbortError') throw err;
+    if (!res.ok) {
+      showFilterError(await extractErrorMessage(res, 'Invalid query.'));
+      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
+      renderPaginationControls(1, 1, 0, 0, 0);
+      return;
     }
-  }
+
+    showFilterError('');
+    const data = await res.json();
+    setDeleteSessionOption(data.session_id, data.session_active);
+
+    if (tbody) {
+      tbody.innerHTML = data.rows.length
+        ? data.rows.map(buildRow).join('')
+        : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
+    }
+
+    const pagination = computePagination(requestedPage, pageSize, data.total);
+    currentPage = pagination.page;
+    renderPaginationControls(pagination.page, pagination.totalPages, pagination.from, pagination.to, data.total);
+  });
 
   // ── Charts ──────────────────────────────────────────────────────────────
   // Independent of the table's own page-size limiter — always pulls the
@@ -252,10 +242,10 @@
   const SVGNS = 'http://www.w3.org/2000/svg';
 
   async function fetchLatestExchanges(limit, query, signal) {
-    const p = new URLSearchParams();
-    p.set('limit', limit);
-    if (query) p.set('q', query);
-    const res = await fetch('/api/exchanges?' + p.toString(), { signal });
+    const searchParams = new URLSearchParams();
+    searchParams.set('limit', limit);
+    if (query) searchParams.set('q', query);
+    const res = await fetch('/api/exchanges?' + searchParams.toString(), { signal });
     if (!res.ok) return [];
     const data = await res.json();
     return (data.rows || []).reverse();
@@ -281,7 +271,7 @@
       return;
     }
 
-    const n = rows.length;
+    const pointCount = rows.length;
     let maxV = 0;
     rows.forEach((r) => {
       series.forEach((s) => {
@@ -291,12 +281,12 @@
     });
     if (maxV === 0) maxV = 1;
 
-    const x = (i) => (n === 1 ? marginLeft + plotW / 2 : marginLeft + (i * plotW) / (n - 1));
+    const x = (i) => (pointCount === 1 ? marginLeft + plotW / 2 : marginLeft + (i * plotW) / (pointCount - 1));
     const y = (v) => marginTop + plotH - (v / maxV) * plotH;
 
     const yTicks = 4;
-    for (let t = 0; t <= yTicks; t++) {
-      const v = (maxV * t) / yTicks;
+    for (let tickIndex = 0; tickIndex <= yTicks; tickIndex++) {
+      const v = (maxV * tickIndex) / yTicks;
       const yy = y(v);
       const line = document.createElementNS(SVGNS, 'line');
       line.setAttribute('x1', marginLeft);
@@ -317,9 +307,9 @@
       svg.appendChild(label);
     }
 
-    const xTickCount = Math.min(6, n);
-    for (let t = 0; t < xTickCount; t++) {
-      const i = xTickCount === 1 ? 0 : Math.round((t * (n - 1)) / (xTickCount - 1));
+    const xTickCount = Math.min(6, pointCount);
+    for (let tickIndex = 0; tickIndex < xTickCount; tickIndex++) {
+      const i = xTickCount === 1 ? 0 : Math.round((tickIndex * (pointCount - 1)) / (xTickCount - 1));
       const label = document.createElementNS(SVGNS, 'text');
       label.setAttribute('x', x(i));
       label.setAttribute('y', H - marginBottom + 14);
@@ -331,17 +321,17 @@
     }
 
     series.forEach((s) => {
-      let d = '';
+      let pathData = '';
       let started = false;
       rows.forEach((r, i) => {
         const v = s.get(r);
         if (v == null) { started = false; return; }
-        d += `${started ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)} `;
+        pathData += `${started ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)} `;
         started = true;
       });
-      if (!d) return;
+      if (!pathData) return;
       const path = document.createElementNS(SVGNS, 'path');
-      path.setAttribute('d', d.trim());
+      path.setAttribute('d', pathData.trim());
       path.setAttribute('fill', 'none');
       path.setAttribute('stroke', s.color);
       path.setAttribute('stroke-width', s.width || 1.5);
@@ -355,22 +345,6 @@
     container.innerHTML = series.map((s) =>
       `<span class="inline-flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>${esc(s.label)}</span>`
     ).join('');
-  }
-
-  function fmtCostShort(c) {
-    if (c == null) return '—';
-    return `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}`;
-  }
-
-  function fmtTokensShort(n) {
-    if (n == null) return '—';
-    const abs = Math.abs(n);
-    let suffix, divisor;
-    if (abs >= 1000000000) { suffix = 'B'; divisor = 1000000000; }
-    else if (abs >= 1000000) { suffix = 'M'; divisor = 1000000; }
-    else if (abs >= 1000) { suffix = 'k'; divisor = 1000; }
-    else return `${abs}`;
-    return `${(abs / divisor).toFixed(1).replace(/\.0$/, '')}${suffix}`;
   }
 
   // Input/Output share the emerald family, Cache creation/read share the
@@ -392,23 +366,13 @@
     { label: 'Cache read', color: '#c084fc', get: (r) => r.cache_read_tokens },
   ];
 
-  let refreshChartsAbort = null;
-  async function refreshCharts() {
-    refreshChartsAbort?.abort();
-    const controller = new AbortController();
-    refreshChartsAbort = controller;
-    let rows;
-    try {
-      rows = await fetchLatestExchanges(200, q, controller.signal);
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      throw err;
-    }
+  const refreshCharts = makeAbortable(async (signal) => {
+    const rows = await fetchLatestExchanges(200, q, signal);
     const costSvg = document.getElementById('cost-chart');
-    if (costSvg) renderLineChart(costSvg, rows, costSeries, { fmtY: fmtCostShort, fmtX: (r) => '#' + r.id });
+    if (costSvg) renderLineChart(costSvg, rows, costSeries, { fmtY: fmtCost, fmtX: (r) => '#' + r.id });
     const tokensSvg = document.getElementById('tokens-chart');
-    if (tokensSvg) renderLineChart(tokensSvg, rows, tokensSeries, { fmtY: fmtTokensShort, fmtX: (r) => '#' + r.id });
-  }
+    if (tokensSvg) renderLineChart(tokensSvg, rows, tokensSeries, { fmtY: fmtTokens, fmtX: (r) => '#' + r.id });
+  });
 
   const costLegend = document.getElementById('cost-chart-legend');
   if (costLegend) renderChartLegend(costLegend, costSeries);

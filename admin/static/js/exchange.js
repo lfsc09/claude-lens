@@ -1,5 +1,5 @@
 (() => {
-  const id = window.location.pathname.split('/').filter(Boolean).pop();
+  const exchangeId = window.location.pathname.split('/').filter(Boolean).pop();
   const tabSize = 4;
   let derivedExchange = null;
 
@@ -28,19 +28,8 @@
   }
 
   /**
-   * Pretty-print a JSON string, or return the original string if it's not valid JSON.
-   */
-  function prettyJSON(s) {
-    if (s == null) return '';
-    try {
-      return JSON.stringify(JSON.parse(s), null, tabSize);
-    } catch {
-      return s;
-    }
-  }
-
-  /**
-   * Derive additional fields for each input message.
+   * Add index/number/hash/content_text/content_bytes derived fields to each
+   * input message, used by renderInputMessages and the message dialog.
    */
   async function deriveInputMessages(inputMessages) {
     await Promise.all(inputMessages.map(async (msg, index) => {
@@ -54,7 +43,8 @@
   }
 
   /**
-   * Parse an exchange object, adding derived fields.
+   * Add byte-size fields, parsed+derived input_messages, and a convenience
+   * `input` (the last input message) to a raw exchange fetched from the API.
    */
   async function deriveExchange(exchange) {
     if (!exchange) return exchange;
@@ -188,6 +178,7 @@
     }
 
     if (exchange.input_messages.length > 0) {
+      const id = randomId();
       html += `
         <section class="flex flex-col gap-0.5">
           <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between cursor-pointer" trigger-content-e="${id}">
@@ -212,7 +203,7 @@
             <h2 class="font-semibold uppercase tracking-wide">Raw Request</h2>
             <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.raw_request_bytes)}</span>
           </div>
-          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto hidden" e-content-id="${id}">${esc(prettyJSON(exchange.raw_request))}</div>
+          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto hidden" e-content-id="${id}">${esc(prettyJSON(exchange.raw_request, tabSize))}</div>
         </section>
       `;
     }
@@ -248,18 +239,18 @@
   function showNotFound() {
     document.getElementById('exchange-content').classList.add('hidden');
     document.getElementById('not-found-content').classList.remove('hidden');
-    document.getElementById('not-found-message').textContent = id
-      ? `Exchange #${id} was not found.`
+    document.getElementById('not-found-message').textContent = exchangeId
+      ? `Exchange #${exchangeId} was not found.`
       : 'Page not found.';
   }
 
   async function load() {
-    if (!id || !/^\d+$/.test(id)) {
+    if (!exchangeId || !/^\d+$/.test(exchangeId)) {
       showNotFound();
       return;
     }
 
-    const res = await fetch(`/api/exchanges/${id}`);
+    const res = await fetch(`/api/exchanges/${exchangeId}`);
     if (!res.ok) {
       showNotFound();
       return;
