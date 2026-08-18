@@ -229,6 +229,13 @@
     }
   }
 
+  async function refreshDailyCosts() {
+    const res = await fetch('/api/daily-costs?days=60');
+    if (!res.ok) return;
+    _dailyCosts = await res.json();
+    renderHeatmap();
+  }
+
   // ── Initial load ──────────────────────────────────────────────────────────
   async function loadDashboard() {
     const [totalsRes, dailyRes] = await Promise.all([
@@ -247,6 +254,9 @@
 
   initNav(range, {
     onTotals: renderTotals,
-    onNewExchange: refreshSessionStats,
+    onNewExchange: () => {
+      refreshSessionStats();
+      refreshDailyCosts();
+    },
   });
 })();
