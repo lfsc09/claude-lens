@@ -19,6 +19,10 @@
   const notFoundBackLink = document.getElementById('not-found-back-link');
   if (notFoundBackLink) notFoundBackLink.addEventListener('click', goBackToExchanges);
 
+  function ruleText(price) {
+    return price.rule === 'under' ? `≤ ${fmtInt(price.rule_tokens)}` : `> ${fmtInt(price.rule_tokens)}`;
+  }
+
   function debounce(fn, delay = 200) {
     let timer;
     return (...args) => {
@@ -141,6 +145,42 @@
             <p class="font-medium uppercase tracking-wide underline">Context size</p>
             <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtBytes(exchange.input_messages_bytes)}</p>
           </div>
+        </div>
+        <div class="bg-white rounded-lg border border-gray-200 p-5 grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 text-sm">
+          <div class="col-span-2 sm:col-span-3 flex items-center gap-1.5">
+            <p class="font-medium uppercase tracking-wide underline">Matched price rule</p>
+            <span class="text-xs text-gray-400" data-tip="Captured when this exchange was saved — a permanent snapshot of what was actually charged, even if the rule is edited or deleted later.">ⓘ</span>
+          </div>
+          ${exchange.matched_price ? `
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Prefix</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${esc(exchange.matched_price.model_prefix)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Rule</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${esc(ruleText(exchange.matched_price))}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Input $/M</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtCost(exchange.matched_price.input_per_m)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Output $/M</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtCost(exchange.matched_price.output_per_m)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Cache write $/M</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtCost(exchange.matched_price.cache_write_per_m)}</p>
+          </div>
+          <div>
+            <p class="font-medium uppercase tracking-wide underline">Cache read $/M</p>
+            <p class="mt-1 font-mono text-gray-700 text-sm break-all">${fmtCost(exchange.matched_price.cache_read_per_m)}</p>
+          </div>
+          ` : `
+          <div class="col-span-2 sm:col-span-3">
+            <p class="text-gray-400 text-sm">No price rule matched this exchange's model/token count when it was saved.</p>
+          </div>
+          `}
         </div>
       </section>
     `;

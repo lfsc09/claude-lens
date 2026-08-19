@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -174,6 +175,13 @@ func TestNonStreamingPOST_SavesExchangeWithCost(t *testing.T) {
 	// claude-sonnet-5 is seeded at $3/$15 per million tokens; 1M in + 1M out.
 	if detail.Cost == nil || *detail.Cost != 18.0 {
 		t.Errorf("Cost = %v, want 18.0", detail.Cost)
+	}
+	var matchedPrice database.Price
+	if err := json.Unmarshal(detail.MatchedPrice, &matchedPrice); err != nil {
+		t.Fatalf("decode MatchedPrice: %v", err)
+	}
+	if matchedPrice.Prefix != "claude-sonnet-5" {
+		t.Errorf("MatchedPrice.Prefix = %q, want claude-sonnet-5", matchedPrice.Prefix)
 	}
 }
 

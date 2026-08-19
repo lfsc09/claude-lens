@@ -37,8 +37,14 @@ func TestOpen_SeedsDefaultPrices(t *testing.T) {
 	}
 
 	// Re-opening must not duplicate or reset seeded/edited rows.
-	if err := db.UpsertPrice(context.Background(), Price{Prefix: "claude-opus-5", InputPerM: 99, OutputPerM: 99, UpdatedAt: 1}); err != nil {
-		t.Fatalf("UpsertPrice: %v", err)
+	var opusID int64
+	for _, p := range prices {
+		if p.Prefix == "claude-opus-5" {
+			opusID = p.ID
+		}
+	}
+	if err := db.UpdatePrice(context.Background(), opusID, 99, 99, 0, 0, 1); err != nil {
+		t.Fatalf("UpdatePrice: %v", err)
 	}
 	if err := db.seedDefaultPrices(context.Background()); err != nil {
 		t.Fatalf("seedDefaultPrices (idempotency check): %v", err)
@@ -58,11 +64,12 @@ func TestPricesCRUD(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	if err := db.UpsertPrice(ctx, Price{Prefix: "custom-model", InputPerM: 2.5, OutputPerM: 10, UpdatedAt: 123}); err != nil {
-		t.Fatalf("UpsertPrice insert: %v", err)
+	id, err := db.CreatePrice(ctx, Price{Prefix: "custom-model", Rule: "over", RuleTokens: 0, InputPerM: 2.5, OutputPerM: 10, CreatedAt: 123, UpdatedAt: 123})
+	if err != nil {
+		t.Fatalf("CreatePrice: %v", err)
 	}
-	if err := db.UpsertPrice(ctx, Price{Prefix: "custom-model", InputPerM: 3.5, OutputPerM: 11, UpdatedAt: 124}); err != nil {
-		t.Fatalf("UpsertPrice update: %v", err)
+	if err := db.UpdatePrice(ctx, id, 3.5, 11, 0, 0, 124); err != nil {
+		t.Fatalf("UpdatePrice: %v", err)
 	}
 
 	prices, err := db.ListPrices(ctx)
@@ -71,29 +78,29 @@ func TestPricesCRUD(t *testing.T) {
 	}
 	found := false
 	for _, p := range prices {
-		if p.Prefix == "custom-model" {
+		if p.ID == id {
 			found = true
 			if p.InputPerM != 3.5 || p.OutputPerM != 11 {
-				t.Errorf("upsert did not update in place: %+v", p)
+				t.Errorf("update did not apply in place: %+v", p)
 			}
 		}
 	}
 	if !found {
-		t.Fatal("custom-model not found after upsert")
+		t.Fatal("custom-model not found after create")
 	}
 
-	if err := db.DeletePrice(ctx, "custom-model"); err != nil {
+	if err := db.DeletePrice(ctx, id); err != nil {
 		t.Fatalf("DeletePrice: %v", err)
 	}
-	if err := db.DeletePrice(ctx, "does-not-exist"); err != nil {
-		t.Fatalf("DeletePrice on missing prefix should not error: %v", err)
+	if err := db.DeletePrice(ctx, 9999999); err != nil {
+		t.Fatalf("DeletePrice on missing id should not error: %v", err)
 	}
 	prices, err = db.ListPrices(ctx)
 	if err != nil {
 		t.Fatalf("ListPrices: %v", err)
 	}
 	for _, p := range prices {
-		if p.Prefix == "custom-model" {
+		if p.ID == id {
 			t.Fatal("custom-model still present after delete")
 		}
 	}
@@ -104,6 +111,7 @@ func TestSaveAndGetExchange(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
+	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15}`
 	e := Exchange{
 		SessionID:     "sess-1",
 		SessionName:   strPtr("my session"),
@@ -119,6 +127,7 @@ func TestSaveAndGetExchange(t *testing.T) {
 		Model:         strPtr("claude-sonnet-5"),
 		InputCost:     floatPtr(0.0003),
 		OutputCost:    floatPtr(0.00075),
+		MatchedPrice:  &matchedPrice,
 	}
 	if err := db.SaveExchange(ctx, e); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -152,6 +161,9 @@ func TestSaveAndGetExchange(t *testing.T) {
 	}
 	if detail.OutputText == nil || *detail.OutputText != "hello there" {
 		t.Errorf("OutputText mismatch: %+v", detail.OutputText)
+	}
+	if string(detail.MatchedPrice) != matchedPrice {
+		t.Errorf("MatchedPrice = %s, want %s", detail.MatchedPrice, matchedPrice)
 	}
 
 	missing, err := db.GetExchangeDetail(ctx, got.ID+999)

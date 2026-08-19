@@ -72,8 +72,9 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /api/daily-costs", h.dailyCosts)
 	mux.HandleFunc("GET /api/stream", h.sseStream)
 	mux.HandleFunc("GET /api/prices", h.listPrices)
-	mux.HandleFunc("PUT /api/prices/{prefix}", h.upsertPrice)
-	mux.HandleFunc("DELETE /api/prices/{prefix}", h.deletePrice)
+	mux.HandleFunc("POST /api/prices", h.createPrice)
+	mux.HandleFunc("PUT /api/prices/{id}", h.updatePrice)
+	mux.HandleFunc("DELETE /api/prices/{id}", h.deletePrice)
 
 	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger))
 	return &Server{handler: handler, logger: logger}, nil

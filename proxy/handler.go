@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -205,6 +206,7 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	outputText, usage := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
 
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
+	var matchedPrice *string
 	if meta.model != nil && usage.InputTokens != nil && usage.OutputTokens != nil {
 		cacheCreationTokens, cacheReadTokens := 0, 0
 		if usage.CacheCreationTokens != nil {
@@ -213,7 +215,7 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 		if usage.CacheReadTokens != nil {
 			cacheReadTokens = *usage.CacheReadTokens
 		}
-		costs, ok := h.estimator.EstimateCosts(*meta.model, *usage.InputTokens, *usage.OutputTokens, cacheCreationTokens, cacheReadTokens)
+		costs, price, ok := h.estimator.EstimateCostsAndRule(*meta.model, *usage.InputTokens, *usage.OutputTokens, cacheCreationTokens, cacheReadTokens)
 		if ok {
 			inputCost, outputCost = &costs.InputCost, &costs.OutputCost
 			if usage.CacheCreationTokens != nil {
@@ -221,6 +223,15 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 			}
 			if usage.CacheReadTokens != nil {
 				cacheReadCost = &costs.CacheReadCost
+			}
+			// Captured once here rather than recomputed on read, so the
+			// exchange detail page keeps showing the rule that was actually
+			// charged even after model_prices changes later.
+			if raw, err := json.Marshal(price); err != nil {
+				h.logger.Error("failed to marshal matched price rule", "error", err, "session_id", meta.sessionID, "path", meta.path)
+			} else {
+				s := string(raw)
+				matchedPrice = &s
 			}
 		}
 	}
@@ -244,6 +255,7 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 		OutputCost:          outputCost,
 		CacheCreationCost:   cacheCreationCost,
 		CacheReadCost:       cacheReadCost,
+		MatchedPrice:        matchedPrice,
 	})
 	if err != nil {
 		h.logger.Error("failed to save exchange", "error", err, "session_id", meta.sessionID, "path", meta.path)

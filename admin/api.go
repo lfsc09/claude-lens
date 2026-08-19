@@ -215,34 +215,30 @@ func (h *handlers) listPrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
-type upsertPriceRequest struct {
+type createPriceRequest struct {
+	Prefix         string   `json:"model_prefix"`
+	Rule           string   `json:"rule"`
+	RuleTokens     *int64   `json:"rule_tokens"`
 	InputPerM      *float64 `json:"input_per_m"`
 	OutputPerM     *float64 `json:"output_per_m"`
 	CacheWritePerM *float64 `json:"cache_write_per_m"`
 	CacheReadPerM  *float64 `json:"cache_read_per_m"`
 }
 
-// upsertPrice creates or updates a price row (a "create" is just a PUT on a
-// new prefix — there's no separate create endpoint). Cache rates are
-// optional: an omitted field keeps whatever the row already has (0 for a
-// brand-new prefix), so a client that doesn't know about cache pricing
-// can't accidentally zero it out.
-func (h *handlers) upsertPrice(w http.ResponseWriter, r *http.Request) {
-	prefix := r.PathValue("prefix")
-
-	var req upsertPriceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.InputPerM == nil || req.OutputPerM == nil {
-		writeError(w, http.StatusBadRequest, "input_per_m and output_per_m are required numbers")
+// createPrice adds a new rule row for a prefix. Always inserts —
+// duplicate/overlapping prefixes are expected, since a prefix can own
+// several tiered rules (see internal/pricing for how overlaps are resolved).
+func (h *handlers) createPrice(w http.ResponseWriter, r *http.Request) {
+	var req createPriceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+		req.Prefix == "" || (req.Rule != "over" && req.Rule != "under") ||
+		req.RuleTokens == nil || *req.RuleTokens < 0 ||
+		req.InputPerM == nil || req.OutputPerM == nil {
+		writeError(w, http.StatusBadRequest, "model_prefix, rule (over|under), rule_tokens, input_per_m and output_per_m are required")
 		return
 	}
 
 	var cacheWritePerM, cacheReadPerM float64
-	if existing, err := h.db.GetPrice(r.Context(), prefix); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	} else if existing != nil {
-		cacheWritePerM, cacheReadPerM = existing.CacheWritePerM, existing.CacheReadPerM
-	}
 	if req.CacheWritePerM != nil {
 		cacheWritePerM = *req.CacheWritePerM
 	}
@@ -250,18 +246,24 @@ func (h *handlers) upsertPrice(w http.ResponseWriter, r *http.Request) {
 		cacheReadPerM = *req.CacheReadPerM
 	}
 
+	now := float64(time.Now().Unix())
 	p := database.Price{
-		Prefix:         prefix,
+		Prefix:         req.Prefix,
+		Rule:           req.Rule,
+		RuleTokens:     *req.RuleTokens,
 		InputPerM:      *req.InputPerM,
 		OutputPerM:     *req.OutputPerM,
 		CacheWritePerM: cacheWritePerM,
 		CacheReadPerM:  cacheReadPerM,
-		UpdatedAt:      float64(time.Now().Unix()),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
-	if err := h.db.UpsertPrice(r.Context(), p); err != nil {
+	id, err := h.db.CreatePrice(r.Context(), p)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	p.ID = id
 	if err := h.est.Refresh(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -269,9 +271,50 @@ func (h *handlers) upsertPrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
-func (h *handlers) deletePrice(w http.ResponseWriter, r *http.Request) {
-	prefix := r.PathValue("prefix")
-	if err := h.db.DeletePrice(r.Context(), prefix); err != nil {
+type updatePriceRequest struct {
+	InputPerM      *float64 `json:"input_per_m"`
+	OutputPerM     *float64 `json:"output_per_m"`
+	CacheWritePerM *float64 `json:"cache_write_per_m"`
+	CacheReadPerM  *float64 `json:"cache_read_per_m"`
+}
+
+// updatePrice patches an existing rule row's rates. Cache rates are
+// optional: an omitted field keeps whatever the row already has, so a
+// client that doesn't know about cache pricing can't accidentally zero it
+// out. Prefix/rule/rule_tokens are immutable once created.
+func (h *handlers) updatePrice(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	var req updatePriceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.InputPerM == nil || req.OutputPerM == nil {
+		writeError(w, http.StatusBadRequest, "input_per_m and output_per_m are required numbers")
+		return
+	}
+
+	existing, err := h.db.GetPrice(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if existing == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	cacheWritePerM, cacheReadPerM := existing.CacheWritePerM, existing.CacheReadPerM
+	if req.CacheWritePerM != nil {
+		cacheWritePerM = *req.CacheWritePerM
+	}
+	if req.CacheReadPerM != nil {
+		cacheReadPerM = *req.CacheReadPerM
+	}
+
+	updatedAt := float64(time.Now().Unix())
+	if err := h.db.UpdatePrice(r.Context(), id, *req.InputPerM, *req.OutputPerM, cacheWritePerM, cacheReadPerM, updatedAt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -279,5 +322,26 @@ func (h *handlers) deletePrice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"deleted": prefix})
+
+	existing.InputPerM, existing.OutputPerM = *req.InputPerM, *req.OutputPerM
+	existing.CacheWritePerM, existing.CacheReadPerM = cacheWritePerM, cacheReadPerM
+	existing.UpdatedAt = updatedAt
+	writeJSON(w, http.StatusOK, existing)
+}
+
+func (h *handlers) deletePrice(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := h.db.DeletePrice(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.est.Refresh(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": id})
 }

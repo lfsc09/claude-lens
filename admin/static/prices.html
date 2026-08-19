@@ -25,7 +25,7 @@
     </nav>
   </header>
 
-  <main class="max-w-6xl mx-auto px-6 py-8 pb-28">
+  <main class="max-w-7xl mx-auto px-6 py-8 pb-28">
     <!-- ── Header ──────────────────────────────────────────────────────── -->
     <div class="flex items-start justify-between gap-4 mb-6">
       <div>
@@ -47,6 +47,8 @@
         <thead class="bg-gray-50 border-b border-gray-200 text-left text-gray-500">
           <tr>
             <th class="px-4 py-2 font-medium">Model prefix</th>
+            <th class="px-4 py-2 font-medium">Rule</th>
+            <th class="px-4 py-2 font-medium text-right">Tokens</th>
             <th class="px-4 py-2 font-medium text-right">Input $/M</th>
             <th class="px-4 py-2 font-medium text-right">Output $/M</th>
             <th class="px-4 py-2 font-medium text-right">Cache write $/M</th>
@@ -57,10 +59,26 @@
         </thead>
         <tbody id="prices-tbody" class="divide-y divide-gray-100">
           <tr>
-            <td colspan="7" class="px-4 py-8 text-center text-gray-400">Loading…</td>
+            <td colspan="9" class="px-4 py-8 text-center text-gray-400">Loading…</td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- ── How rules are picked ────────────────────────────────────────── -->
+    <div class="bg-white rounded-lg border border-gray-200 p-5 mt-6 text-sm text-gray-600 space-y-2">
+      <p class="font-medium uppercase tracking-wide text-xs text-gray-500">How rules are picked</p>
+      <p class="text-gray-500 text-xs">A model prefix can own several rule rows, each gated by a token-count rule:</p>
+      <ul class="text-gray-500 text-xs list-inside list-disc space-y-1">
+        <li><strong>Over N</strong> matches when the request's prompt size is greater than N.</li>
+        <li><strong>Under N (inclusive)</strong> matches when the request's prompt size is less than or equal to N.</li>
+      </ul>
+      <p class="text-gray-500 text-xs">
+        When more than one rule on a prefix matches, the one whose token threshold is numerically closest to the
+        request's prompt size wins — the same "most specific match wins" idea used for prefix matching itself. An
+        exact distance tie (only possible with a literal duplicate rule) is broken by whichever rule was created
+        most recently.
+      </p>
     </div>
   </main>
 
@@ -92,7 +110,22 @@
           <label class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Model prefix</label>
           <input type="text" name="model_prefix" required placeholder="claude-sonnet-5"
             class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <small class="text-gray-500">Reusing an existing prefix adds another tiered rule to it.</small>
         </div>
+        <div>
+          <label class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Rule</label>
+          <select name="rule" required
+            class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-emerald-500">
+            <option value="over" selected>Over</option>
+            <option value="under">Under (inclusive)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Tokens</label>
+          <input type="number" step="1" min="0" name="rule_tokens" required placeholder="0" value="0"
+            class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-emerald-500">
+        </div>
+        <div class="border-b border-gray-200 col-span-2 my-4"></div>
         <div>
           <label class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Input $/M</label>
           <input type="number" step="0.01" min="0" name="input_per_m" required placeholder="0"

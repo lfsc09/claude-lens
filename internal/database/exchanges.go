@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
@@ -30,6 +31,7 @@ type Exchange struct {
 	OutputCost          *float64
 	CacheCreationCost   *float64
 	CacheReadCost       *float64
+	MatchedPrice        *string
 }
 
 // ExchangeSummary is a row as listed in the exchanges table/dashboard (no
@@ -75,8 +77,12 @@ type ExchangeDetail struct {
 	OutputCost          *float64 `json:"output_cost"`
 	CacheCreationCost   *float64 `json:"cache_creation_cost"`
 	CacheReadCost       *float64 `json:"cache_read_cost"`
-	RawRequest          *string  `json:"raw_request"`
-	RawResponse         *string  `json:"raw_response"`
+	// MatchedPrice is the Price rule that was actually used to cost this
+	// exchange, captured as JSON at save time — a permanent snapshot, not a
+	// live lookup, so it stays accurate even after model_prices changes.
+	MatchedPrice json.RawMessage `json:"matched_price,omitempty"`
+	RawRequest   *string         `json:"raw_request"`
+	RawResponse  *string         `json:"raw_response"`
 }
 
 // Totals is an aggregate over a set of exchanges.
@@ -129,13 +135,13 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 			(session_id, session_name, path, timestamp, is_streaming,
 			 input_messages, output_text, input_tokens, output_tokens,
 			 cache_creation_tokens, cache_read_tokens,
-			 model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost,
+			 model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
 			 raw_request, raw_response)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.SessionID, e.SessionName, e.Path, e.Timestamp, boolToInt(e.IsStreaming),
 		e.InputMessages, e.OutputText, e.InputTokens, e.OutputTokens,
 		e.CacheCreationTokens, e.CacheReadTokens,
-		e.Model, cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost,
+		e.Model, cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost, e.MatchedPrice,
 		e.RawRequest, e.RawResponse,
 	)
 	if err != nil {
@@ -235,17 +241,18 @@ func (db *DB) CountExchanges(ctx context.Context, filterQuery string) (int, erro
 func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail, error) {
 	var e ExchangeDetail
 	var isStreaming int
+	var matchedPrice sql.NullString
 	err := db.sql.QueryRowContext(ctx,
 		`SELECT id, session_id, session_name, path, timestamp, is_streaming,
 		        input_messages, output_text, input_tokens, output_tokens,
 		        cache_creation_tokens, cache_read_tokens,
-		        model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost,
+		        model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
 		        raw_request, raw_response
 		 FROM exchanges WHERE id = ?`, id,
 	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp, &isStreaming,
 		&e.InputMessages, &e.OutputText, &e.InputTokens, &e.OutputTokens,
 		&e.CacheCreationTokens, &e.CacheReadTokens,
-		&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.CacheCreationCost, &e.CacheReadCost,
+		&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.CacheCreationCost, &e.CacheReadCost, &matchedPrice,
 		&e.RawRequest, &e.RawResponse)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -254,6 +261,9 @@ func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail,
 		return nil, err
 	}
 	e.IsStreaming = isStreaming != 0
+	if matchedPrice.Valid {
+		e.MatchedPrice = json.RawMessage(matchedPrice.String)
+	}
 	return &e, nil
 }
 

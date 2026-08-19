@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -190,8 +191,10 @@ func TestExchangeDetail_NonIntegerIDIs404(t *testing.T) {
 func TestExchangeDetail_Found(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
+	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15,"cache_write_per_m":3.75,"cache_read_per_m":0.3,"created_at":1000,"updated_at":1000}`
 	if err := db.SaveExchange(ctx, database.Exchange{
 		SessionID: "s1", Path: "/v1/messages", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}",
+		MatchedPrice: &matchedPrice,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
@@ -207,6 +210,13 @@ func TestExchangeDetail_Found(t *testing.T) {
 	}
 	if detail.SessionID != "s1" {
 		t.Errorf("SessionID = %q, want s1", detail.SessionID)
+	}
+	var gotPrice database.Price
+	if err := json.Unmarshal(detail.MatchedPrice, &gotPrice); err != nil {
+		t.Fatalf("decode matched_price: %v", err)
+	}
+	if gotPrice.Prefix != "claude-sonnet-5" || gotPrice.InputPerM != 3 {
+		t.Errorf("MatchedPrice = %+v, want claude-sonnet-5 rule at $3/M input", gotPrice)
 	}
 }
 
@@ -379,24 +389,25 @@ func TestPricesCRUD(t *testing.T) {
 		t.Fatal("expected seeded default prices")
 	}
 
-	rec = doJSON(t, s, http.MethodPut, "/api/prices/my-custom-model", map[string]float64{
+	rec = doJSON(t, s, http.MethodPost, "/api/prices", map[string]any{
+		"model_prefix": "my-custom-model", "rule": "over", "rule_tokens": 0,
 		"input_per_m": 2.5, "output_per_m": 12,
 	})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT status = %d, want 200: %s", rec.Code, rec.Body.String())
+		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	var upserted database.Price
-	json.Unmarshal(rec.Body.Bytes(), &upserted)
-	if upserted.Prefix != "my-custom-model" || upserted.InputPerM != 2.5 {
-		t.Errorf("unexpected upserted price: %+v", upserted)
+	var created database.Price
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.Prefix != "my-custom-model" || created.InputPerM != 2.5 || created.ID == 0 {
+		t.Errorf("unexpected created price: %+v", created)
 	}
 
-	rec = doJSON(t, s, http.MethodPut, "/api/prices/bad-model", map[string]string{"input_per_m": "not-a-number"})
+	rec = doJSON(t, s, http.MethodPut, "/api/prices/"+strconv.FormatInt(created.ID, 10), map[string]string{"input_per_m": "not-a-number"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("malformed PUT body: status = %d, want 400", rec.Code)
 	}
 
-	rec = doJSON(t, s, http.MethodDelete, "/api/prices/my-custom-model", nil)
+	rec = doJSON(t, s, http.MethodDelete, "/api/prices/"+strconv.FormatInt(created.ID, 10), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rec.Code)
 	}
@@ -405,21 +416,42 @@ func TestPricesCRUD(t *testing.T) {
 	var afterDelete []database.Price
 	json.Unmarshal(rec.Body.Bytes(), &afterDelete)
 	for _, p := range afterDelete {
-		if p.Prefix == "my-custom-model" {
+		if p.ID == created.ID {
 			t.Error("my-custom-model still present after DELETE")
 		}
 	}
 }
 
-func TestUpsertPrice_CacheRatesOptional(t *testing.T) {
+func TestCreatePrice_ValidatesRule(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/prices", map[string]any{
+		"model_prefix": "bad-rule-model", "rule": "sideways", "rule_tokens": 0,
+		"input_per_m": 1, "output_per_m": 1,
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid rule: status = %d, want 400", rec.Code)
+	}
+
+	rec = doJSON(t, s, http.MethodPost, "/api/prices", map[string]any{
+		"model_prefix": "missing-tokens-model", "rule": "over",
+		"input_per_m": 1, "output_per_m": 1,
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing rule_tokens: status = %d, want 400", rec.Code)
+	}
+}
+
+func TestUpdatePrice_CacheRatesOptional(t *testing.T) {
 	s, _ := newTestServer(t)
 
 	// Create with explicit cache rates.
-	rec := doJSON(t, s, http.MethodPut, "/api/prices/cache-model", map[string]float64{
+	rec := doJSON(t, s, http.MethodPost, "/api/prices", map[string]any{
+		"model_prefix": "cache-model", "rule": "over", "rule_tokens": 0,
 		"input_per_m": 2.0, "output_per_m": 10.0, "cache_write_per_m": 2.5, "cache_read_per_m": 0.2,
 	})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT status = %d, want 200: %s", rec.Code, rec.Body.String())
+		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	var p database.Price
 	json.Unmarshal(rec.Body.Bytes(), &p)
@@ -429,7 +461,7 @@ func TestUpsertPrice_CacheRatesOptional(t *testing.T) {
 
 	// Update input/output only, omitting cache rates — they must be
 	// preserved, not reset to 0.
-	rec = doJSON(t, s, http.MethodPut, "/api/prices/cache-model", map[string]float64{
+	rec = doJSON(t, s, http.MethodPut, "/api/prices/"+strconv.FormatInt(p.ID, 10), map[string]float64{
 		"input_per_m": 3.0, "output_per_m": 11.0,
 	})
 	if rec.Code != http.StatusOK {
@@ -444,15 +476,16 @@ func TestUpsertPrice_CacheRatesOptional(t *testing.T) {
 	}
 }
 
-func TestUpsertPrice_RefreshesEstimatorImmediately(t *testing.T) {
+func TestCreatePrice_RefreshesEstimatorImmediately(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 
-	rec := doJSON(t, s, http.MethodPut, "/api/prices/brand-new", map[string]float64{
+	rec := doJSON(t, s, http.MethodPost, "/api/prices", map[string]any{
+		"model_prefix": "brand-new", "rule": "over", "rule_tokens": 0,
 		"input_per_m": 9, "output_per_m": 9,
 	})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT status = %d, want 200", rec.Code)
+		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 
 	// Round-trip through the DB to confirm the write actually landed

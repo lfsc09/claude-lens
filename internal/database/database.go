@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS exchanges (
     output_cost           REAL,
     cache_creation_cost   REAL,
     cache_read_cost       REAL,
+    matched_price         TEXT,
     raw_request           TEXT,
     raw_response          TEXT
 );
@@ -43,13 +44,18 @@ CREATE INDEX IF NOT EXISTS idx_exchanges_session_id ON exchanges (session_id);
 CREATE INDEX IF NOT EXISTS idx_exchanges_timestamp  ON exchanges (timestamp);
 
 CREATE TABLE IF NOT EXISTS model_prices (
-    model_prefix     TEXT PRIMARY KEY,
-    input_per_m      REAL NOT NULL,
-    output_per_m     REAL NOT NULL,
-    cache_write_per_m REAL NOT NULL DEFAULT 0,
-    cache_read_per_m  REAL NOT NULL DEFAULT 0,
-    updated_at       REAL NOT NULL
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_prefix      TEXT    NOT NULL,
+    rule              TEXT    NOT NULL DEFAULT 'over',
+    rule_tokens       INTEGER NOT NULL DEFAULT 0,
+    input_per_m       REAL    NOT NULL,
+    output_per_m      REAL    NOT NULL,
+    cache_write_per_m REAL    NOT NULL DEFAULT 0,
+    cache_read_per_m  REAL    NOT NULL DEFAULT 0,
+    created_at        REAL    NOT NULL,
+    updated_at        REAL    NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_model_prices_prefix ON model_prices (model_prefix);
 `
 
 // newColumns lists columns added to the schema after the tables already
@@ -63,6 +69,7 @@ var newColumns = map[string][]string{
 		"cache_read_tokens INTEGER",
 		"cache_creation_cost REAL",
 		"cache_read_cost REAL",
+		"matched_price TEXT",
 	},
 	"model_prices": {
 		"cache_write_per_m REAL NOT NULL DEFAULT 0",
@@ -90,6 +97,68 @@ func migrateSchema(ctx context.Context, sqlDB *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateModelPricesToRules rewrites model_prices from the old one-row-per-
+// prefix shape (model_prefix as PRIMARY KEY) to the tiered shape (surrogate
+// id, rule, rule_tokens, created_at) that lets a prefix own multiple rule
+// rows. SQLite can't relax a PRIMARY KEY via ALTER TABLE, so this rebuilds
+// the table inside a transaction instead of adding a column. Guarded by
+// presence of the `id` column: a no-op on a fresh DB (already created in
+// the new shape by `schema` above) or an already-migrated one. Runs after
+// migrateSchema so cache_write_per_m/cache_read_per_m are guaranteed
+// present on the old table even for a very old DB.
+func migrateModelPricesToRules(ctx context.Context, sqlDB *sql.DB) error {
+	cols, err := tableColumns(ctx, sqlDB, "model_prices")
+	if err != nil {
+		return fmt.Errorf("inspect columns of model_prices: %w", err)
+	}
+	if cols["id"] {
+		return nil
+	}
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE model_prices_new (
+		    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+		    model_prefix      TEXT    NOT NULL,
+		    rule              TEXT    NOT NULL DEFAULT 'over',
+		    rule_tokens       INTEGER NOT NULL DEFAULT 0,
+		    input_per_m       REAL    NOT NULL,
+		    output_per_m      REAL    NOT NULL,
+		    cache_write_per_m REAL    NOT NULL DEFAULT 0,
+		    cache_read_per_m  REAL    NOT NULL DEFAULT 0,
+		    created_at        REAL    NOT NULL,
+		    updated_at        REAL    NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("create model_prices_new: %w", err)
+	}
+	// Pre-existing rows become unconditional "over 0" rules, since a
+	// prefix's single price previously applied unconditionally. created_at
+	// has no prior value to recover, so it's backfilled from updated_at.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO model_prices_new
+		    (model_prefix, rule, rule_tokens, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, created_at, updated_at)
+		SELECT model_prefix, 'over', 0, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, updated_at, updated_at
+		FROM model_prices`); err != nil {
+		return fmt.Errorf("copy model_prices rows: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE model_prices`); err != nil {
+		return fmt.Errorf("drop old model_prices: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE model_prices_new RENAME TO model_prices`); err != nil {
+		return fmt.Errorf("rename model_prices_new: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_model_prices_prefix ON model_prices (model_prefix)`); err != nil {
+		return fmt.Errorf("create model_prices prefix index: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 func tableColumns(ctx context.Context, sqlDB *sql.DB, table string) (map[string]bool, error) {
@@ -140,6 +209,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err := migrateSchema(ctx, sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+	if err := migrateModelPricesToRules(ctx, sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("migrate model_prices to rules: %w", err)
 	}
 
 	db := &DB{sql: sqlDB}
