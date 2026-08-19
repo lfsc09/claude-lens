@@ -30,9 +30,8 @@ type responseBody struct {
 // from an upstream Anthropic API response. Streaming and non-streaming
 // responses have different shapes (SSE event stream vs. a single JSON
 // object), so isStreaming picks which one to parse. Any decode failure
-// yields an all-nil Usage rather than an error, matching the old Python
-// version's behavior of never letting a malformed upstream body break
-// storage of the exchange.
+// yields an all-nil Usage rather than an error, so a malformed upstream
+// body never blocks storage of the exchange.
 func ExtractResponseFields(rawResponse []byte, isStreaming bool) (outputText *string, usage Usage) {
 	if isStreaming {
 		return parseSSEResponse(rawResponse)

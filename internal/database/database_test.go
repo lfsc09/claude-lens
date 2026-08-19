@@ -347,7 +347,7 @@ func TestGetTokenTotals(t *testing.T) {
 		t.Errorf("unexpected totals: %+v", totals)
 	}
 	if totals.TotalCost == nil || round4(*totals.TotalCost) != round4(0.05) {
-		t.Errorf("TotalCost = %v, want ~0.05 (row without cost contributes NULL, not 0)", derefFloat(totals.TotalCost))
+		t.Errorf("TotalCost = %v, want ~0.05 (row without cost contributes NULL, not 0)", deref(totals.TotalCost))
 	}
 
 	sessA, err := db.GetTokenTotals(ctx, "a", nil)

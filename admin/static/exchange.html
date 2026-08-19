@@ -9,11 +9,11 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
-<body class="bg-gray-50 min-h-screen text-gray-800">
+<body class="min-h-screen text-gray-800 bg-gray-50">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
-  <header class="bg-white border-b border-gray-200 px-6 py-3">
-    <nav class="flex items-center gap-6 text-sm font-medium">
+  <header class="px-6 py-3 bg-white border-b border-gray-200">
+    <nav class="flex items-center text-sm font-medium gap-6">
       <span class="flex items-center gap-2">
         <img src="/img/logo.png" alt="" class="h-6 w-6 rounded-md">
         <span class="text-base font-bold text-gray-900">claude-lens</span>
@@ -21,17 +21,17 @@
       <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
       <a href="/exchanges" class="text-gray-600 hover:text-gray-900">Exchanges</a>
       <a href="/prices" class="text-gray-600 hover:text-gray-900">Prices</a>
-      <span id="proxy-status" class="ml-auto px-2 py-1 border border-gray-300 border-dashed rounded-lg text-xs text-gray-500">Proxy Service</span>
+      <span id="proxy-status" class="text-xs text-gray-500 ml-auto px-2 py-1 border border-gray-300 border-dashed rounded-lg">Proxy Service</span>
     </nav>
   </header>
 
-  <main class="max-w-6xl mx-auto px-6 py-8">
+  <main class="max-w-7xl mx-auto px-6 py-8">
     <div class="mb-5">
       <a href="/exchanges" id="back-link" class="text-sm text-emerald-600 hover:underline">← Exchanges</a>
     </div>
 
     <div class="flex flex-col gap-6" id="exchange-content">
-      <p class="py-24 text-center text-gray-400">Loading…</p>
+      <p class="text-center text-gray-400 py-24">Loading…</p>
     </div>
 
     <div id="not-found-content" class="hidden text-center py-24">
@@ -42,21 +42,21 @@
   </main>
 
   <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
-  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs px-2.5 py-1.5 rounded-md bg-gray-600 text-white text-xs leading-snug shadow-lg pointer-events-none whitespace-pre-line opacity-0 transition-opacity duration-150"></div>
+  <div id="app-tooltip" role="tooltip" class="whitespace-pre-line fixed z-50 max-w-xs text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <!-- ── Dialog ──────────────────────────────────────────────────────────── -->
-  <dialog id="message-dialog" class="border border-gray-300 rounded-lg p-6 w-[90%]">
+  <dialog id="message-dialog" class="w-11/12 p-6 border border-gray-300 rounded-lg">
     <div class="flex flex-col gap-6">
+      <label for="message-dialog-search" class="sr-only">Search messages</label>
       <input type="search" id="message-dialog-search" placeholder="Search…" class="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500">
-      <div id="message-dialog-content" class="px-2 py-4 max-h-[600px] overflow-y-auto whitespace-pre-wrap font-mono text-xs text-gray-700"></div>
-      <div class="w-full flex justify-end">
-        <button commandfor="message-dialog" command="close" class="bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700">Close</button>
+      <div id="message-dialog-content" class="overflow-y-auto whitespace-pre-wrap max-h-[600px] font-mono text-xs text-gray-700 px-2 py-4"></div>
+      <div class="flex justify-end w-full">
+        <button commandfor="message-dialog" command="close" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Close</button>
       </div>
     </div>
   </dialog>
 
-  <script src="/js/app.js"></script>
-  <script src="/js/exchange.js"></script>
+  <script type="module" src="/js/exchange.js"></script>
 </body>
 
 </html>

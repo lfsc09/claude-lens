@@ -1,3 +1,7 @@
+import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, makeAbortable } from './app.js';
+
+'use strict';
+
 (() => {
   const DEFAULT_PAGE_SIZE = 50;
   const PAGE_SIZES = [25, 50, 100, 200];
@@ -133,9 +137,13 @@
 
   // ── Pagination ──────────────────────────────────────────────────────────
   /**
-   * Mirrors the clamping behavior of the old admin/pagination.go's
-   * paginate(): a stale bookmarked page (or one typed past the last page)
-   * degrades to the nearest valid page instead of rendering empty.
+   * Clamps a requested page into range: a stale bookmarked page (or one
+   * typed past the last page) degrades to the nearest valid page instead of
+   * rendering empty.
+   * @param {number} reqPage - Requested page number.
+   * @param {number} size - Rows per page.
+   * @param {number} total - Total matching rows.
+   * @returns {{page: number, totalPages: number, from: number, to: number}} Clamped pagination state.
    */
   function computePagination(reqPage, size, total) {
     const totalPages = Math.max(1, Math.ceil(total / size));
@@ -175,13 +183,6 @@
         ${navLink('Last', totalPages, page < totalPages)}
       </div>`;
 
-    container.querySelectorAll('.pagination-link').forEach((link) => {
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
-        navigate(Number(link.dataset.page), pageSize, q);
-      });
-    });
-
     const sizeSelect = document.getElementById('page-size-select');
     if (sizeSelect) {
       sizeSelect.addEventListener('change', () => navigate(1, sizeSelect.value, q));
@@ -203,6 +204,13 @@
       });
     }
   }
+
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('.pagination-link');
+    if (!link) return;
+    e.preventDefault();
+    navigate(Number(link.dataset.page), pageSize, q);
+  });
 
   const loadExchanges = makeAbortable(async (signal) => {
     const searchParams = new URLSearchParams();
@@ -236,11 +244,15 @@
   });
 
   // ── Charts ──────────────────────────────────────────────────────────────
-  // Independent of the table's own page-size limiter — always pulls the
-  // latest 200 matching the current search filter, newest-first from the
-  // API, reversed to chronological for left-to-right plotting.
+  // Always pulls the latest `limit` rows matching the current search filter.
   const SVGNS = 'http://www.w3.org/2000/svg';
 
+  /**
+   * @param {number} limit - Max rows to fetch.
+   * @param {string} query - Search-box filter query.
+   * @param {AbortSignal} signal - Abort signal for the fetch.
+   * @returns {Promise<object[]>} Rows in chronological order (oldest first), for left-to-right plotting.
+   */
   async function fetchLatestExchanges(limit, query, signal) {
     const searchParams = new URLSearchParams();
     searchParams.set('limit', limit);
@@ -248,7 +260,7 @@
     const res = await fetch('/api/exchanges?' + searchParams.toString(), { signal });
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.rows || []).reverse();
+    return (data.rows || []).toReversed();
   }
 
   function renderLineChart(svg, rows, series, opts = {}) {

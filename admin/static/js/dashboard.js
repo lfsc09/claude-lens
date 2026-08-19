@@ -1,3 +1,7 @@
+import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel, fmtCell, fmtThreshold, dayStr, initNav } from './app.js';
+
+'use strict';
+
 (() => {
   const RANGES = ['today', 'this-week', 'this-month', 'last-7-days', 'last-15-days', 'last-30-days', 'last-60-days'];
   const DEFAULT_RANGE = 'this-week';
@@ -19,8 +23,11 @@
   }
 
   /**
-   * Mirrors admin/dashboard_range.go's sinceForRange — every range's upper
-   * bound is implicitly "now", so only the lower bound varies by preset.
+   * Resolves a range preset to its lower bound; the upper bound is always
+   * "now".
+   * @param {string} rangeKey - One of RANGES.
+   * @param {Date} now - Reference time.
+   * @returns {Date} Start of the range.
    */
   function rangeFrom(rangeKey, now) {
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -213,9 +220,8 @@
   });
 
   // ── Live updates ──────────────────────────────────────────────────────────
-  // The SSE connection's range is fixed at connect time (the server computes
-  // `since` from it once), so changing range requires closing and reopening
-  // it rather than just updating a variable.
+  // reconnectNav closes any existing SSE connection and opens a new one
+  // scoped to the current range.
   let navHandle = null;
   function reconnectNav() {
     navHandle?.close();

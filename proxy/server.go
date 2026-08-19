@@ -47,6 +47,8 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 		// WriteTimeout — this server streams SSE responses of unbounded
 		// duration; a write deadline would cut them off mid-stream.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
@@ -81,5 +83,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		s.logger.Warn("health: write response", "error", err)
+	}
 }

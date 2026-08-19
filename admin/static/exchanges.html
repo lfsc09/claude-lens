@@ -9,11 +9,11 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
-<body class="bg-gray-50 min-h-screen text-gray-800">
+<body class="min-h-screen text-gray-800 bg-gray-50">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
-  <header class="bg-white border-b border-gray-200 px-6 py-3">
-    <nav class="flex items-center gap-6 text-sm font-medium">
+  <header class="px-6 py-3 bg-white border-b border-gray-200">
+    <nav class="flex items-center text-sm font-medium gap-6">
       <span class="flex items-center gap-2">
         <img src="/img/logo.png" alt="" class="h-6 w-6 rounded-md">
         <span class="text-base font-bold text-gray-900">claude-lens</span>
@@ -21,90 +21,91 @@
       <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
       <a href="/exchanges" class="text-gray-600 hover:text-gray-900">Exchanges</a>
       <a href="/prices" class="text-gray-600 hover:text-gray-900">Prices</a>
-      <span id="proxy-status" class="ml-auto px-2 py-1 border border-gray-300 border-dashed rounded-lg text-xs text-gray-500">Proxy Service</span>
+      <span id="proxy-status" class="text-xs text-gray-500 ml-auto px-2 py-1 border border-gray-300 border-dashed rounded-lg">Proxy Service</span>
     </nav>
   </header>
 
-  <main class="max-w-6xl mx-auto px-6 py-8">
+  <main class="max-w-7xl mx-auto px-6 py-8">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-xl font-semibold">Exchanges</h1>
-      <button type="button" id="confirm-delete-btn" class="border border-red-500 text-sm text-red-500 px-3 py-1 rounded hover:text-red-700 hover:bg-red-50 whitespace-nowrap hidden">Delete Session</button>
+      <button type="button" id="confirm-delete-btn" class="whitespace-nowrap hidden text-sm text-red-500 px-3 py-1 border border-red-500 rounded hover:text-red-700 hover:bg-red-50">Delete Session</button>
     </div>
 
     <!-- ── Search Form ───────────────────────────────────────────────────── -->
     <form method="get" action="/exchanges" class="mb-4">
       <div class="flex gap-2">
         <input type="hidden" name="size" id="search-size" value="50">
+        <label for="search-input" class="sr-only">Filter exchanges</label>
         <input type="text" name="q" id="search-input" placeholder='model like sonnet AND cost > 0.1'
-          class="border border-gray-300 rounded px-3 py-1.5 text-sm w-full font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500">
-        <button type="submit" class="bg-emerald-600 text-white text-sm px-3 py-1.5 rounded hover:bg-emerald-700 whitespace-nowrap">
+          class="w-full text-sm font-mono px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+        <button type="submit" class="whitespace-nowrap text-white text-sm px-3 py-1.5 bg-emerald-600 rounded hover:bg-emerald-700">
           Search
         </button>
-        <a href="/exchanges" id="search-clear" class="hidden text-sm text-gray-500 self-center hover:underline whitespace-nowrap">Clear</a>
+        <a href="/exchanges" id="search-clear" class="hidden self-center whitespace-nowrap text-sm text-gray-500 hover:underline">Clear</a>
       </div>
-      <p id="filter-error" class="mt-1.5 text-xs text-red-600 hidden"></p>
+      <p id="filter-error" class="hidden text-xs text-red-600 mt-1.5"></p>
       <div id="filter-help">
-        <p class="mt-1.5 text-xs text-gray-400">
+        <p class="text-xs text-gray-400 mt-1.5">
           <b>Fields</b>: id, session, model, path, date, input_tokens, output_tokens, cache_tokens, total_tokens, cost, stream
         </p>
         <ul class="mt-1.5">
-          <li class="mt-0.5 ms-2 text-xs text-gray-400">Text fields take: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">like</code></li>
-          <li class="mt-0.5 ms-2 text-xs text-gray-400">Numbers/dates take: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&lt;</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&gt;</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">!=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&lt;=</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">&gt;=</code></li>
-          <li class="mt-0.5 ms-2 text-xs text-gray-400">Combine with: <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">AND</code> <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">OR</code> and <code class="bg-gray-100 font-mono text-xs px-1 rounded border border-gray-200">(…)</code></li>
+          <li class="text-xs text-gray-400 mt-0.5 ms-2">Text fields take: <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">like</code></li>
+          <li class="text-xs text-gray-400 mt-0.5 ms-2">Numbers/dates take: <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&lt;</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&gt;</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">!=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&lt;=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&gt;=</code></li>
+          <li class="text-xs text-gray-400 mt-0.5 ms-2">Combine with: <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">AND</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">OR</code> and <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">(…)</code></li>
         </ul>
       </div>
     </form>
 
     <!-- ── Exchanges Charts ─────────────────────────────────────────────── -->
-    <div class="grid grid-cols-1 gap-4 mb-6">
-      <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <section aria-label="Exchange charts" class="grid grid-cols-1 gap-4 mb-6">
+      <div class="p-4 bg-white rounded-lg border border-gray-200">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-sm font-medium text-gray-700">Cost over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
-          <div id="cost-chart-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+          <div id="cost-chart-legend" class="flex flex-wrap text-xs text-gray-500 gap-3"></div>
         </div>
-        <svg id="cost-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" class="w-full h-56"></svg>
+        <svg id="cost-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="Cost over time chart" class="w-full h-56"></svg>
       </div>
 
-      <div class="bg-white rounded-lg border border-gray-200 p-4">
+      <div class="p-4 bg-white rounded-lg border border-gray-200">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-sm font-medium text-gray-700">Tokens over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
-          <div id="tokens-chart-legend" class="flex flex-wrap gap-3 text-xs text-gray-500"></div>
+          <div id="tokens-chart-legend" class="flex flex-wrap text-xs text-gray-500 gap-3"></div>
         </div>
-        <svg id="tokens-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" class="w-full h-56"></svg>
+        <svg id="tokens-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="Tokens over time chart" class="w-full h-56"></svg>
       </div>
-    </div>
+    </section>
 
     <!-- ── Exchanges Table ─────────────────────────────────────────────── -->
-    <div class="bg-white rounded-lg border border-gray-200 overflow-x-auto">
+    <section aria-label="Exchanges" class="overflow-x-auto bg-white rounded-lg border border-gray-200">
       <table class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-gray-200 text-left text-gray-500">
+        <thead class="text-left text-gray-500 bg-gray-50 border-b border-gray-200">
           <tr>
-            <th class="px-4 py-2 font-medium">ID</th>
-            <th class="px-4 py-2 font-medium">Session</th>
-            <th class="px-4 py-2 font-medium">Model</th>
-            <th class="px-4 py-2 font-medium">Time</th>
-            <th class="px-4 py-2 font-medium text-right">Tokens</th>
-            <th class="px-4 py-2 font-medium text-right">Cost</th>
-            <th class="px-4 py-2 font-medium">Stream</th>
+            <th class="font-medium px-4 py-2">ID</th>
+            <th class="font-medium px-4 py-2">Session</th>
+            <th class="font-medium px-4 py-2">Model</th>
+            <th class="font-medium px-4 py-2">Time</th>
+            <th class="font-medium text-right px-4 py-2">Tokens</th>
+            <th class="font-medium text-right px-4 py-2">Cost</th>
+            <th class="font-medium px-4 py-2">Stream</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100" id="exchanges-tbody">
           <tr>
-            <td colspan="7" class="px-4 py-10 text-center text-gray-400">Loading…</td>
+            <td colspan="7" class="text-center text-gray-400 px-4 py-10">Loading…</td>
           </tr>
         </tbody>
       </table>
-    </div>
+    </section>
 
     <!-- ── Pagination Controls ─────────────────────────────────────────── -->
-    <div id="pagination-controls" class="py-4 mt-4 flex flex-wrap items-center justify-between gap-4 text-sm sticky bottom-0 bg-gray-50"></div>
+    <nav aria-label="Pagination" id="pagination-controls" class="flex flex-wrap items-center justify-between sticky bottom-0 text-sm py-4 mt-4 gap-4 bg-gray-50"></nav>
   </main>
 
   <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
-  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs px-2.5 py-1.5 rounded-md bg-gray-600 text-white text-xs leading-snug shadow-lg pointer-events-none whitespace-pre-line opacity-0 transition-opacity duration-150"></div>
+  <div id="app-tooltip" role="tooltip" class="whitespace-pre-line fixed z-50 max-w-xs text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <!-- ── Dialog ──────────────────────────────────────────────────────────── -->
-  <dialog id="delete-confirmation-dialog" class="border border-gray-300 rounded-lg p-6">
+  <dialog id="delete-confirmation-dialog" class="p-6 border border-gray-300 rounded-lg">
     <div class="flex flex-col gap-6">
       <div class="flex flex-col gap-8">
         <div class="flex flex-col gap-3">
@@ -114,9 +115,9 @@
           </div>
           <small class="text-gray-500 font-mono">Session ID: <span id="delete-session-id" class="font-semibold text-emerald-600"></span></small>
         </div>
-        <div class="flex flex-col gap-1 border-2 border-gray-200 border-dashed rounded-lg p-4">
+        <div class="flex flex-col gap-1 p-4 border-2 border-gray-200 border-dashed rounded-lg">
           <p class="text-sm font-medium">Do you wish to also delete this session in Claude Code?</p>
-          <div class="text-red-500 flex items-center gap-2 hover:*:cursor-pointer">
+          <div class="flex items-center text-red-500 gap-2 hover:*:cursor-pointer">
             <input
               class=""
               type="checkbox"
@@ -125,18 +126,17 @@
             />
             <label for="also-delete-claude-session">Delete all</label>
           </div>
-          <div id="delete-dialog-message" class="hidden text-xs rounded-md px-3 py-2 border"></div>
+          <div id="delete-dialog-message" class="hidden text-xs px-3 py-2 rounded-md border"></div>
         </div>
       </div>
-      <div class="w-full flex justify-end gap-2">
-        <button commandfor="delete-confirmation-dialog" command="close" class="border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md hover:bg-gray-100">Cancel</button>
-        <button id="submit-delete-btn" class="bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700">Confirm</button>
+      <div class="flex justify-end w-full gap-2">
+        <button commandfor="delete-confirmation-dialog" command="close" class="text-gray-700 px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
+        <button id="submit-delete-btn" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Confirm</button>
       </div>
     </div>
   </dialog>
 
-  <script src="/js/app.js"></script>
-  <script src="/js/exchanges.js"></script>
+  <script type="module" src="/js/exchanges.js"></script>
 </body>
 
 </html>

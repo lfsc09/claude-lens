@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -22,14 +23,9 @@ type ssePayload struct {
 }
 
 // sseStream is a Server-Sent Events endpoint pushing live proxy status and
-// token totals every sseInterval, until the client disconnects.
-//
-// The old Python version needed a gevent worker specifically because a
-// synchronous WSGI worker blocking on time.sleep(3) inside this generator
-// would tie up that whole worker process, starving every other request.
-// net/http gives every connection its own goroutine, so that constraint
-// doesn't exist here — this is a plain per-connection loop, no special
-// worker mode or cooperative-scheduling library needed.
+// token totals every sseInterval, until the client disconnects. Each
+// connection runs its own goroutine, so blocking on the ticker only holds
+// up that one connection.
 func (h *handlers) sseStream(w http.ResponseWriter, r *http.Request) {
 	rangeKey := normalizeDashboardRange(r.URL.Query().Get("range"))
 
@@ -69,10 +65,9 @@ func (h *handlers) sseStream(w http.ResponseWriter, r *http.Request) {
 				b, err := json.Marshal(payload)
 				if err != nil {
 					h.logger.Error("failed to marshal SSE payload", "error", err)
+				} else if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+					h.logger.Warn("sseStream: write payload", "error", err)
 				} else {
-					w.Write([]byte("data: "))
-					w.Write(b)
-					w.Write([]byte("\n\n"))
 					flusher.Flush()
 				}
 			}

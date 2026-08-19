@@ -35,8 +35,8 @@ type Exchange struct {
 }
 
 // ExchangeSummary is a row as listed in the exchanges table/dashboard (no
-// request/response bodies). JSON field names match the old Python version's
-// dict keys (the raw SQL column names).
+// request/response bodies). JSON field names mirror the underlying SQL
+// column names.
 type ExchangeSummary struct {
 	ID                  int64    `json:"id"`
 	SessionID           string   `json:"session_id"`
@@ -121,8 +121,8 @@ type DailyCost struct {
 }
 
 // SaveExchange inserts one exchange row. On failure it logs the error and
-// returns it — matching the Python version's behavior of never letting a
-// storage failure break the response already sent to the client.
+// returns it; the caller decides whether that should affect a response
+// already sent to the client.
 func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	var cost *float64
 	if sum, any := sumCosts(e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost); any {
@@ -150,10 +150,10 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	}
 
 	slog.Info("saved exchange",
-		"session_id", e.SessionID, "path", e.Path, "model", derefStr(e.Model),
-		"input_tokens", derefInt(e.InputTokens), "output_tokens", derefInt(e.OutputTokens),
-		"cache_creation_tokens", derefInt(e.CacheCreationTokens), "cache_read_tokens", derefInt(e.CacheReadTokens),
-		"cost", derefFloat(cost), "streaming", e.IsStreaming,
+		"session_id", e.SessionID, "path", e.Path, "model", deref(e.Model),
+		"input_tokens", deref(e.InputTokens), "output_tokens", deref(e.OutputTokens),
+		"cache_creation_tokens", deref(e.CacheCreationTokens), "cache_read_tokens", deref(e.CacheReadTokens),
+		"cost", deref(cost), "streaming", e.IsStreaming,
 	)
 	return nil
 }
@@ -200,7 +200,7 @@ func (db *DB) GetExchanges(ctx context.Context, filterQuery string, limit, offse
 	}
 	defer rows.Close()
 
-	var out []ExchangeSummary
+	out := make([]ExchangeSummary, 0, limit)
 	for rows.Next() {
 		var e ExchangeSummary
 		var isStreaming int
@@ -430,23 +430,11 @@ func roundedOrNil(v sql.NullFloat64, decimals int) *float64 {
 	return &r
 }
 
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
+// deref returns the value p points to, or T's zero value if p is nil.
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
 	}
-	return *s
-}
-
-func derefInt(i *int) int {
-	if i == nil {
-		return 0
-	}
-	return *i
-}
-
-func derefFloat(f *float64) float64 {
-	if f == nil {
-		return 0
-	}
-	return *f
+	return *p
 }

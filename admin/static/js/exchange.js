@@ -1,10 +1,16 @@
+import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashStr, initNavPolling, prettyJSON, randomId, valueToStr } from './app.js';
+
+'use strict';
+
 (() => {
   const exchangeId = window.location.pathname.split('/').filter(Boolean).pop();
   const tabSize = 4;
   let derivedExchange = null;
 
   /**
-   * Go back to the previous page if the referrer is from the same origin, otherwise do nothing.
+   * Goes back to the previous page if the referrer is same-origin, otherwise
+   * does nothing.
+   * @param {MouseEvent} e - Click event on the back link.
    */
   function goBackToExchanges(e) {
     const referrer = document.referrer;
@@ -32,8 +38,10 @@
   }
 
   /**
-   * Add index/number/hash/content_text/content_bytes derived fields to each
+   * Adds index/number/hash/content_text/content_bytes derived fields to each
    * input message, used by renderInputMessages and the message dialog.
+   * @param {object[]} inputMessages - Raw input messages parsed from the exchange.
+   * @returns {Promise<object[]>} The same array, mutated in place with derived fields.
    */
   async function deriveInputMessages(inputMessages) {
     await Promise.all(inputMessages.map(async (msg, index) => {
@@ -47,8 +55,10 @@
   }
 
   /**
-   * Add byte-size fields, parsed+derived input_messages, and a convenience
+   * Adds byte-size fields, parsed+derived input_messages, and a convenience
    * `input` (the last input message) to a raw exchange fetched from the API.
+   * @param {?object} exchange - Raw exchange from the API, or null.
+   * @returns {Promise<?object>} The same object, mutated in place with derived fields.
    */
   async function deriveExchange(exchange) {
     if (!exchange) return exchange;

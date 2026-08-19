@@ -10,8 +10,7 @@ import (
 type middleware func(http.Handler) http.Handler
 
 // chain applies mws around h in order, so mws[0] is outermost (runs first
-// on the way in, last on the way out) — matches the order they'd be passed
-// to gin's r.Use(...).
+// on the way in, last on the way out).
 func chain(h http.Handler, mws ...middleware) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		h = mws[i](h)
@@ -20,7 +19,7 @@ func chain(h http.Handler, mws ...middleware) http.Handler {
 }
 
 // recoverMiddleware turns a panicking handler into a 500 instead of
-// crashing the server — mirrors gin.Recovery().
+// crashing the server.
 func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -34,8 +33,7 @@ func recoverMiddleware(next http.Handler) http.Handler {
 }
 
 // statusRecorder captures the status code written by the wrapped handler —
-// plain http.ResponseWriter doesn't expose it after the fact, unlike gin's
-// c.Writer.Status().
+// plain http.ResponseWriter doesn't expose it after the fact.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -57,8 +55,8 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
-// loggingMiddleware logs one line per request — mirrors the old
-// slogMiddleware built on gin.HandlerFunc.
+// loggingMiddleware logs one line per request: method, path, status, and
+// latency.
 func loggingMiddleware(logger *slog.Logger) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

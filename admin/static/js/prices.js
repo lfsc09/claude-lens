@@ -1,3 +1,7 @@
+import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
+
+'use strict';
+
 (() => {
   const tbody = document.getElementById('prices-tbody');
   const FIELD_NAMES = ['input_per_m', 'output_per_m', 'cache_write_per_m', 'cache_read_per_m'];
@@ -6,6 +10,7 @@
   // (a prefix can now own several rule rows, so id — not prefix — is unique).
   const originalById = {};
   const rowsById = new Map();
+  const pricesById = new Map();
   const dirtyIds = new Set();
 
   function fmtInt(n) {
@@ -22,11 +27,12 @@
   }
 
   /**
-   * Mirrors internal/pricing/pricing.go's EstimateCosts picker exactly:
-   * among a prefix's rules that match x, the one whose rule_tokens is
+   * Among a prefix's rules that match x, the one whose rule_tokens is
    * numerically closest wins; an exact-distance tie (only possible with a
-   * literal duplicate rule) goes to the more recently created one. Keep
-   * this in sync if that Go logic ever changes.
+   * literal duplicate rule) goes to the more recently created one.
+   * @param {object[]} rules - A prefix's price rules.
+   * @param {number} x - Token count to resolve a winner for.
+   * @returns {?object} The winning rule, or null if none match.
    */
   function pickWinner(rules, x) {
     let best = null;
@@ -58,6 +64,8 @@
    * even number) is isolated into its own single-token breakpoint, so the
    * recency-broken winner at that one token count doesn't get merged into
    * the unambiguous token counts on either side of it.
+   * @param {object[]} rules - A prefix's price rules.
+   * @returns {number[]} Sorted breakpoint token counts.
    */
   function computeBreakpoints(rules) {
     const breakpoints = new Set([0]);
@@ -79,7 +87,7 @@
         }
       }
     }
-    return Array.from(breakpoints).sort((x, y) => x - y);
+    return Array.from(breakpoints).toSorted((x, y) => x - y);
   }
 
   /**
@@ -365,6 +373,7 @@
 
     dirtyIds.clear();
     rowsById.clear();
+    pricesById.clear();
     Object.keys(originalById).forEach((key) => delete originalById[key]);
     updateChangesBar();
     setChangesMessage('', false);
@@ -373,6 +382,8 @@
       tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">No model prices configured.</td></tr>';
       return;
     }
+
+    prices.forEach((p) => pricesById.set(String(p.id), p));
 
     // Group by prefix, preserving the DB's `ORDER BY model_prefix, created_at`.
     const groups = Map.groupBy(prices, (p) => p.model_prefix);
@@ -388,17 +399,21 @@
       const id = row.dataset.id;
       rowsById.set(id, row);
       originalById[id] = readRowValuesAsStrings(row);
-      const deleteBtn = row.querySelector('.delete-btn');
-      const price = prices.find((p) => String(p.id) === id);
-      if (deleteBtn && price) {
-        deleteBtn.addEventListener('click', () => deletePrice(id, `${price.model_prefix} (${ruleText(price)})`));
-      }
     });
   }
 
   tbody.addEventListener('input', (e) => {
     const row = e.target.closest('tr[data-id]');
     if (row) refreshRowDirtyState(row);
+  });
+
+  tbody.addEventListener('click', (e) => {
+    if (!e.target.closest('.delete-btn')) return;
+    const row = e.target.closest('tr[data-id]');
+    if (!row) return;
+    const id = row.dataset.id;
+    const price = pricesById.get(id);
+    if (price) deletePrice(id, `${price.model_prefix} (${ruleText(price)})`);
   });
 
   document.getElementById('price-changes-save')?.addEventListener('click', saveAllChanges);

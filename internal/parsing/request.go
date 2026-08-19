@@ -13,8 +13,8 @@ type requestBody struct {
 // ExtractRequestFields extracts the messages array (as its original raw JSON
 // text), the streaming flag, and the model name from a POST request body.
 // A body that isn't a JSON object (or isn't valid JSON at all) yields the
-// zero values, matching the old Python version's behavior of swallowing
-// decode errors rather than rejecting the request.
+// zero values instead of an error, so a malformed body never blocks the
+// request from being proxied.
 func ExtractRequestFields(rawBody []byte) (inputMessages *string, isStreaming bool, model *string) {
 	var body requestBody
 	if err := json.Unmarshal(rawBody, &body); err != nil {

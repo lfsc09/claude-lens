@@ -1,11 +1,6 @@
 // Package status holds the proxy's health as an in-process flag shared
-// between the proxy and admin servers.
-//
-// The old Python version ran the two servers as separate processes, so the
-// admin server checked proxy health with an HTTP GET to the proxy's
-// /health endpoint (PROXY_SERVER_URL). Both servers now share one process,
-// so that whole request/response round trip — and its own failure modes
-// (timeout, connection refused) — collapses into a plain mutex-guarded read.
+// between the proxy and admin servers, so the admin server can read the
+// proxy's health with a plain mutex-guarded read instead of a network call.
 package status
 
 import "sync"

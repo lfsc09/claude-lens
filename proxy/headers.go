@@ -35,9 +35,8 @@ func ParseCustomHeaders(raw string) (map[string]string, error) {
 
 // SetHeader sets key to value, replacing any existing value under that
 // (case-insensitive) header name. http.Header already stores keys under
-// their canonical MIME form, so this is exactly http.Header.Set — named
-// here so the proxy's header-mutation call sites read the same as the
-// Python version's set_header calls did.
+// their canonical MIME form, so this is exactly http.Header.Set, named
+// here so the proxy's header-mutation call sites read consistently.
 func SetHeader(headers http.Header, key, value string) {
 	headers.Set(key, value)
 }

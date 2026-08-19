@@ -96,6 +96,8 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 		// No WriteTimeout: the /api/stream SSE route holds its connection
 		// open indefinitely.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
