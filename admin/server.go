@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/logging"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
 )
@@ -32,9 +33,9 @@ type Server struct {
 // rooted at "static" — a build-time invariant, not a runtime condition —
 // so that's treated as fatal rather than something the caller can
 // meaningfully recover from at startup.
-func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, version string) (*Server, error) {
+func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, version, dbPath, logDir string) (*Server, error) {
 	logger := slog.Default().With("component", "admin")
-	h := &handlers{db: db, est: est, status: st, fresh: fr, logger: logger, version: version}
+	h := &handlers{db: db, est: est, status: st, fresh: fr, logger: logger, version: version, dbPath: dbPath, logPath: logging.FilePath(logDir)}
 
 	staticContent, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -58,6 +59,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /exchanges", servePage(staticContent, "exchanges.html"))
 	mux.HandleFunc("GET /exchanges/{id}", servePage(staticContent, "exchange.html"))
 	mux.HandleFunc("GET /prices", servePage(staticContent, "prices.html"))
+	mux.HandleFunc("GET /about", servePage(staticContent, "about.html"))
 	mux.HandleFunc("GET /favicon.ico", servePage(staticContent, "img/favicon.ico"))
 	mux.Handle("GET /img/", fileServer)
 	mux.Handle("GET /js/", fileServer)
@@ -75,6 +77,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("POST /api/prices", h.createPrice)
 	mux.HandleFunc("PUT /api/prices/{id}", h.updatePrice)
 	mux.HandleFunc("DELETE /api/prices/{id}", h.deletePrice)
+	mux.HandleFunc("GET /api/about", h.about)
 
 	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger))
 	return &Server{handler: handler, logger: logger}, nil

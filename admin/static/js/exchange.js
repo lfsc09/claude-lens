@@ -1,4 +1,4 @@
-import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashStr, initNavPolling, prettyJSON, randomId, valueToStr } from './app.js';
+import { debounce, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashStr, initNavPolling, prettyJSON, randomId, valueToStr } from './app.js';
 
 'use strict';
 
@@ -27,14 +27,6 @@ import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashStr, initNa
 
   function ruleText(price) {
     return price.rule === 'under' ? `≤ ${fmtInt(price.rule_tokens)}` : `> ${fmtInt(price.rule_tokens)}`;
-  }
-
-  function debounce(fn, delay = 200) {
-    let timer;
-    return (...args) => {
-      clearTimeout(timer);
-      timer = setTimeout(() => fn(...args), delay);
-    };
   }
 
   /**

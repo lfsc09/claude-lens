@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About – claude-lens Admin</title>
+  <link rel="icon" href="/favicon.ico">
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="min-h-screen text-gray-800 bg-gray-50">
+
+  <!-- ── Navigation ──────────────────────────────────────────────────── -->
+  <header class="px-6 py-3 bg-white border-b border-gray-200">
+    <nav class="flex items-center text-sm font-medium gap-6">
+      <span class="flex items-center gap-2">
+        <img src="/img/logo.png" alt="" class="h-6 w-6 rounded-md">
+        <span class="text-base font-bold text-gray-900">claude-lens</span>
+      </span>
+      <a href="/" class="text-gray-600 hover:text-gray-900">Dashboard</a>
+      <a href="/exchanges" class="text-gray-600 hover:text-gray-900">Exchanges</a>
+      <a href="/prices" class="text-gray-600 hover:text-gray-900">Prices</a>
+      <a href="/about" class="text-gray-600 hover:text-gray-900">About</a>
+      <span id="proxy-status" class="text-xs text-gray-500 ml-auto px-2 py-1 border border-gray-300 border-dashed rounded-lg">Proxy Service</span>
+    </nav>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-8 pb-16">
+    <!-- ── Header ──────────────────────────────────────────────────────── -->
+    <div class="flex items-start justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-xl font-semibold">About</h1>
+        <p class="max-w-2xl text-sm text-gray-500 mt-1">
+          A snapshot taken when this page loaded — reload to refresh.
+        </p>
+      </div>
+      <span class="shrink-0 text-xs font-mono text-gray-500 px-3 py-1.5 border border-gray-300 border-dashed rounded-lg">
+        Version <span id="about-version">—</span>
+      </span>
+    </div>
+
+    <div id="about-error" class="hidden text-sm text-red-700 px-4 py-3 mb-6 border border-red-200 rounded-lg bg-red-50"></div>
+
+    <!-- ── Database ────────────────────────────────────────────────────── -->
+    <section aria-label="Database" class="mb-8 flex flex-col gap-0.5">
+      <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <h2 class="font-semibold uppercase tracking-wide">Database</h2>
+        </div>
+        <span id="about-db-path" class="text-xs text-gray-500 font-mono text-right" data-tip="Path to the database file in your system">-</span>
+      </div>
+      <div class="bg-white rounded-b-lg border border-gray-200 max-h-96 overflow-y-auto overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="text-left text-gray-500 bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th class="font-medium px-4 py-2">Table</th>
+              <th class="font-medium text-right px-4 py-2">Rows</th>
+              <th class="font-medium text-right px-4 py-2">Size</th>
+            </tr>
+          </thead>
+          <tbody id="about-tables-tbody" class="divide-y divide-gray-100">
+            <tr>
+              <td colspan="3" class="text-center text-gray-400 px-4 py-8">Loading…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Logs ────────────────────────────────────────────────────────── -->
+    <section class="flex flex-col gap-0.5" aria-label="Logs">
+      <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between">
+        <div class="flex flex-col">
+          <h2 class="font-semibold uppercase tracking-wide">Logs</h2>
+          <small class="text-xs text-gray-500 font-mono">Last 50 entries, most recent on top</small>
+        </div>
+        <div class="flex flex-col items-end gap-2">
+          <span id="about-log-path" class="font-mono text-xs text-gray-500 text-right" data-tip="Path to the log file in your system">-</span>
+          <span id="about-log-size" class="font-mono text-xs text-gray-500 text-right">-</span>
+        </div>
+      </div>
+      <div class="flex flex-col gap-0.5">
+        <div class="bg-white border border-gray-200 p-4">
+          <input type="search" id="logs-search" placeholder="Search…" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500">
+        </div>
+        <div id="about-log-tail" class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-[500px] overflow-y-auto"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
+  <div id="app-tooltip" role="tooltip" class="whitespace-pre-line fixed z-50 max-w-xs text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
+
+  <script type="module" src="/js/about.js"></script>
+</body>
+
+</html>

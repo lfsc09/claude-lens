@@ -331,3 +331,18 @@ export async function extractErrorMessage(res, fallback) {
   const body = await res.json().catch(() => ({}));
   return body.error || fallback;
 }
+
+/**
+ * Wraps fn so a rapid burst of calls only runs it once, delayMs after the
+ * last call — e.g. re-rendering on every keystroke of a search input.
+ * @param {Function} fn - Function to debounce.
+ * @param {number} [delayMs=200] - Quiet period required before fn runs.
+ * @returns {Function} Debounced wrapper with the same signature as fn.
+ */
+export function debounce(fn, delayMs = 200) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delayMs);
+  };
+}

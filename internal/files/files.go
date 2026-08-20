@@ -56,6 +56,28 @@ func TryDeleteClaudeSession(sessionID string) (int, error) {
 	return deletedCount, nil
 }
 
+// TailLines returns the last n non-empty lines of the file at path. A
+// missing file returns an empty result rather than an error, since the log
+// file may not exist yet on a fresh install.
+func TailLines(path string, n int) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	trimmed := strings.TrimRight(string(data), "\n")
+	if trimmed == "" {
+		return nil, nil
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines, nil
+}
+
 // getDefaultClaudeProjectsDir returns the default directory where Claude session files are stored.
 func getDefaultClaudeProjectsDir() (string, error) {
 	homeDir, err := os.UserHomeDir()

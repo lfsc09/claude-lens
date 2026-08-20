@@ -21,6 +21,8 @@ type handlers struct {
 	fresh   *status.Fresh
 	logger  *slog.Logger
 	version string
+	dbPath  string
+	logPath string
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

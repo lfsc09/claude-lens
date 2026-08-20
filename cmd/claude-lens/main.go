@@ -54,7 +54,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	adminSrv, err := admin.NewServer(db, est, st, fresh, Version)
+	adminSrv, err := admin.NewServer(db, est, st, fresh, Version, cfg.DBPath, cfg.LogDir)
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
 		os.Exit(1)

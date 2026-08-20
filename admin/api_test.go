@@ -43,7 +43,8 @@ func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag,
 
 	st := status.New()
 	fresh := status.NewFresh()
-	s, err := NewServer(db, est, st, fresh, "test")
+	tmpDir := t.TempDir()
+	s, err := NewServer(db, est, st, fresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
