@@ -348,7 +348,7 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
         dirtyIds.delete(id);
         updateRowDirtyVisual(row, false);
         const updatedCell = row.querySelector('.updated-cell');
-        if (updatedCell) updatedCell.textContent = fmtTime(new Date().toISOString());
+        if (updatedCell) updatedCell.textContent = fmtTime(Math.floor(Date.now() / 1000));
       } else {
         failedCount += 1;
         lastError = outcome.reason.message;
