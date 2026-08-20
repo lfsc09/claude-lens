@@ -2,7 +2,6 @@
 set -e
 
 LABEL="com.user.claude-lens"
-INSTALL_DIR="/usr/local/bin"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 CONFIG_DIR="$HOME/Library/Application Support/claude-lens"
 ENV_FILE="${CONFIG_DIR}/claude-lens.env"
@@ -30,8 +29,11 @@ service. Any option you omit keeps whatever was set on a previous run
   --proxy-custom-header "H: v"  Extra header forwarded upstream (repeatable)
   --proxy-addr ADDR         Proxy listen address (default: :7801)
   --admin-addr ADDR         Admin listen address (default: :7802)
-  --data-dir PATH           SQLite database directory (default: ~/Library/Application Support/claude-lens)
-  --log-dir PATH            Log directory (default: ~/Library/Logs/claude-lens)
+  --install-dir PATH        Base directory for the binary (REQUIRED)
+  --data-dir PATH           SQLite database directory (default: {--install-dir}/data)
+  --log-dir PATH            Log directory (default: {--install-dir}/logs)
+  --as-service              Configure and start claude-lens as a launchd agent
+                             (default: off - just downloads/updates the binary)
   -h, --help                Show this help
 USAGE
 }
@@ -63,8 +65,10 @@ CLENS_PROXY_BASE_URL="https://api.anthropic.com"
 CLENS_PROXY_AUTH_TOKEN=""
 CLENS_PROXY_ADDR=":7801"
 CLENS_ADMIN_ADDR=":7802"
-CLENS_DATA_DIR="$HOME/Library/Application Support/claude-lens"
-CLENS_LOG_DIR="$HOME/Library/Logs/claude-lens"
+CLENS_INSTALL_DIR=""
+CLENS_DATA_DIR=""
+CLENS_LOG_DIR=""
+CLENS_AS_SERVICE="false"
 _CLENS_CUSTOM_HEADERS_ESCAPED=""
 
 # ── Carry forward settings from a previous install, if any ─────────────
@@ -87,10 +91,13 @@ while [ $# -gt 0 ]; do
     --proxy-addr=*) CLENS_PROXY_ADDR="${1#*=}"; shift ;;
     --admin-addr) CLENS_ADMIN_ADDR="$2"; shift 2 ;;
     --admin-addr=*) CLENS_ADMIN_ADDR="${1#*=}"; shift ;;
+    --install-dir) CLENS_INSTALL_DIR="$2"; shift 2 ;;
+    --install-dir=*) CLENS_INSTALL_DIR="${1#*=}"; shift ;;
     --data-dir) CLENS_DATA_DIR="$2"; shift 2 ;;
     --data-dir=*) CLENS_DATA_DIR="${1#*=}"; shift ;;
     --log-dir) CLENS_LOG_DIR="$2"; shift 2 ;;
     --log-dir=*) CLENS_LOG_DIR="${1#*=}"; shift ;;
+    --as-service) CLENS_AS_SERVICE="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -112,6 +119,17 @@ if [ ${#PROXY_CUSTOM_HEADERS_ARR[@]} -gt 0 ]; then
   done
   _CLENS_CUSTOM_HEADERS_ESCAPED="$headers_escaped"
 fi
+
+# ── Resolve install/data/log directories ─────────────────────────────────
+# --install-dir must be set here or on a previous run (carried forward via the env file).
+if [ -z "$CLENS_INSTALL_DIR" ]; then
+  echo "ERROR: --install-dir is required (no first-run default on macOS)." >&2
+  usage
+  exit 1
+fi
+INSTALL_DIR="$CLENS_INSTALL_DIR"
+CLENS_DATA_DIR="${CLENS_DATA_DIR:-${INSTALL_DIR}/data}"
+CLENS_LOG_DIR="${CLENS_LOG_DIR:-${INSTALL_DIR}/logs}"
 
 # ── Verify ANTHROPIC_BASE_URL, the var Claude Code itself reads ────────
 # claude-lens never sees this variable - Claude Code does, directly from
@@ -136,18 +154,21 @@ fi
 
 check_install_dir_writable
 mkdir -p "$INSTALL_DIR"
-mkdir -p "$HOME/Library/LaunchAgents"
 mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR" "$CONFIG_DIR"
 
-# ── Unload and remove existing service if present ────────────────────────
-if launchctl list | grep -q "$LABEL" 2>/dev/null; then
-  echo "Existing ${LABEL} service detected. Stopping service..."
-  launchctl bootout "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || launchctl unload "$PLIST_PATH" 2>/dev/null || true
-fi
+if [ "$CLENS_AS_SERVICE" = "true" ]; then
+  mkdir -p "$HOME/Library/LaunchAgents"
 
-if [ -f "$PLIST_PATH" ]; then
-  echo "Removing old plist configuration..."
-  rm -f "$PLIST_PATH"
+  # ── Unload and remove existing service if present ──────────────────────
+  if launchctl list | grep -q "$LABEL" 2>/dev/null; then
+    echo "Existing ${LABEL} service detected. Stopping service..."
+    launchctl bootout "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  fi
+
+  if [ -f "$PLIST_PATH" ]; then
+    echo "Removing old plist configuration..."
+    rm -f "$PLIST_PATH"
+  fi
 fi
 
 echo "Downloading latest claude-lens binary and checksum..."
@@ -174,16 +195,19 @@ CLENS_PROXY_BASE_URL="${CLENS_PROXY_BASE_URL}"
 CLENS_PROXY_AUTH_TOKEN="${CLENS_PROXY_AUTH_TOKEN}"
 CLENS_PROXY_ADDR="${CLENS_PROXY_ADDR}"
 CLENS_ADMIN_ADDR="${CLENS_ADMIN_ADDR}"
+CLENS_INSTALL_DIR="${CLENS_INSTALL_DIR}"
 CLENS_DATA_DIR="${CLENS_DATA_DIR}"
 CLENS_LOG_DIR="${CLENS_LOG_DIR}"
+CLENS_AS_SERVICE="${CLENS_AS_SERVICE}"
 _CLENS_CUSTOM_HEADERS_ESCAPED="${_CLENS_CUSTOM_HEADERS_ESCAPED}"
 EOF
 chmod 600 "$ENV_FILE"
 
-real_headers="${_CLENS_CUSTOM_HEADERS_ESCAPED//\\n/$'\n'}"
+if [ "$CLENS_AS_SERVICE" = "true" ]; then
+  real_headers="${_CLENS_CUSTOM_HEADERS_ESCAPED//\\n/$'\n'}"
 
-echo "Creating launchd property list..."
-cat <<EOF > "$PLIST_PATH"
+  echo "Creating launchd property list..."
+  cat <<EOF > "$PLIST_PATH"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -224,11 +248,16 @@ cat <<EOF > "$PLIST_PATH"
 </dict>
 </plist>
 EOF
-chmod 600 "$PLIST_PATH"
+  chmod 600 "$PLIST_PATH"
 
-echo "Loading launchd service..."
-launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || launchctl load -w "$PLIST_PATH"
+  echo "Loading launchd service..."
+  launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || launchctl load -w "$PLIST_PATH"
 
-echo "${LABEL} installed/updated and started successfully!"
-echo "Proxy listening on ${CLENS_PROXY_ADDR}, admin UI on ${CLENS_ADMIN_ADDR}."
-echo "Config saved to ${ENV_FILE} - it's re-read on every install, but changing it by hand has no effect until you re-run this installer (launchd only reads env vars from the plist at load time)."
+  echo "${LABEL} installed/updated and started as a launchd agent!"
+  echo "Proxy listening on ${CLENS_PROXY_ADDR}, admin UI on ${CLENS_ADMIN_ADDR}."
+  echo "Config saved to ${ENV_FILE} - it's re-read on every install, but changing it by hand has no effect until you re-run this installer (launchd only reads env vars from the plist at load time)."
+else
+  echo "claude-lens binary installed/updated at ${INSTALL_DIR}/claude-lens."
+  echo "Config saved to ${ENV_FILE}."
+  echo "Re-run this installer with --as-service to configure and start it as a launchd agent."
+fi

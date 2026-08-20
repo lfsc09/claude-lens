@@ -6,7 +6,27 @@ A transparent HTTP proxy that sits between your Claude Code client and an upstre
 
 It will add very little latency to your requests (since requests are buffered and only saved after completion), and is designed to be run locally on your machine. It does not require any external services or cloud infrastructure, and does not send any data to any cloud.
 
-## Easy install (scripts)
+## Installation
+
+### Env configuration
+
+To route Claude Code traffic through `claude-lens`, set the `ANTHROPIC_BASE_URL` environment variable in your OS to `http://localhost:7801`.
+
+```sh
+export ANTHROPIC_BASE_URL=http://localhost:7801
+```
+
+#### Existing proxy
+
+If you have another proxy already in use (e.g. LiteLLM), feed its envs to `CLENS_*` [environment variables](#environment-variables) like:
+
+```sh
+export CLENS_PROXY_BASE_URL=https://your.lite.llmproxy.com
+export CLENS_PROXY_AUTH_TOKEN=your_token
+export CLENS_PROXY_CUSTOM_HEADERS="X-My-Header: value"
+```
+
+### Install script
 
 You can run the install script to download the latest release for your OS and architecture, and setup `claude-lens` as a background service.
 
@@ -23,14 +43,26 @@ You may provide flags to the install script to customize the Envs.
 | `--proxy-custom-header` | — | `CLENS_PROXY_CUSTOM_HEADERS` (repeatable) |
 | `--proxy-addr` | `:7801` | `CLENS_PROXY_ADDR` |
 | `--admin-addr` | `:7802` | `CLENS_ADMIN_ADDR` |
+| `--install-dir` | `/usr/local/bin` (Linux), REQUIRED in (macOS) | |
 | `--data-dir` | `/var/lib/claude-lens` | `CLENS_DATA_DIR` |
 | `--log-dir` | `/var/log/claude-lens` | `CLENS_LOG_DIR` |
+| `--as-service` | — | If set, will install as a system service (Linux) or launchd agent (macOS). |
 
-For Linux:
+#### Linux
+
+To only install:
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash
 ```
+
+To install and run as a system service:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash -s -- --as-service
+```
+
+To provide custom configurations, use flags like:
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash -s -- \
@@ -40,53 +72,50 @@ curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/inst
   --proxy-custom-header "X-Another-Header: value" \
   --proxy-addr :7801 \
   --admin-addr :7802 \
-  --data-dir /var/lib/claude-lens \
-  --log-dir /var/log/claude-lens
+  --install-dir ~/claude-lens \
+  --data-dir ~/claude-lens/data \
+  --log-dir ~/claude-lens/logs
 ```
 
-For macOS:
+#### MacOS
+
+To only install:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- --install-dir ~/claude-lens
 ```
+
+To install and run as a launchd agent:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- \
-  --proxy-base-url https://api.anthropic.com \
-  --proxy-auth-token sk-ant-your-token \
-  --proxy-custom-header "X-My-Header: value" \
-  --proxy-custom-header "X-Another-Header: value" \
-  --proxy-addr :7801 \
-  --admin-addr :7802 \
-  --data-dir "$HOME/Library/Application Support/claude-lens" \
-  --log-dir "$HOME/Library/Logs/claude-lens"
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- --install-dir ~/claude-lens --as-service
 ```
 
-## Manual install
+### Manual install
 
 You can also download the latest release binary straight from the [releases page](https://github.com/lfsc09/claude-lens/releases), and manually configure the environment variables (see below) to customize behaviour.
 
-To route Claude Code traffic through `claude-lens`, set the `ANTHROPIC_BASE_URL` environment variable in your OS to `http://localhost:7801`.
-
 ```sh
-export ANTHROPIC_BASE_URL=http://localhost:7801
+mkdir -p ~/claude-lens
 ```
 
-### Existing proxy
-
-If you have another proxy already in use (e.g. LiteLLM), feed its envs to `CLENS_*` [environment variables](#claude-lens-available-environment-variables) like:
+```sh
+curl -sSL "https://github.com/lfsc09/claude-lens/releases/latest/download/claude-lens-linux-amd64" -o ~/claude-lens/claude-lens-linux-amd64
+```
 
 ```sh
-export CLENS_PROXY_BASE_URL=https://your.lite.llmproxy.com
-export CLENS_PROXY_AUTH_TOKEN=your_token
-export CLENS_PROXY_CUSTOM_HEADERS="X-My-Header: value"
+chmod ug+x ~/claude-lens/claude-lens-linux-amd64
+```
+
+```sh
+cd ~/claude-lens && ./claude-lens-linux-amd64
 ```
 
 ## Environment variables
 
 All `claude-lens` configuration is via environment variables. They are all optional to customize behaviour.
 
-They all must be set in OS environment. The `.env` file is only read in development builds (see [Getting started](#getting-started)).
+They all must be set in OS environment. The `.env` file is only read in development builds (see [Getting started](#development-details)).
 
 | Variable | Default | Description |
 |---|---|---|

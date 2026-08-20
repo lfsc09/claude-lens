@@ -2,7 +2,7 @@
 set -e
 
 SERVICE_NAME="claude-lens"
-INSTALL_DIR="/usr/local/bin"
+DEFAULT_INSTALL_DIR="/usr/local/bin"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 CONFIG_DIR="/etc/claude-lens"
 ENV_FILE="${CONFIG_DIR}/claude-lens.env"
@@ -32,8 +32,13 @@ service. Any option you omit keeps whatever was set on a previous run
   --proxy-custom-header "H: v"  Extra header forwarded upstream (repeatable)
   --proxy-addr ADDR         Proxy listen address (default: :7801)
   --admin-addr ADDR         Admin listen address (default: :7802)
-  --data-dir PATH           SQLite database directory (default: /var/lib/claude-lens)
-  --log-dir PATH            Log directory (default: /var/log/claude-lens)
+  --install-dir PATH        Base directory for the binary (default: /usr/local/bin)
+  --data-dir PATH           SQLite database directory (default: /var/lib/claude-lens,
+                             or {--install-dir}/data if --install-dir is set)
+  --log-dir PATH            Log directory (default: /var/log/claude-lens,
+                             or {--install-dir}/logs if --install-dir is set)
+  --as-service              Configure and start claude-lens as a systemd service
+                             (default: off - just downloads/updates the binary)
   -h, --help                Show this help
 USAGE
 }
@@ -43,8 +48,10 @@ CLENS_PROXY_BASE_URL="https://api.anthropic.com"
 CLENS_PROXY_AUTH_TOKEN=""
 CLENS_PROXY_ADDR=":7801"
 CLENS_ADMIN_ADDR=":7802"
-CLENS_DATA_DIR="/var/lib/claude-lens"
-CLENS_LOG_DIR="/var/log/claude-lens"
+CLENS_INSTALL_DIR=""
+CLENS_DATA_DIR=""
+CLENS_LOG_DIR=""
+CLENS_AS_SERVICE="false"
 _CLENS_CUSTOM_HEADERS_ESCAPED=""
 
 # ── Carry forward settings from a previous install, if any ─────────────
@@ -67,10 +74,13 @@ while [ $# -gt 0 ]; do
     --proxy-addr=*) CLENS_PROXY_ADDR="${1#*=}"; shift ;;
     --admin-addr) CLENS_ADMIN_ADDR="$2"; shift 2 ;;
     --admin-addr=*) CLENS_ADMIN_ADDR="${1#*=}"; shift ;;
+    --install-dir) CLENS_INSTALL_DIR="$2"; shift 2 ;;
+    --install-dir=*) CLENS_INSTALL_DIR="${1#*=}"; shift ;;
     --data-dir) CLENS_DATA_DIR="$2"; shift 2 ;;
     --data-dir=*) CLENS_DATA_DIR="${1#*=}"; shift ;;
     --log-dir) CLENS_LOG_DIR="$2"; shift 2 ;;
     --log-dir=*) CLENS_LOG_DIR="${1#*=}"; shift ;;
+    --as-service) CLENS_AS_SERVICE="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -92,6 +102,25 @@ if [ ${#PROXY_CUSTOM_HEADERS_ARR[@]} -gt 0 ]; then
     fi
   done
   _CLENS_CUSTOM_HEADERS_ESCAPED="$headers_escaped"
+fi
+
+# ── Resolve install/data/log directories ─────────────────────────────────
+# --install-dir only changes the fallback for --data-dir/--log-dir when
+# those are left unset; an explicit --data-dir/--log-dir always wins.
+INSTALL_DIR="${CLENS_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+if [ -z "$CLENS_DATA_DIR" ]; then
+  if [ -n "$CLENS_INSTALL_DIR" ]; then
+    CLENS_DATA_DIR="${INSTALL_DIR}/data"
+  else
+    CLENS_DATA_DIR="/var/lib/claude-lens"
+  fi
+fi
+if [ -z "$CLENS_LOG_DIR" ]; then
+  if [ -n "$CLENS_INSTALL_DIR" ]; then
+    CLENS_LOG_DIR="${INSTALL_DIR}/logs"
+  else
+    CLENS_LOG_DIR="/var/log/claude-lens"
+  fi
 fi
 
 if [ "$EUID" -ne 0 ]; then
@@ -121,16 +150,18 @@ else
 fi
 
 # ── Stop and disable if already running/installed ───────────────────────
-if systemctl is-active --quiet "$SERVICE_NAME" || systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-  echo "Existing ${SERVICE_NAME} service detected. Stopping service..."
-  systemctl stop "$SERVICE_NAME" || true
-  systemctl disable "$SERVICE_NAME" || true
-fi
+if [ "$CLENS_AS_SERVICE" = "true" ]; then
+  if systemctl is-active --quiet "$SERVICE_NAME" || systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+    echo "Existing ${SERVICE_NAME} service detected. Stopping service..."
+    systemctl stop "$SERVICE_NAME" || true
+    systemctl disable "$SERVICE_NAME" || true
+  fi
 
-if [ -f "$SERVICE_FILE" ]; then
-  echo "Removing existing service file..."
-  rm -f "$SERVICE_FILE"
-  systemctl daemon-reload
+  if [ -f "$SERVICE_FILE" ]; then
+    echo "Removing existing service file..."
+    rm -f "$SERVICE_FILE"
+    systemctl daemon-reload
+  fi
 fi
 
 echo "Downloading latest ${SERVICE_NAME} binary and checksum..."
@@ -148,12 +179,17 @@ if [ "$expected_sha" != "$actual_sha" ]; then
   exit 1
 fi
 
+mkdir -p "$INSTALL_DIR"
 mv "$tmp_bin" "${INSTALL_DIR}/${SERVICE_NAME}"
 chmod +x "${INSTALL_DIR}/${SERVICE_NAME}"
 
 echo "Preparing data/log directories..."
 mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR" "$CONFIG_DIR"
-chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+if [ "$CLENS_AS_SERVICE" = "true" ]; then
+  chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+else
+  chown -R "${SUDO_USER:-root}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+fi
 
 echo "Writing ${ENV_FILE}..."
 cat <<EOF > "$ENV_FILE"
@@ -161,20 +197,23 @@ CLENS_PROXY_BASE_URL="${CLENS_PROXY_BASE_URL}"
 CLENS_PROXY_AUTH_TOKEN="${CLENS_PROXY_AUTH_TOKEN}"
 CLENS_PROXY_ADDR="${CLENS_PROXY_ADDR}"
 CLENS_ADMIN_ADDR="${CLENS_ADMIN_ADDR}"
+CLENS_INSTALL_DIR="${CLENS_INSTALL_DIR}"
 CLENS_DATA_DIR="${CLENS_DATA_DIR}"
 CLENS_LOG_DIR="${CLENS_LOG_DIR}"
+CLENS_AS_SERVICE="${CLENS_AS_SERVICE}"
 _CLENS_CUSTOM_HEADERS_ESCAPED="${_CLENS_CUSTOM_HEADERS_ESCAPED}"
 EOF
 chmod 600 "$ENV_FILE"
 chown root:root "$ENV_FILE"
 
-headers_env_line=""
-if [ -n "$_CLENS_CUSTOM_HEADERS_ESCAPED" ]; then
-  headers_env_line="Environment=\"CLENS_PROXY_CUSTOM_HEADERS=${_CLENS_CUSTOM_HEADERS_ESCAPED}\""
-fi
+if [ "$CLENS_AS_SERVICE" = "true" ]; then
+  headers_env_line=""
+  if [ -n "$_CLENS_CUSTOM_HEADERS_ESCAPED" ]; then
+    headers_env_line="Environment=\"CLENS_PROXY_CUSTOM_HEADERS=${_CLENS_CUSTOM_HEADERS_ESCAPED}\""
+  fi
 
-echo "Creating systemd service unit..."
-cat <<EOF > "$SERVICE_FILE"
+  echo "Creating systemd service unit..."
+  cat <<EOF > "$SERVICE_FILE"
 [Unit]
 Description=Claude Lens Background Service
 After=network.target
@@ -194,11 +233,16 @@ Group=${SERVICE_GROUP}
 WantedBy=multi-user.target
 EOF
 
-echo "Reloading systemd, enabling, and starting service..."
-systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
+  echo "Reloading systemd, enabling, and starting service..."
+  systemctl daemon-reload
+  systemctl enable "$SERVICE_NAME"
+  systemctl start "$SERVICE_NAME"
 
-echo "${SERVICE_NAME} installed/updated and started successfully!"
-echo "Proxy listening on ${CLENS_PROXY_ADDR}, admin UI on ${CLENS_ADMIN_ADDR}."
-echo "Config saved to ${ENV_FILE} - editing the simple values there and running 'systemctl restart ${SERVICE_NAME}' applies them (custom headers need a re-run of this installer)."
+  echo "${SERVICE_NAME} installed/updated and started as a systemd service!"
+  echo "Proxy listening on ${CLENS_PROXY_ADDR}, admin UI on ${CLENS_ADMIN_ADDR}."
+  echo "Config saved to ${ENV_FILE} - editing the simple values there and running 'systemctl restart ${SERVICE_NAME}' applies them (custom headers need a re-run of this installer)."
+else
+  echo "${SERVICE_NAME} binary installed/updated at ${INSTALL_DIR}/${SERVICE_NAME}."
+  echo "Config saved to ${ENV_FILE}."
+  echo "Re-run this installer with --as-service to configure and start it as a systemd service."
+fi
