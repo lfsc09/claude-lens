@@ -1,6 +1,4 @@
-# claude-lens
-
-### About
+# About
 
 A transparent HTTP proxy that sits between your Claude Code client and an upstream Anthropic API (by default) or another compatible proxy. Every request and response is captured and stored in a local SQLite database, giving you a full audit trail of prompts, completions, token usage, and cost across sessions — with a small admin dashboard to browse it.
 
@@ -8,37 +6,105 @@ A transparent HTTP proxy that sits between your Claude Code client and an upstre
 
 It will add very little latency to your requests (since requests are buffered and only saved after completion), and is designed to be run locally on your machine. It does not require any external services or cloud infrastructure, and does not send any data to any cloud.
 
-### How to use
+## Easy install (scripts)
 
-To route Claude Code traffic through `claude-lens`, set the `ANTHROPIC_BASE_URL` environment variable to `http://localhost:7801`.
+You can run the install script to download the latest release for your OS and architecture, and setup `claude-lens` as a background service.
 
-> If you have another proxy already in use (e.g. LiteLLM), put its URL in `CLENS_PROXY_BASE_URL` instead, and `claude-lens` will forward requests to it.
->
-> Additional Envs like `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_CUSTOM_HEADERS` must be replaced by `CLENS_PROXY_AUTH_TOKEN` and `CLENS_PROXY_CUSTOM_HEADERS`, respectively.
+Also use it to update an existing installation. It will overwrite the existing binary and merge any new configurations, but preserve your database and logs.
 
-### `claude-lens` environment variables
+> This means that you can use the install script to update your configurations and/or the binary without losing your data.
+
+You may provide flags to the install script to customize the Envs.
+
+| Flag | Default | Points to Env |
+|---|---|---|
+| `--proxy-base-url` | `https://api.anthropic.com` | `CLENS_PROXY_BASE_URL` |
+| `--proxy-auth-token` | — | `CLENS_PROXY_AUTH_TOKEN` |
+| `--proxy-custom-header` | — | `CLENS_PROXY_CUSTOM_HEADERS` (repeatable) |
+| `--proxy-addr` | `:7801` | `CLENS_PROXY_ADDR` |
+| `--admin-addr` | `:7802` | `CLENS_ADMIN_ADDR` |
+| `--data-dir` | `/var/lib/claude-lens` | `CLENS_DATA_DIR` |
+| `--log-dir` | `/var/log/claude-lens` | `CLENS_LOG_DIR` |
+
+For Linux:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash
+```
+
+```sh
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash -s -- \
+  --proxy-base-url https://api.anthropic.com \
+  --proxy-auth-token sk-ant-your-token \
+  --proxy-custom-header "X-My-Header: value" \
+  --proxy-custom-header "X-Another-Header: value" \
+  --proxy-addr :7801 \
+  --admin-addr :7802 \
+  --data-dir /var/lib/claude-lens \
+  --log-dir /var/log/claude-lens
+```
+
+For macOS:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash
+```
+
+```sh
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- \
+  --proxy-base-url https://api.anthropic.com \
+  --proxy-auth-token sk-ant-your-token \
+  --proxy-custom-header "X-My-Header: value" \
+  --proxy-custom-header "X-Another-Header: value" \
+  --proxy-addr :7801 \
+  --admin-addr :7802 \
+  --data-dir "$HOME/Library/Application Support/claude-lens" \
+  --log-dir "$HOME/Library/Logs/claude-lens"
+```
+
+## Manual install
+
+You can also download the latest release binary straight from the [releases page](https://github.com/lfsc09/claude-lens/releases), and manually configure the environment variables (see below) to customize behaviour.
+
+To route Claude Code traffic through `claude-lens`, set the `ANTHROPIC_BASE_URL` environment variable in your OS to `http://localhost:7801`.
+
+```sh
+export ANTHROPIC_BASE_URL=http://localhost:7801
+```
+
+### Existing proxy
+
+If you have another proxy already in use (e.g. LiteLLM), feed its envs to `CLENS_*` [environment variables](#claude-lens-available-environment-variables) like:
+
+```sh
+export CLENS_PROXY_BASE_URL=https://your.lite.llmproxy.com
+export CLENS_PROXY_AUTH_TOKEN=your_token
+export CLENS_PROXY_CUSTOM_HEADERS="X-My-Header: value"
+```
+
+## Environment variables
 
 All `claude-lens` configuration is via environment variables. They are all optional to customize behaviour.
 
-They all must be set in OS environment (e.g. `export VAR=value` or a systemd unit's `Environment=`/`EnvironmentFile=`). The `.env` file is only read in development builds (see [Getting started](#getting-started)).
+They all must be set in OS environment. The `.env` file is only read in development builds (see [Getting started](#getting-started)).
 
 | Variable | Default | Description |
 |---|---|---|
-| `CLENS_PROXY_BASE_URL` | `https://api.anthropic.com` | Upstream API URL. Point this at a LiteLLM proxy or any other Anthropic-compatible endpoint. |
-| `CLENS_PROXY_AUTH_TOKEN` | — | If set, replaces the `Authorization` header on every forwarded request. Accepts a raw key or a full `Scheme token` value. |
-| `CLENS_PROXY_CUSTOM_HEADERS` | — | Extra headers injected into every forwarded request, one per line as `Header-Name: value`. |
+| `CLENS_PROXY_BASE_URL` | `https://api.anthropic.com` | Upstream API URL. Point this at a LiteLLM proxy or any other Anthropic-compatible endpoint. Replaces current `ANTHROPIC_BASE_URL` setting. |
+| `CLENS_PROXY_AUTH_TOKEN` | — | If set, replaces the `Authorization` header on every forwarded request. Accepts a raw key or a full `Scheme token` value. Replaces current `ANTHROPIC_AUTH_TOKEN` setting. |
+| `CLENS_PROXY_CUSTOM_HEADERS` | — | Extra headers injected into every forwarded request, one per line as `Header-Name: value`. Replaces current `ANTHROPIC_CUSTOM_HEADERS` setting. |
 | `CLENS_PROXY_ADDR` | `:7801` | Proxy server listen address. |
 | `CLENS_ADMIN_ADDR` | `:7802` | Admin server listen address. |
 | `CLENS_DATA_DIR` | `data` | Where the SQLite database is created. |
 | `CLENS_LOG_DIR` | `logs` | Where the rotating log file is written (5MB × 3 backups). |
 
-### Data and Logs
+## Data and Logs
 
 The SQLite database is created in `CLENS_DATA_DIR` (default `data/`) and is named `claude-lens.db`.
 
 Logs are written to `CLENS_LOG_DIR` (default `logs/`) in a rotating file named `claude-lens.log`. It rotates at 5MB and keeps 3 timestamped backups + 1 active log file - capping total log storage at 20MB.
 
-### How it works
+## How it works
 
 ```mermaid
 graph LR
@@ -56,7 +122,7 @@ graph LR
   Proxy -->|Forward request| API["Upstream API"]
 ```
 
-#### Proxy interceptor
+### Proxy interceptor
 
 Only POST requests are intercepted (GET/PUT/DELETE pass through
 untouched). For each one, the database records:
@@ -82,7 +148,7 @@ storage once the stream completes.
 
 **Prerequisites:** Go 1.26+.
 
-### Installation
+## Installation
 
 Clone the repository and `cd` into it.
 
@@ -109,7 +175,7 @@ Create a `.env` file in the project root, based on `.env.example`, and fill in a
 cp .env.example .env
 ```
 
-### Running
+## Running
 
 Run the project in terminal. For hot reload on file changes, install [air](https://github.com/air-verse/air) once.
 

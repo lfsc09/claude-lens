@@ -48,6 +48,13 @@ jobs:
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
             -o dist/claude-lens-windows-amd64.exe ./cmd/claude-lens
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          for f in claude-lens-linux-amd64 claude-lens-darwin-amd64 claude-lens-windows-amd64.exe; do
+            sha256sum "$f" > "${f}.sha256"
+          done
+
       - name: Create and push Git tag
         run: |
           git config user.name "github-actions[bot]"
@@ -62,7 +69,10 @@ jobs:
           name: "v${{ steps.version.outputs.version }}"
           files: |
             dist/claude-lens-linux-amd64
+            dist/claude-lens-linux-amd64.sha256
             dist/claude-lens-darwin-amd64
+            dist/claude-lens-darwin-amd64.sha256
             dist/claude-lens-windows-amd64.exe
+            dist/claude-lens-windows-amd64.exe.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
