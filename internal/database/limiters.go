@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/lfsc09/claude-lens/internal/status"
 )
 
 // Limiter is a row of the limiters table: a cost cap that blocks proxied
@@ -339,9 +341,11 @@ func timeUntilNextMinute(now time.Time) time.Duration {
 // RunLimiterRefreshLoop refreshes due limiters at the start of every minute
 // until ctx is done, so a limiter recovers on schedule even when no proxied
 // request arrives to trigger the lazy refresh in CheckLimiters/
-// accrueLimiterCost. Meant to be run in its own goroutine for the lifetime
+// accrueLimiterCost. fresh is bumped whenever a limiter actually changes, so
+// the admin SSE stream can push clients a refetch signal even though no
+// exchange was saved. Meant to be run in its own goroutine for the lifetime
 // of the process.
-func (db *DB) RunLimiterRefreshLoop(ctx context.Context) {
+func (db *DB) RunLimiterRefreshLoop(ctx context.Context, fresh *status.Fresh) {
 	logger := slog.Default().With("component", "database")
 
 	timer := time.NewTimer(timeUntilNextMinute(time.Now()))
@@ -356,6 +360,7 @@ func (db *DB) RunLimiterRefreshLoop(ctx context.Context) {
 				logger.Error("refresh due limiters", "error", err)
 			} else if n > 0 {
 				logger.Info("refreshed due limiters", "count", n)
+				fresh.Bump()
 			}
 			timer.Reset(timeUntilNextMinute(time.Now()))
 		}

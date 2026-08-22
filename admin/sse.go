@@ -20,6 +20,7 @@ type ssePayload struct {
 	ProxyStatus      string          `json:"proxy_status"`
 	Totals           database.Totals `json:"totals"`
 	LatestExchangeID int64           `json:"latest_exchange_id"`
+	LimitersVersion  uint64          `json:"limiters_version"`
 }
 
 // sseStream is a Server-Sent Events endpoint pushing live proxy status and
@@ -49,15 +50,16 @@ func (h *handlers) sseStream(w http.ResponseWriter, r *http.Request) {
 	// tick, unlike buildSSEPayload which hits the database. The very first
 	// iteration always pushes so a newly connected client isn't left with
 	// nothing until the next change.
-	var lastVersion uint64
+	var lastVersion, lastLimitersVersion uint64
 	var lastStatus status.Value
 	first := true
 
 	for {
 		version := h.fresh.Version()
+		limitersVersion := h.limitersFresh.Version()
 		current := h.status.Get()
 
-		if first || version != lastVersion || current != lastStatus {
+		if first || version != lastVersion || limitersVersion != lastLimitersVersion || current != lastStatus {
 			payload, err := h.buildSSEPayload(r.Context(), rangeKey)
 			if err != nil {
 				h.logger.Error("failed to build SSE payload", "error", err)
@@ -71,7 +73,7 @@ func (h *handlers) sseStream(w http.ResponseWriter, r *http.Request) {
 					flusher.Flush()
 				}
 			}
-			lastVersion, lastStatus, first = version, current, false
+			lastVersion, lastLimitersVersion, lastStatus, first = version, limitersVersion, current, false
 		}
 
 		select {
@@ -100,6 +102,7 @@ func (h *handlers) buildSSEPayload(ctx context.Context, rangeKey string) (ssePay
 		ProxyStatus:      string(h.status.Get()),
 		Totals:           totals,
 		LatestExchangeID: latestID,
+		LimitersVersion:  h.limitersFresh.Version(),
 	}, nil
 }
 

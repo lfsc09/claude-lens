@@ -26,8 +26,8 @@ type Server struct {
 }
 
 // NewServer builds a Server. See NewHandler for the possible config errors.
-func NewServer(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh) (*Server, error) {
-	h, err := NewHandler(cfg, db, estimator, st, fr)
+func NewServer(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) (*Server, error) {
+	h, err := NewHandler(cfg, db, estimator, st, fr, limitersFresh)
 	if err != nil {
 		return nil, err
 	}

@@ -42,7 +42,7 @@ func TestServer_HealthAndGracefulShutdown(t *testing.T) {
 	}
 
 	cfg := config.Config{AnthropicBaseURL: "http://127.0.0.1:1"}
-	server, err := NewServer(cfg, db, est, st, status.NewFresh())
+	server, err := NewServer(cfg, db, est, st, status.NewFresh(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

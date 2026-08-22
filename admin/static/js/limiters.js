@@ -1,4 +1,4 @@
-import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, pad, fmtSessionId } from './app.js';
+import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad, progressBar, fmtSessionId } from './app.js';
 
 'use strict';
 
@@ -40,8 +40,24 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, pad, fmtSes
   }
 
   function fmtActivePeriod(l) {
-    if (l.active_start_hour == null) return 'Always';
-    return `${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59`;
+    if (l.active_start_hour == null) {
+      if (l.is_active) {
+        return '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Always</span>'
+      }
+      return '<span class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded font-medium">Always</span>'
+    };
+    const isActiveNow = () => {
+      const now = new Date();
+      const hour = now.getHours();
+      if (l.active_start_hour <= l.active_end_hour) {
+        return hour >= l.active_start_hour && hour <= l.active_end_hour;
+      }
+      return hour >= l.active_start_hour || hour <= l.active_end_hour;
+    };
+    if (isActiveNow() && l.is_active) {
+      return `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded font-medium">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
+    }
+    return `<span class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded font-medium">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
   }
 
   function scopeBadge(l) {
@@ -49,17 +65,6 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, pad, fmtSes
       return '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Global</span>';
     }
     return `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded font-medium">${esc(fmtSessionId(l.session_id))}</span>`;
-  }
-
-  function progressBar(l) {
-    const pct = l.limit_amount > 0 ? Math.min(100, (l.current_cost / l.limit_amount) * 100) : 0;
-    const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
-    return `<div class="w-32">
-      <div class="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-        <div class="h-full ${barColor}" style="width:${pct}%"></div>
-      </div>
-      <div class="text-xs text-gray-500 mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
-    </div>`;
   }
 
   function statusToggle(l) {
@@ -73,9 +78,12 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, pad, fmtSes
     return `<tr class="hover:bg-gray-50 transition-colors" data-id="${l.id}">
       <td class="px-4 py-2">${scopeBadge(l)}</td>
       <td class="px-4 py-2">${fmtCost(l.limit_amount)}</td>
-      <td class="px-4 py-2">${progressBar(l)}</td>
-      <td class="px-4 py-2 whitespace-nowrap">${esc(fmtRefresh(l))}</td>
-      <td class="px-4 py-2 whitespace-nowrap">${esc(fmtActivePeriod(l))}</td>
+      <td class="px-4 py-2 w-42">${progressBar(l)}</td>
+      <td class="px-4 py-2 whitespace-nowrap">
+        <div>${esc(fmtRefresh(l))}</div>
+        <div class="text-xs text-gray-400" data-countdown="${l.id}">${esc(fmtCountdown(l.next_refresh_at))}</div>
+      </td>
+      <td class="px-4 py-2 whitespace-nowrap">${fmtActivePeriod(l)}</td>
       <td class="px-4 py-2">${statusToggle(l)}</td>
       <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${fmtTime(l.updated_at)}</td>
       <td class="px-4 py-2 text-right whitespace-nowrap">
@@ -97,6 +105,16 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, pad, fmtSes
 
     limiters.forEach((l) => limitersById.set(String(l.id), l));
     tbody.innerHTML = limiters.map(buildRow).join('');
+  }
+
+  // Recomputes just the countdown text every 30s from already-fetched data,
+  // so it visibly ticks down between actual data changes without a refetch
+  // or a full-table re-render.
+  function tickCountdowns() {
+    tbody.querySelectorAll('[data-countdown]').forEach((el) => {
+      const l = limitersById.get(el.dataset.countdown);
+      if (l) el.textContent = fmtCountdown(l.next_refresh_at);
+    });
   }
 
   function createLimiter(payload) {
@@ -239,5 +257,6 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, pad, fmtSes
   updateAlignedAvailability();
   updateActivePeriodInputs();
   loadLimiters();
-  initNavPolling();
+  initNav(null, { onLimitersChanged: loadLimiters });
+  setInterval(tickCountdowns, 30000);
 })();

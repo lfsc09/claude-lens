@@ -1,4 +1,4 @@
-import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel, fmtCell, fmtThreshold, dayStr, initNav, fmtSessionId } from './app.js';
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, getLevel, fmtCell, fmtThreshold, dayStr, initNav, progressBar, fmtSessionId } from './app.js';
 
 'use strict';
 
@@ -66,7 +66,48 @@ import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel
     setText('total-cost', fmtCost(totals.total_cost));
   }
 
+  // ── Limiters ────────────────────────────────────────────────────────────
+  // Actual limiter data always comes from GET /api/limiters (SSE only
+  // signals "something changed"); kept here so both the global-limiters
+  // section and the per-session table column can render from the same
+  // already-fetched data without duplicate requests.
+  let globalLimiters = [];
+  let limitersBySession = new Map();
+
+  function limiterCard(l) {
+    return `<div class="p-4 bg-white rounded-lg border border-gray-200">
+      ${progressBar(l, 'h-2')}
+      <p class="text-sm text-gray-400 mt-2">${esc(fmtCountdown(l.next_refresh_at))}</p>
+      </div>`;
+  }
+
+  function renderGlobalLimiters() {
+    const container = document.getElementById('global-limiters');
+    if (!container) return;
+    container.innerHTML = globalLimiters.length
+      ? globalLimiters.map(limiterCard).join('')
+      : '<p class="text-gray-400 text-sm">No global limiters configured.</p>';
+  }
+
+  const refreshLimiters = makeAbortable(async (signal) => {
+    const res = await fetch('/api/limiters', { signal });
+    if (!res.ok) return;
+    const limiters = await res.json();
+    globalLimiters = limiters.filter((l) => !l.session_id);
+    limitersBySession = new Map(limiters.filter((l) => l.session_id).map((l) => [l.session_id, l]));
+    renderGlobalLimiters();
+    renderSessionRows();
+  });
+
   // ── Per-session table ─────────────────────────────────────────────────────
+  let lastSessionRows = [];
+
+  function sessionLimiterCell(session) {
+    const l = limitersBySession.get(session.session_id);
+    if (!l) return '<span class="text-gray-300">—</span>';
+    return `${progressBar(l)}<p class="text-xs text-gray-400 mt-1">${esc(fmtCountdown(l.next_refresh_at))}</p>`;
+  }
+
   function buildSessionRow(session) {
     const cacheTok = (session.total_cache_creation_tokens ?? 0) + (session.total_cache_read_tokens ?? 0);
     const inputTok = session.total_input_tokens ?? 0;
@@ -85,18 +126,23 @@ import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel
       <td class="px-4 py-2 text-right text-gray-700">${fmtTokens(totalTok)}</td>
       <td class="px-4 py-2 text-right text-gray-700">${costStr}</td>
       <td class="px-4 py-2 text-gray-400 whitespace-nowrap">${fmtTime(session.last_updated)}</td>
+      <td class="px-4 py-2 whitespace-nowrap text-right w-36">${sessionLimiterCell(session)}</td>
       </tr>`;
+  }
+
+  function renderSessionRows() {
+    const tbody = document.getElementById('session-stats-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = lastSessionRows.length
+      ? lastSessionRows.map(buildSessionRow).join('')
+      : '<tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
   }
 
   const refreshSessionStats = makeAbortable(async (signal) => {
     const res = await fetch('/api/session-stats', { signal });
     if (!res.ok) return;
-    const rows = await res.json();
-    const tbody = document.getElementById('session-stats-tbody');
-    if (!tbody) return;
-    tbody.innerHTML = rows.length
-      ? rows.map(buildSessionRow).join('')
-      : '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
+    lastSessionRows = await res.json();
+    renderSessionRows();
   });
 
   // ── Heatmap ─────────────────────────────────────────────────────────────
@@ -231,6 +277,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel
         refreshSessionStats();
         refreshDailyCosts();
       },
+      onLimitersChanged: refreshLimiters,
     });
   }
 
@@ -262,9 +309,16 @@ import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel
 
   // ── Initial load ──────────────────────────────────────────────────────────
   async function loadDashboard() {
-    await Promise.all([fetchTotals(range), refreshDailyCosts(), refreshSessionStats()]);
+    await Promise.all([fetchTotals(range), refreshDailyCosts(), refreshSessionStats(), refreshLimiters()]);
   }
 
   loadDashboard();
   reconnectNav();
+
+  // Recomputes just the countdown text every 30s from already-fetched data,
+  // so it visibly ticks down between actual data changes without a refetch.
+  setInterval(() => {
+    renderGlobalLimiters();
+    renderSessionRows();
+  }, 30000);
 })();

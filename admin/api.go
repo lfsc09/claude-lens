@@ -17,14 +17,15 @@ import (
 
 // handlers holds the dependencies shared by every admin route.
 type handlers struct {
-	db      *database.DB
-	est     *pricing.Estimator
-	status  *status.Flag
-	fresh   *status.Fresh
-	logger  *slog.Logger
-	version string
-	dbPath  string
-	logPath string
+	db            *database.DB
+	est           *pricing.Estimator
+	status        *status.Flag
+	fresh         *status.Fresh
+	limitersFresh *status.Fresh
+	logger        *slog.Logger
+	version       string
+	dbPath        string
+	logPath       string
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

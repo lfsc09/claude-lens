@@ -69,6 +69,41 @@ export function fmtTime(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/**
+ * Human-readable time remaining until a Unix-seconds timestamp, e.g.
+ * "in 3 mins", "in 2 hrs", "in 5 days".
+ * @param {?number} ts - Target Unix timestamp in seconds.
+ * @returns {string} Countdown text, or '—' when ts is null.
+ */
+export function fmtCountdown(ts) {
+  if (!ts) return '—';
+  const diff = ts - Date.now() / 1000;
+  if (diff <= 0) return 'refreshing…';
+  const mins = Math.round(diff / 60);
+  if (mins < 1) return 'in <1 min';
+  if (mins < 60) return `in ${mins} min${mins === 1 ? '' : 's'}`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `in ${hrs} hr${hrs === 1 ? '' : 's'}`;
+  const days = Math.round(hrs / 24);
+  return `in ${days} day${days === 1 ? '' : 's'}`;
+}
+
+/**
+ * Progress bar + "spent of limit" caption for a limiter's current spend.
+ * @param {{current_cost: number, limit_amount: number}} l - Limiter record.
+ * @returns {string} Progress-bar markup.
+ */
+export function progressBar(l, height = 'h-1.5') {
+  const pct = l.limit_amount > 0 ? Math.min(100, (l.current_cost / l.limit_amount) * 100) : 0;
+  const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+  return `<div class="w-full flex flex-col items-end">
+    <div class="${height} w-full bg-gray-200 rounded-full overflow-hidden">
+      <div class="h-full ${barColor}" style="width:${pct}%"></div>
+    </div>
+    <div class="text-xs text-gray-500 mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
+  </div>`;
+}
+
 export function fmtBytes(bytes) {
   if (bytes == null) return '—';
   if (bytes < 1024) return `${bytes} Bytes`;
@@ -262,22 +297,28 @@ export function updateProxyStatusBadge(statusValue) {
 
 /**
  * Wires the nav's proxy-status badge on every page and, when given handlers,
- * forwards SSE-pushed totals/new-exchange events to the calling page.
- * onNewExchange only fires when latest_exchange_id actually increases, so
- * pages don't each need their own dedup bookkeeping.
+ * forwards SSE-pushed totals/new-exchange/limiters-changed events to the
+ * calling page. onNewExchange/onLimitersChanged only fire when their
+ * respective version fields actually increase, so pages don't each need
+ * their own dedup bookkeeping.
  * @param {?string} range - Dashboard range key to scope totals to, or null.
- * @param {{onTotals?: Function, onNewExchange?: Function}} [handlers] - Optional event callbacks.
+ * @param {{onTotals?: Function, onNewExchange?: Function, onLimitersChanged?: Function}} [handlers] - Optional event callbacks.
  * @returns {EventSource} The underlying SSE connection, for closing on range change.
  */
 export function initNav(range, handlers = {}) {
-  const { onTotals, onNewExchange } = handlers;
+  const { onTotals, onNewExchange, onLimitersChanged } = handlers;
   let knownLatestId = 0;
+  let knownLimitersVersion = 0;
   return connectSSE(range, (data) => {
     updateProxyStatusBadge(data.proxy_status);
     if (data.totals && typeof onTotals === 'function') onTotals(data.totals);
     if (data.latest_exchange_id && data.latest_exchange_id > knownLatestId) {
       knownLatestId = data.latest_exchange_id;
       if (typeof onNewExchange === 'function') onNewExchange(data.latest_exchange_id);
+    }
+    if (data.limiters_version && data.limiters_version > knownLimitersVersion) {
+      knownLimitersVersion = data.limiters_version;
+      if (typeof onLimitersChanged === 'function') onLimitersChanged(data.limiters_version);
     }
   });
 }

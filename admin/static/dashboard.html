@@ -82,6 +82,14 @@
       </div>
     </section>
 
+    <!-- ── Global limiters ─────────────────────────────────────────────── -->
+    <h2 class="text-base font-semibold mb-3">Global limiters</h2>
+    <section aria-label="Global limiters" class="mb-10">
+      <div id="global-limiters" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <p class="text-gray-400 text-sm">Loading…</p>
+      </div>
+    </section>
+
     <!-- ── Per-session table ───────────────────────────────────────────── -->
     <h2 class="text-base font-semibold mb-3">By session</h2>
     <section aria-label="By session" class="overflow-x-auto mb-10 bg-white rounded-lg border border-gray-200">
@@ -96,11 +104,12 @@
             <th class="font-medium text-right px-4 py-2">Total tokens</th>
             <th class="font-medium text-right px-4 py-2">Cost</th>
             <th class="font-medium px-4 py-2">Last activity</th>
+            <th class="font-medium text-right px-4 py-2">Limiter</th>
           </tr>
         </thead>
         <tbody id="session-stats-tbody" class="divide-y divide-gray-100">
           <tr>
-            <td colspan="8" class="text-center text-gray-400 px-4 py-8">Loading…</td>
+            <td colspan="9" class="text-center text-gray-400 px-4 py-8">Loading…</td>
           </tr>
         </tbody>
       </table>

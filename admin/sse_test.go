@@ -81,7 +81,7 @@ func TestSSEStream_PushesOnConnectThenOnlyOnChange(t *testing.T) {
 	sseInterval = 30 * time.Millisecond
 	defer func() { sseInterval = old }()
 
-	s, db, st, fresh := newTestServerWithStatus(t)
+	s, db, st, fresh, limitersFresh := newTestServerWithStatus(t)
 	if err := db.SaveExchange(context.Background(), database.Exchange{
 		SessionID: "s1", Path: "/p", Timestamp: float64(time.Now().Unix()), RawRequest: "{}", RawResponse: "{}",
 	}); err != nil {
@@ -145,6 +145,19 @@ func TestSSEStream_PushesOnConnectThenOnlyOnChange(t *testing.T) {
 	if afterStatus.ProxyStatus != "ok" {
 		t.Errorf("afterStatus: ProxyStatus = %q, want ok", afterStatus.ProxyStatus)
 	}
+
+	// Quiet again after the status-triggered push.
+	events.expectQuiet(t, 200*time.Millisecond)
+
+	// A limiter refresh (background loop or request path) bumps
+	// limitersFresh independently of both fresh and status — the stream
+	// should push a payload carrying the new LimitersVersion even though
+	// neither ProxyStatus nor LatestExchangeID changed.
+	limitersFresh.Bump()
+	afterLimiters := events.next(t, time.Second)
+	if afterLimiters.LimitersVersion != 1 {
+		t.Errorf("afterLimiters: LimitersVersion = %d, want 1", afterLimiters.LimitersVersion)
+	}
 }
 
 func TestSSEStream_ReflectsStatusChanges(t *testing.T) {
@@ -159,7 +172,7 @@ func TestSSEStream_ReflectsStatusChanges(t *testing.T) {
 	defer db.Close()
 
 	st := status.New()
-	h := &handlers{db: db, status: st}
+	h := &handlers{db: db, status: st, limitersFresh: status.NewFresh()}
 	ctx := context.Background()
 
 	p1, err := h.buildSSEPayload(ctx, "")
@@ -190,7 +203,7 @@ func TestBuildSSEPayload_RangeFiltersTotals(t *testing.T) {
 	}
 	defer db.Close()
 
-	h := &handlers{db: db, status: status.New()}
+	h := &handlers{db: db, status: status.New(), limitersFresh: status.NewFresh()}
 	ctx := context.Background()
 
 	recentTok, midOldTok := 111, 222

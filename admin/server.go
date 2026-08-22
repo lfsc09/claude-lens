@@ -33,9 +33,9 @@ type Server struct {
 // rooted at "static" — a build-time invariant, not a runtime condition —
 // so that's treated as fatal rather than something the caller can
 // meaningfully recover from at startup.
-func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, version, dbPath, logDir string) (*Server, error) {
+func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir string) (*Server, error) {
 	logger := slog.Default().With("component", "admin")
-	h := &handlers{db: db, est: est, status: st, fresh: fr, logger: logger, version: version, dbPath: dbPath, logPath: logging.FilePath(logDir)}
+	h := &handlers{db: db, est: est, status: st, fresh: fr, limitersFresh: limitersFresh, logger: logger, version: version, dbPath: dbPath, logPath: logging.FilePath(logDir)}
 
 	staticContent, err := fs.Sub(staticFS, "static")
 	if err != nil {

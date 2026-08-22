@@ -50,6 +50,7 @@ type Handler struct {
 	estimator     *pricing.Estimator
 	status        *status.Flag
 	fresh         *status.Fresh
+	limitersFresh *status.Fresh
 	customHeaders map[string]string
 	target        *url.URL
 	rp            *httputil.ReverseProxy
@@ -64,7 +65,7 @@ type Handler struct {
 
 // NewHandler builds a Handler. It fails only if
 // CLENS_PROXY_CUSTOM_HEADERS or CLENS_PROXY_BASE_URL is malformed.
-func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh) (*Handler, error) {
+func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) (*Handler, error) {
 	customHeaders, err := ParseCustomHeaders(cfg.AnthropicCustomHeaders)
 	if err != nil {
 		return nil, err
@@ -81,6 +82,7 @@ func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator
 		estimator:     estimator,
 		status:        st,
 		fresh:         fr,
+		limitersFresh: limitersFresh,
 		customHeaders: customHeaders,
 		target:        target,
 		logger:        slog.Default().With("component", "proxy"),
@@ -302,6 +304,7 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 		return
 	}
 	h.fresh.Bump()
+	h.limitersFresh.Bump()
 }
 
 func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error) {

@@ -20,15 +20,16 @@ import (
 
 func newTestServer(t *testing.T) (*Server, *database.DB) {
 	t.Helper()
-	s, db, _, _ := newTestServerWithStatus(t)
+	s, db, _, _, _ := newTestServerWithStatus(t)
 	return s, db
 }
 
 // newTestServerWithStatus is like newTestServer but also hands back the
-// *status.Flag and *status.Fresh wired into the server, so a test can drive
-// SSE push conditions (proxy status changes, fresh-exchange signals)
-// directly instead of only through the HTTP surface.
-func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag, *status.Fresh) {
+// *status.Flag and the two *status.Fresh instances wired into the server, so
+// a test can drive SSE push conditions (proxy status changes, fresh-exchange
+// signals, limiter-refresh signals) directly instead of only through the
+// HTTP surface.
+func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag, *status.Fresh, *status.Fresh) {
 	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -43,12 +44,13 @@ func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag,
 
 	st := status.New()
 	fresh := status.NewFresh()
+	limitersFresh := status.NewFresh()
 	tmpDir := t.TempDir()
-	s, err := NewServer(db, est, st, fresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir)
+	s, err := NewServer(db, est, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	return s, db, st, fresh
+	return s, db, st, fresh, limitersFresh
 }
 
 func doJSON(t *testing.T, s *Server, method, path string, body any) *httptest.ResponseRecorder {

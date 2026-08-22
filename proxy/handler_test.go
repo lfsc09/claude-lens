@@ -35,7 +35,7 @@ func newTestHandler(t *testing.T, upstreamURL string) (*Handler, *database.DB) {
 	}
 
 	cfg := config.Config{AnthropicBaseURL: upstreamURL}
-	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh())
+	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -182,6 +182,52 @@ func TestNonStreamingPOST_SavesExchangeWithCost(t *testing.T) {
 	}
 	if matchedPrice.Prefix != "claude-sonnet-5" {
 		t.Errorf("MatchedPrice.Prefix = %q, want claude-sonnet-5", matchedPrice.Prefix)
+	}
+}
+
+// TestNonStreamingPOST_BumpsLimitersFresh proves every successful save also
+// bumps limitersFresh, not just fresh — CheckLimiters/accrueLimiterCost run
+// on every request, so the admin SSE stream must be able to notice a
+// request-triggered limiter change without waiting on the background
+// refresh loop.
+func TestNonStreamingPOST_BumpsLimitersFresh(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":10}}`)
+	}))
+	defer upstream.Close()
+
+	h, db := newTestHandler(t, upstream.URL)
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	if v := h.limitersFresh.Version(); v != 0 {
+		t.Fatalf("limitersFresh.Version() before request = %d, want 0", v)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-session-id", "sess-limiters")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	waitForExchangeCount(t, db, "sess-limiters", 1)
+	// The exchange row and the fresh/limitersFresh bumps happen sequentially
+	// in the same background goroutine, but landing in the DB (what
+	// waitForExchangeCount polls for) doesn't guarantee the goroutine has
+	// reached the Bump() calls a few instructions later — so poll here too
+	// instead of asserting immediately.
+	deadline := time.Now().Add(2 * time.Second)
+	for h.limitersFresh.Version() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if v := h.limitersFresh.Version(); v == 0 {
+		t.Errorf("limitersFresh.Version() after save = %d, want > 0", v)
 	}
 }
 
@@ -372,7 +418,7 @@ func TestAuthTokenAndCustomHeaders_AreInjectedUpstream(t *testing.T) {
 		AnthropicAuthToken:     "sk-test-token",
 		AnthropicCustomHeaders: "X-Team: platform",
 	}
-	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh())
+	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -405,7 +451,7 @@ func TestUpstreamUnreachable_Returns502(t *testing.T) {
 	st := status.New()
 	// Port 1 is not something a fake upstream will ever be listening on.
 	cfg := config.Config{AnthropicBaseURL: "http://127.0.0.1:1"}
-	h, err := NewHandler(cfg, db, est, st, status.NewFresh())
+	h, err := NewHandler(cfg, db, est, st, status.NewFresh(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}

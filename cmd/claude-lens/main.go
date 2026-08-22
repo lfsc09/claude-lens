@@ -47,14 +47,15 @@ func main() {
 
 	st := status.New()
 	fresh := status.NewFresh()
+	limitersFresh := status.NewFresh()
 
-	proxySrv, err := proxy.NewServer(cfg, db, est, st, fresh)
+	proxySrv, err := proxy.NewServer(cfg, db, est, st, fresh, limitersFresh)
 	if err != nil {
 		slog.Error("failed to build proxy server", "error", err)
 		os.Exit(1)
 	}
 
-	adminSrv, err := admin.NewServer(db, est, st, fresh, Version, cfg.DBPath, cfg.LogDir)
+	adminSrv, err := admin.NewServer(db, est, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir)
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
 		os.Exit(1)
@@ -81,7 +82,7 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		db.RunLimiterRefreshLoop(ctx)
+		db.RunLimiterRefreshLoop(ctx, limitersFresh)
 	}()
 
 	<-ctx.Done()
