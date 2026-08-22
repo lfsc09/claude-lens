@@ -1,4 +1,4 @@
-import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, makeAbortable } from './app.js';
+import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, makeAbortable, makeDialogMessage } from './app.js';
 
 'use strict';
 
@@ -46,29 +46,13 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
   }
 
   // ── Delete (Clear session) ────────────────────────────────────────────
-  const DIALOG_MESSAGE_STYLES = {
+  // Shows the "session may still be active" warning and any error the
+  // DELETE call comes back with, so failures are visible in the UI instead
+  // of only in the console.
+  const setDialogMessage = makeDialogMessage('delete-dialog-message', {
     warning: ['text-amber-700', 'bg-amber-50', 'border-amber-200'],
     error: ['text-red-700', 'bg-red-50', 'border-red-200'],
-  };
-
-  /**
-   * Shared message area inside the delete dialog: shows the "session may
-   * still be active" warning and any error the DELETE call comes back with,
-   * so failures are visible in the UI instead of only in the console.
-   */
-  function setDialogMessage(type, text) {
-    const el = document.getElementById('delete-dialog-message');
-    if (!el) return;
-    Object.values(DIALOG_MESSAGE_STYLES).forEach((cls) => el.classList.remove(...cls));
-    if (!text) {
-      el.classList.add('hidden');
-      el.textContent = '';
-      return;
-    }
-    el.classList.remove('hidden');
-    el.classList.add(...DIALOG_MESSAGE_STYLES[type]);
-    el.textContent = text;
-  }
+  });
 
   function setDeleteSessionOption(sessionID, sessionActive) {
     const currentSessionID = sessionID || '';

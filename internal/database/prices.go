@@ -29,6 +29,8 @@ type Price struct {
 	UpdatedAt      float64 `json:"updated_at"`
 }
 
+const priceColumns = `id, model_prefix, rule, rule_tokens, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, created_at, updated_at`
+
 // defaultPrices seeds model_prices on first run. Cache write/read rates
 // follow Anthropic's standard multipliers (1.25x input for a 5-minute-TTL
 // cache write, 0.1x input for a cache read). All seeded as "over 0" so each
@@ -62,10 +64,7 @@ func (db *DB) seedDefaultPrices(ctx context.Context) error {
 // creation order (oldest rule first) so callers can group by prefix and
 // walk each group in insertion order.
 func (db *DB) ListPrices(ctx context.Context) ([]Price, error) {
-	rows, err := db.sql.QueryContext(ctx,
-		`SELECT id, model_prefix, rule, rule_tokens, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, created_at, updated_at
-		 FROM model_prices ORDER BY model_prefix, created_at`,
-	)
+	rows, err := db.sql.QueryContext(ctx, `SELECT `+priceColumns+` FROM model_prices ORDER BY model_prefix, created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +85,8 @@ func (db *DB) ListPrices(ctx context.Context) ([]Price, error) {
 // exist.
 func (db *DB) GetPrice(ctx context.Context, id int64) (*Price, error) {
 	var p Price
-	err := db.sql.QueryRowContext(ctx,
-		`SELECT id, model_prefix, rule, rule_tokens, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, created_at, updated_at
-		 FROM model_prices WHERE id = ?`,
-		id,
-	).Scan(&p.ID, &p.Prefix, &p.Rule, &p.RuleTokens, &p.InputPerM, &p.OutputPerM, &p.CacheWritePerM, &p.CacheReadPerM, &p.CreatedAt, &p.UpdatedAt)
+	err := db.sql.QueryRowContext(ctx, `SELECT `+priceColumns+` FROM model_prices WHERE id = ?`, id).
+		Scan(&p.ID, &p.Prefix, &p.Rule, &p.RuleTokens, &p.InputPerM, &p.OutputPerM, &p.CacheWritePerM, &p.CacheReadPerM, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

@@ -30,6 +30,12 @@ type Limiter struct {
 	IsActive        bool    `json:"is_active"`
 	CreatedAt       float64 `json:"created_at"`
 	UpdatedAt       float64 `json:"updated_at"`
+
+	// WithinActivePeriod reports whether ActiveStartHour/ActiveEndHour
+	// currently covers the server's local time. Not persisted — callers that
+	// return a Limiter to the client set it via WithinActivePeriodNow so the
+	// UI can render "active now" using server time instead of the browser's.
+	WithinActivePeriod bool `json:"within_active_period"`
 }
 
 const limiterColumns = `id, session_id, limit_amount, current_cost, refresh_value, refresh_unit, refresh_aligned,
@@ -212,6 +218,15 @@ func withinActivePeriod(l Limiter, now time.Time) bool {
 	return hour >= start || hour <= end
 }
 
+// WithinActivePeriodNow reports whether l's active-period hour range covers
+// the current server-local time. Exported for API responses (see
+// Limiter.WithinActivePeriod) so the client renders "active now" using
+// server time rather than replicating this check in the browser's own
+// timezone.
+func WithinActivePeriodNow(l Limiter) bool {
+	return withinActivePeriod(l, time.Now())
+}
+
 // ComputeNextRefresh returns the next refresh boundary for a limiter's
 // refresh settings, strictly after now. Aligned mode is only meaningful for
 // the six combos in alignedRefreshCombos (validated at the API layer); any
@@ -367,15 +382,14 @@ func (db *DB) RunLimiterRefreshLoop(ctx context.Context, fresh *status.Fresh) {
 	}
 }
 
-// CheckLimiters reports whether a request for sessionID should be blocked:
-// true if any applicable, active, currently-in-window limiter has already
-// reached its LimitAmount. Refresh boundaries due by now are applied (and
-// persisted) as a side effect, so a limiter that was due to reset gets a
-// fresh window before being judged.
-func (db *DB) CheckLimiters(ctx context.Context, sessionID string) (bool, *Limiter, error) {
+// refreshApplicableLimiters returns every limiter governing sessionID (see
+// applicableLimiters), lazily applying and persisting any refresh boundary
+// already due. Shared by CheckLimiters and accrueLimiterCost so a due
+// refresh is applied identically regardless of which one observes it first.
+func (db *DB) refreshApplicableLimiters(ctx context.Context, sessionID string) ([]Limiter, error) {
 	limiters, err := db.applicableLimiters(ctx, sessionID)
 	if err != nil {
-		return false, nil, err
+		return nil, err
 	}
 
 	now := time.Now()
@@ -383,9 +397,27 @@ func (db *DB) CheckLimiters(ctx context.Context, sessionID string) (bool, *Limit
 		l := &limiters[i]
 		if refreshIfDue(l, now) {
 			if err := db.persistLimiterProgress(ctx, *l, float64(now.Unix())); err != nil {
-				return false, nil, err
+				return nil, fmt.Errorf("refresh limiter %d: %w", l.ID, err)
 			}
 		}
+	}
+	return limiters, nil
+}
+
+// CheckLimiters reports whether a request for sessionID should be blocked:
+// true if any applicable, active, currently-in-window limiter has already
+// reached its LimitAmount. Refresh boundaries due by now are applied (and
+// persisted) as a side effect, so a limiter that was due to reset gets a
+// fresh window before being judged.
+func (db *DB) CheckLimiters(ctx context.Context, sessionID string) (bool, *Limiter, error) {
+	limiters, err := db.refreshApplicableLimiters(ctx, sessionID)
+	if err != nil {
+		return false, nil, err
+	}
+
+	now := time.Now()
+	for i := range limiters {
+		l := &limiters[i]
 		if l.IsActive && withinActivePeriod(*l, now) && l.CurrentCost >= l.LimitAmount {
 			blocked := *l
 			return true, &blocked, nil
@@ -398,7 +430,7 @@ func (db *DB) CheckLimiters(ctx context.Context, sessionID string) (bool, *Limit
 // window limiter's running total. A limiter that is inactive or outside
 // its active period right now simply doesn't track this request at all.
 func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost float64) error {
-	limiters, err := db.applicableLimiters(ctx, sessionID)
+	limiters, err := db.refreshApplicableLimiters(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -406,7 +438,6 @@ func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost floa
 	now := time.Now()
 	for i := range limiters {
 		l := &limiters[i]
-		refreshIfDue(l, now)
 		if !l.IsActive || !withinActivePeriod(*l, now) {
 			continue
 		}

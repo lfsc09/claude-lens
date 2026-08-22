@@ -1,4 +1,4 @@
-import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, getLevel, fmtCell, fmtThreshold, dayStr, initNav, progressBar, fmtSessionId } from './app.js';
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod } from './app.js';
 
 'use strict';
 
@@ -77,7 +77,10 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   function limiterCard(l) {
     return `<div class="p-4 bg-white rounded-lg border border-gray-200">
       ${progressBar(l, 'h-2')}
-      <p class="text-sm text-gray-400 mt-2">${esc(fmtCountdown(l.next_refresh_at))}</p>
+      <div class="flex justify-between items-center mt-4">
+        <span class="text-xs text-gray-400">${esc(l.within_active_period && l.is_active ? fmtCountdown(l.next_refresh_at) : 'currently inactive')}</span>
+        <span class="text-xs">${fmtActivePeriod(l)}</span>
+      </div>
       </div>`;
   }
 
@@ -105,7 +108,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   function sessionLimiterCell(session) {
     const l = limitersBySession.get(session.session_id);
     if (!l) return '<span class="text-gray-300">—</span>';
-    return `${progressBar(l)}<p class="text-xs text-gray-400 mt-1">${esc(fmtCountdown(l.next_refresh_at))}</p>`;
+    return `${progressBar(l)}<p class="text-xs text-gray-400 mt-1">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</p>`;
   }
 
   function buildSessionRow(session) {
@@ -147,6 +150,49 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
 
   // ── Heatmap ─────────────────────────────────────────────────────────────
   let dailyCosts = [];
+
+  function dayStr(date) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  /**
+   * Buckets a daily cost into one of 5 heatmap levels using thresholds
+   * relative to the max cost across the visible range.
+   * @param {number} cost - This day's cost.
+   * @param {number} maxCost - Maximum daily cost across the visible range.
+   * @param {number} lowThreshold - Upper bound of level 1.
+   * @param {number} midThreshold - Upper bound of level 2.
+   * @param {number} highThreshold - Upper bound of level 3.
+   * @returns {number} Heatmap level from 0 (no activity) to 4 (highest).
+   */
+  function getLevel(cost, maxCost, lowThreshold, midThreshold, highThreshold) {
+    if (!cost || cost === 0 || maxCost === 0) return 0;
+    if (cost < lowThreshold) return 1;
+    if (cost < midThreshold) return 2;
+    if (cost < highThreshold) return 3;
+    return 4;
+  }
+
+  /**
+   * Adaptive precision up to 2 decimals, then 0 decimals for larger values.
+   * @param {number} cost - Cost to format.
+   * @returns {string} Formatted cost (e.g. "~$0.00" for sub-cent, "" for zero).
+   */
+  function fmtCell(cost) {
+    if (!cost || cost === 0) return '';
+    if (cost < 0.01) return `~$${cost.toFixed(2)}`;
+    if (cost < 10) return `$${cost.toFixed(2)}`;
+    if (cost < 100) return `$${cost.toFixed(1)}`;
+    if (cost > 999) return `(╯°□°)╯`;
+    return `$${cost.toFixed(0)}`;
+  }
+
+  function fmtThreshold(v) {
+    if (v < 0.0001) return `$${v.toFixed(6)}`;
+    if (v < 0.01) return `$${v.toFixed(4)}`;
+    if (v < 1) return `$${v.toFixed(3)}`;
+    return `$${v.toFixed(2)}`;
+  }
 
   function renderHeatmap() {
     const container = document.getElementById('cost-heatmap');
@@ -282,13 +328,17 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   }
 
   // ── Filter switching (SPA-style, no full page reload) ──────────────────────
-  function switchRange(newRange) {
-    if (!RANGES.includes(newRange) || newRange === range) return;
+  function applyRange(newRange) {
     range = newRange;
-    history.pushState(null, '', '/?range=' + encodeURIComponent(range));
     updateDateLabels();
     fetchTotals(range);
     reconnectNav();
+  }
+
+  function switchRange(newRange) {
+    if (!RANGES.includes(newRange) || newRange === range) return;
+    applyRange(newRange);
+    history.pushState(null, '', '/?range=' + encodeURIComponent(range));
   }
 
   if (select) {
@@ -300,11 +350,8 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     let rangeParam = searchParams.get('range');
     if (!RANGES.includes(rangeParam)) rangeParam = DEFAULT_RANGE;
     if (rangeParam === range) return;
-    range = rangeParam;
-    if (select) select.value = range;
-    updateDateLabels();
-    fetchTotals(range);
-    reconnectNav();
+    if (select) select.value = rangeParam;
+    applyRange(rangeParam);
   });
 
   // ── Initial load ──────────────────────────────────────────────────────────

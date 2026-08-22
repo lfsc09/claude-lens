@@ -1,4 +1,4 @@
-import { debounce, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashStr, initNavPolling, prettyJSON, randomId, valueToStr } from './app.js';
+import { debounce, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashStr, initNavPolling, prettyJSON, randomId, ruleText, valueToStr } from './app.js';
 
 'use strict';
 
@@ -24,10 +24,6 @@ import { debounce, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashS
   if (backLink) backLink.addEventListener('click', goBackToExchanges);
   const notFoundBackLink = document.getElementById('not-found-back-link');
   if (notFoundBackLink) notFoundBackLink.addEventListener('click', goBackToExchanges);
-
-  function ruleText(price) {
-    return price.rule === 'under' ? `≤ ${fmtInt(price.rule_tokens)}` : `> ${fmtInt(price.rule_tokens)}`;
-  }
 
   /**
    * Adds index/number/hash/content_text/content_bytes derived fields to each
@@ -59,7 +55,7 @@ import { debounce, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, fmtTime, hashS
     exchange.input_messages_bytes = estimateBytes(exchange.input_messages);
     exchange.input_messages = await deriveInputMessages(JSON.parse(exchange.input_messages || '[]'));
     exchange.input_messages_length = exchange.input_messages.length;
-    exchange.input = exchange.input_messages?.at(-1) || null;
+    exchange.input = exchange.input_messages.at(-1) || null;
     exchange.output_bytes = estimateBytes(exchange.output_text);
     return exchange;
   }

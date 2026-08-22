@@ -63,6 +63,15 @@ export function fmtCost(c) {
   return `$${c < 0.01 && c > 0 ? c.toFixed(4) : c.toFixed(2)}`;
 }
 
+/**
+ * Describes a price rule's token boundary, e.g. "≤ 1,000" or "> 1,000".
+ * @param {{rule: string, rule_tokens: number}} price - Price rule record.
+ * @returns {string} Human-readable rule text.
+ */
+export function ruleText(price) {
+  return price.rule === 'under' ? `≤ ${fmtInt(price.rule_tokens)}` : `> ${fmtInt(price.rule_tokens)}`;
+}
+
 export function fmtTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
@@ -89,6 +98,21 @@ export function fmtCountdown(ts) {
 }
 
 /**
+ * Formats a limiter's active period as HTML.
+ * @param {{active_start_hour: number|null, active_end_hour: number|null, is_active: boolean, within_active_period: boolean}} l - Limiter record.
+ * @returns {string} HTML markup for the active period badge.
+ */
+export function fmtActivePeriod(l) {
+  if (l.active_start_hour == null) {
+    return l.is_active
+      ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Always</span>'
+      : '<span class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded font-medium">Always</span>';
+  }
+  const color = l.within_active_period && l.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-50 text-gray-400';
+  return `<span class="px-1.5 py-0.5 ${color} rounded font-medium">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
+}
+
+/**
  * Progress bar + "spent of limit" caption for a limiter's current spend.
  * @param {{current_cost: number, limit_amount: number}} l - Limiter record.
  * @returns {string} Progress-bar markup.
@@ -98,7 +122,7 @@ export function progressBar(l, height = 'h-1.5') {
   const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
   return `<div class="w-full flex flex-col items-end">
     <div class="${height} w-full bg-gray-200 rounded-full overflow-hidden">
-      <div class="h-full ${barColor}" style="width:${pct}%"></div>
+      <div class="h-full ${l.within_active_period && l.is_active ? barColor : 'bg-gray-400'}" style="width:${pct}%"></div>
     </div>
     <div class="text-xs text-gray-500 mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
   </div>`;
@@ -167,49 +191,6 @@ export function tokensTooltip(row) {
   if (row.cache_creation_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache create:</b><span>${fmtTokens(row.cache_creation_tokens)}</span></div>`);
   if (row.cache_read_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache read:</b><span>${fmtTokens(row.cache_read_tokens)}</span></div>`);
   return parts.length ? '<div class="w-32 flex flex-col gap-0.5">' + parts.join('') + '</div>' : '';
-}
-
-export function dayStr(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/**
- * Buckets a daily cost into one of 5 heatmap levels using thresholds
- * relative to the max cost across the visible range.
- * @param {number} cost - This day's cost.
- * @param {number} maxCost - Maximum daily cost across the visible range.
- * @param {number} lowThreshold - Upper bound of level 1.
- * @param {number} midThreshold - Upper bound of level 2.
- * @param {number} highThreshold - Upper bound of level 3.
- * @returns {number} Heatmap level from 0 (no activity) to 4 (highest).
- */
-export function getLevel(cost, maxCost, lowThreshold, midThreshold, highThreshold) {
-  if (!cost || cost === 0 || maxCost === 0) return 0;
-  if (cost < lowThreshold) return 1;
-  if (cost < midThreshold) return 2;
-  if (cost < highThreshold) return 3;
-  return 4;
-}
-
-/**
- * Adaptive precision up to 2 decimals, then 0 decimals for larger values.
- * @param {number} cost - Cost to format.
- * @returns {string} Formatted cost (e.g. "~$0.00" for sub-cent, "" for zero).
- */
-export function fmtCell(cost) {
-  if (!cost || cost === 0) return '';
-  if (cost < 0.01) return `~$${cost.toFixed(2)}`;
-  if (cost < 10) return `$${cost.toFixed(2)}`;
-  if (cost < 100) return `$${cost.toFixed(1)}`;
-  if (cost > 999) return `(╯°□°)╯`;
-  return `$${cost.toFixed(0)}`;
-}
-
-export function fmtThreshold(v) {
-  if (v < 0.0001) return `$${v.toFixed(6)}`;
-  if (v < 0.01) return `$${v.toFixed(4)}`;
-  if (v < 1) return `$${v.toFixed(3)}`;
-  return `$${v.toFixed(2)}`;
 }
 
 // Single floating tooltip driven by [data-tip] elements: one fixed-position
@@ -390,5 +371,58 @@ export function debounce(fn, delayMs = 200) {
   return (...args) => {
     clearTimeout(timer);
     timer = setTimeout(() => fn(...args), delayMs);
+  };
+}
+
+/**
+ * POSTs payload as JSON. Returns the raw Response for the caller to check
+ * ok/status and read the body.
+ * @param {string} url - Request URL.
+ * @param {object} payload - Body to JSON-encode.
+ * @returns {Promise<Response>} The fetch response.
+ */
+export function postJSON(url, payload) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * PUTs payload as JSON. Returns the raw Response for the caller to check
+ * ok/status and read the body.
+ * @param {string} url - Request URL.
+ * @param {object} payload - Body to JSON-encode.
+ * @returns {Promise<Response>} The fetch response.
+ */
+export function putJSON(url, payload) {
+  return fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Builds a setDialogMessage(type, text) function for one dialog: shows text
+ * styled per type, or hides the element when text is falsy.
+ * @param {string} elementId - Id of the message element inside the dialog.
+ * @param {Object<string, string[]>} styles - classList to apply per type.
+ * @returns {function(?string, string): void} setDialogMessage(type, text).
+ */
+export function makeDialogMessage(elementId, styles) {
+  return function setDialogMessage(type, text) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    Object.values(styles).forEach((cls) => el.classList.remove(...cls));
+    if (!text) {
+      el.classList.add('hidden');
+      el.textContent = '';
+      return;
+    }
+    el.classList.remove('hidden');
+    el.classList.add(...styles[type]);
+    el.textContent = text;
   };
 }

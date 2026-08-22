@@ -1,4 +1,4 @@
-import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
+import { esc, extractErrorMessage, fmtInt, fmtTime, initNavPolling, makeDialogMessage, postJSON, putJSON, ruleText } from './app.js';
 
 'use strict';
 
@@ -12,14 +12,6 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
   const rowsById = new Map();
   const pricesById = new Map();
   const dirtyIds = new Set();
-
-  function fmtInt(n) {
-    return Number(n).toLocaleString();
-  }
-
-  function ruleText(price) {
-    return price.rule === 'under' ? `≤ ${fmtInt(price.rule_tokens)}` : `> ${fmtInt(price.rule_tokens)}`;
-  }
 
   // ── Shadow resolution sweep ──────────────────────────────────────────
   function ruleMatches(rule, x) {
@@ -240,22 +232,6 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
     return values;
   }
 
-  function createPrice(payload) {
-    return fetch('/api/prices', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  }
-
-  function putPrice(id, values) {
-    return fetch(`/api/prices/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(values),
-    });
-  }
-
   async function deletePrice(id, label) {
     if (!confirm(`Delete price rule for ${label}?`)) return;
     await fetch(`/api/prices/${id}`, { method: 'DELETE' });
@@ -334,7 +310,7 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
     const ids = Array.from(dirtyIds);
     const outcomes = await Promise.allSettled(ids.map(async (id) => {
       const row = rowsById.get(id);
-      const res = await putPrice(id, readRowValues(row));
+      const res = await putJSON(`/api/prices/${id}`, readRowValues(row));
       if (!res.ok) throw new Error(await extractErrorMessage(res, `Failed to save row ${id}.`));
       return { id, row };
     }));
@@ -419,21 +395,9 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
   document.getElementById('price-changes-save')?.addEventListener('click', saveAllChanges);
   document.getElementById('price-changes-discard')?.addEventListener('click', discardChanges);
 
-  const DIALOG_MESSAGE_STYLES = { error: ['text-red-700', 'bg-red-50', 'border-red-200'] };
-
-  function setAddDialogMessage(type, text) {
-    const el = document.getElementById('add-price-dialog-message');
-    if (!el) return;
-    Object.values(DIALOG_MESSAGE_STYLES).forEach((cls) => el.classList.remove(...cls));
-    if (!text) {
-      el.classList.add('hidden');
-      el.textContent = '';
-      return;
-    }
-    el.classList.remove('hidden');
-    el.classList.add(...DIALOG_MESSAGE_STYLES[type]);
-    el.textContent = text;
-  }
+  const setAddDialogMessage = makeDialogMessage('add-price-dialog-message', {
+    error: ['text-red-700', 'bg-red-50', 'border-red-200'],
+  });
 
   const addDialog = document.getElementById('add-price-dialog');
   const addForm = document.getElementById('add-price-form');
@@ -443,7 +407,7 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling } from './app.js';
       const data = new FormData(addForm);
       const prefix = String(data.get('model_prefix') || '').trim();
       if (!prefix) return;
-      const res = await createPrice({
+      const res = await postJSON('/api/prices', {
         model_prefix: prefix,
         rule: String(data.get('rule') || 'over'),
         rule_tokens: parseInt(data.get('rule_tokens'), 10) || 0,

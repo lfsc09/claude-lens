@@ -362,6 +362,9 @@ func (h *handlers) listLimiters(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []database.Limiter{}
 	}
+	for i := range rows {
+		rows[i].WithinActivePeriod = database.WithinActivePeriodNow(rows[i])
+	}
 	writeJSON(w, http.StatusOK, rows)
 }
 
@@ -416,6 +419,24 @@ func overlapMessage(l *database.Limiter) string {
 	return fmt.Sprintf("active period overlaps with limiter #%d (%s, %s)", l.ID, scope, period)
 }
 
+// resolveLimiterScope trims req.SessionID and checks it against
+// FindOverlappingLimiter, writing the appropriate error response and
+// returning ok=false if the caller should stop. excludeID skips a row being
+// updated (pass 0 when creating).
+func (h *handlers) resolveLimiterScope(w http.ResponseWriter, r *http.Request, req limiterRequest, excludeID int64) (sessionID string, ok bool) {
+	sessionID = strings.TrimSpace(req.SessionID)
+	conflict, err := h.db.FindOverlappingLimiter(r.Context(), sessionID, excludeID, req.ActiveStartHour, req.ActiveEndHour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return "", false
+	}
+	if conflict != nil {
+		writeError(w, http.StatusConflict, overlapMessage(conflict))
+		return "", false
+	}
+	return sessionID, true
+}
+
 // createLimiter adds a new limiter. An empty session_id scopes it globally.
 // Rejects an active period that overlaps another limiter already covering
 // the same session_id (see database.FindOverlappingLimiter).
@@ -430,14 +451,8 @@ func (h *handlers) createLimiter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := strings.TrimSpace(req.SessionID)
-	conflict, err := h.db.FindOverlappingLimiter(r.Context(), sessionID, 0, req.ActiveStartHour, req.ActiveEndHour)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if conflict != nil {
-		writeError(w, http.StatusConflict, overlapMessage(conflict))
+	sessionID, ok := h.resolveLimiterScope(w, r, req, 0)
+	if !ok {
 		return
 	}
 
@@ -461,6 +476,7 @@ func (h *handlers) createLimiter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l.ID = id
+	l.WithinActivePeriod = database.WithinActivePeriodNow(l)
 	writeJSON(w, http.StatusOK, l)
 }
 
@@ -496,14 +512,8 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := strings.TrimSpace(req.SessionID)
-	conflict, err := h.db.FindOverlappingLimiter(r.Context(), sessionID, id, req.ActiveStartHour, req.ActiveEndHour)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if conflict != nil {
-		writeError(w, http.StatusConflict, overlapMessage(conflict))
+	sessionID, ok := h.resolveLimiterScope(w, r, req, id)
+	if !ok {
 		return
 	}
 
@@ -523,6 +533,7 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	existing.WithinActivePeriod = database.WithinActivePeriodNow(*existing)
 	writeJSON(w, http.StatusOK, existing)
 }
 

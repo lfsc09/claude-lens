@@ -1,4 +1,4 @@
-import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad, progressBar, fmtSessionId } from './app.js';
+import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, makeDialogMessage, pad, postJSON, progressBar, putJSON, fmtSessionId, fmtActivePeriod } from './app.js';
 
 'use strict';
 
@@ -39,27 +39,6 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad,
     return l.refresh_aligned ? `${base} (aligned)` : base;
   }
 
-  function fmtActivePeriod(l) {
-    if (l.active_start_hour == null) {
-      if (l.is_active) {
-        return '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Always</span>'
-      }
-      return '<span class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded font-medium">Always</span>'
-    };
-    const isActiveNow = () => {
-      const now = new Date();
-      const hour = now.getHours();
-      if (l.active_start_hour <= l.active_end_hour) {
-        return hour >= l.active_start_hour && hour <= l.active_end_hour;
-      }
-      return hour >= l.active_start_hour || hour <= l.active_end_hour;
-    };
-    if (isActiveNow() && l.is_active) {
-      return `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded font-medium">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
-    }
-    return `<span class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded font-medium">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
-  }
-
   function scopeBadge(l) {
     if (!l.session_id) {
       return '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Global</span>';
@@ -78,10 +57,10 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad,
     return `<tr class="hover:bg-gray-50 transition-colors" data-id="${l.id}">
       <td class="px-4 py-2">${scopeBadge(l)}</td>
       <td class="px-4 py-2">${fmtCost(l.limit_amount)}</td>
-      <td class="px-4 py-2 w-42">${progressBar(l)}</td>
+      <td class="px-4 py-2 w-40">${progressBar(l)}</td>
       <td class="px-4 py-2 whitespace-nowrap">
         <div>${esc(fmtRefresh(l))}</div>
-        <div class="text-xs text-gray-400" data-countdown="${l.id}">${esc(fmtCountdown(l.next_refresh_at))}</div>
+        <div class="text-xs text-gray-400" data-countdown="${l.id}">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</div>
       </td>
       <td class="px-4 py-2 whitespace-nowrap">${fmtActivePeriod(l)}</td>
       <td class="px-4 py-2">${statusToggle(l)}</td>
@@ -114,22 +93,6 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad,
     tbody.querySelectorAll('[data-countdown]').forEach((el) => {
       const l = limitersById.get(el.dataset.countdown);
       if (l) el.textContent = fmtCountdown(l.next_refresh_at);
-    });
-  }
-
-  function createLimiter(payload) {
-    return fetch('/api/limiters', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-  }
-
-  function putLimiter(id, payload) {
-    return fetch(`/api/limiters/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
     });
   }
 
@@ -184,21 +147,9 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad,
   alwaysActiveCheckbox.addEventListener('change', updateActivePeriodInputs);
 
   // ── Dialog message ──────────────────────────────────────────────────
-  const DIALOG_MESSAGE_STYLES = { error: ['text-red-700', 'bg-red-50', 'border-red-200'] };
-
-  function setDialogMessage(type, text) {
-    const el = document.getElementById('limiter-dialog-message');
-    if (!el) return;
-    Object.values(DIALOG_MESSAGE_STYLES).forEach((cls) => el.classList.remove(...cls));
-    if (!text) {
-      el.classList.add('hidden');
-      el.textContent = '';
-      return;
-    }
-    el.classList.remove('hidden');
-    el.classList.add(...DIALOG_MESSAGE_STYLES[type]);
-    el.textContent = text;
-  }
+  const setDialogMessage = makeDialogMessage('limiter-dialog-message', {
+    error: ['text-red-700', 'bg-red-50', 'border-red-200'],
+  });
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
   function startEdit(l) {
@@ -245,7 +196,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, pad,
       active_end_hour: alwaysActive ? null : parseInt(data.get('active_end_hour'), 10),
     };
 
-    const res = editingId ? await putLimiter(editingId, payload) : await createLimiter(payload);
+    const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);
     if (!res.ok) {
       setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update limiter.' : 'Failed to add limiter.'));
       return;
