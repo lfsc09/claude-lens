@@ -1,4 +1,4 @@
-import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel, fmtCell, fmtThreshold, dayStr, initNav } from './app.js';
+import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel, fmtCell, fmtThreshold, dayStr, initNav, fmtSessionId } from './app.js';
 
 'use strict';
 
@@ -73,9 +73,9 @@ import { pad, esc, fmtTokens, fmtCost, fmtTime, addCost, makeAbortable, getLevel
     const outputTok = session.total_output_tokens ?? 0;
     const totalTok = inputTok + outputTok + cacheTok;
     const cost = session.total_cost ?? 0;
-    const costStr = cost > 0 ? `$${cost.toFixed(4)}` : '—';
+    const costStr = cost > 0 ? fmtCost(cost) : '—';
     const sessionQuery = 'session = ' + JSON.stringify(session.session_id);
-    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 hover:underline font-medium">${esc(session.session_name || session.session_id)}</a>${session.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(session.session_id)}</span>` : ''}`;
+    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 hover:underline font-medium">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
     return `<tr class="hover:bg-gray-50">
       <td class="px-4 py-2">${nameHtml}</td>
       <td class="px-4 py-2 text-right text-gray-700">${session.exchange_count}</td>

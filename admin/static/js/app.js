@@ -60,7 +60,7 @@ export function fmtInt(n) {
 
 export function fmtCost(c) {
   if (c == null) return '—';
-  return `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}`;
+  return `$${c < 0.01 && c > 0 ? c.toFixed(4) : c.toFixed(2)}`;
 }
 
 export function fmtTime(ts) {
@@ -75,6 +75,11 @@ export function fmtBytes(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+export function fmtSessionId(sessionId, maxLength = 15) {
+  if (!sessionId) return '-';
+  return sessionId.length > maxLength ? `${sessionId.slice(0, Math.floor(maxLength / 2))} … ${sessionId.slice(-Math.floor(maxLength / 2))}` : sessionId;
 }
 
 export function valueToStr(content, tabSize = 2) {

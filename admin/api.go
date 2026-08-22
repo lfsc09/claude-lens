@@ -2,9 +2,11 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
@@ -344,6 +346,219 @@ func (h *handlers) deletePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.est.Refresh(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": id})
+}
+
+func (h *handlers) listLimiters(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.ListLimiters(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []database.Limiter{}
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
+type limiterRequest struct {
+	SessionID       string   `json:"session_id"`
+	LimitAmount     *float64 `json:"limit_amount"`
+	RefreshValue    *int     `json:"refresh_value"`
+	RefreshUnit     string   `json:"refresh_unit"`
+	RefreshAligned  bool     `json:"refresh_aligned"`
+	ActiveStartHour *int     `json:"active_start_hour"`
+	ActiveEndHour   *int     `json:"active_end_hour"`
+}
+
+var limiterRefreshUnits = map[string]bool{"minutes": true, "hours": true, "days": true, "months": true}
+
+// validateLimiterRequest checks the field presence/range rules shared by
+// create and update, returning a client-facing message on the first
+// violation found, or "" if req is valid.
+func validateLimiterRequest(req limiterRequest) string {
+	if req.LimitAmount == nil || *req.LimitAmount <= 0 {
+		return "limit_amount must be a positive number"
+	}
+	if req.RefreshValue == nil || *req.RefreshValue <= 0 {
+		return "refresh_value must be a positive integer"
+	}
+	if !limiterRefreshUnits[req.RefreshUnit] {
+		return "refresh_unit must be one of minutes, hours, days, months"
+	}
+	if req.RefreshAligned && !database.SupportsAlignedRefresh(req.RefreshUnit, *req.RefreshValue) {
+		return "refresh_aligned is only supported for 60 minutes, 1 hour, 24 hours, 1 day, 7 days, or 1 month"
+	}
+	if (req.ActiveStartHour == nil) != (req.ActiveEndHour == nil) {
+		return "active_start_hour and active_end_hour must both be set or both be empty"
+	}
+	if req.ActiveStartHour != nil && (*req.ActiveStartHour < 0 || *req.ActiveStartHour > 23 || *req.ActiveEndHour < 0 || *req.ActiveEndHour > 23) {
+		return "active_start_hour and active_end_hour must be between 0 and 23"
+	}
+	return ""
+}
+
+// overlapMessage describes an existing limiter that a new/edited active
+// period collides with, for a 409 response.
+func overlapMessage(l *database.Limiter) string {
+	scope := "global"
+	if l.SessionID != "" {
+		scope = "session " + l.SessionID
+	}
+	period := "always active"
+	if l.ActiveStartHour != nil {
+		period = fmt.Sprintf("%02d–%02d", *l.ActiveStartHour, *l.ActiveEndHour)
+	}
+	return fmt.Sprintf("active period overlaps with limiter #%d (%s, %s)", l.ID, scope, period)
+}
+
+// createLimiter adds a new limiter. An empty session_id scopes it globally.
+// Rejects an active period that overlaps another limiter already covering
+// the same session_id (see database.FindOverlappingLimiter).
+func (h *handlers) createLimiter(w http.ResponseWriter, r *http.Request) {
+	var req limiterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if msg := validateLimiterRequest(req); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	sessionID := strings.TrimSpace(req.SessionID)
+	conflict, err := h.db.FindOverlappingLimiter(r.Context(), sessionID, 0, req.ActiveStartHour, req.ActiveEndHour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if conflict != nil {
+		writeError(w, http.StatusConflict, overlapMessage(conflict))
+		return
+	}
+
+	now := time.Now()
+	l := database.Limiter{
+		SessionID:       sessionID,
+		LimitAmount:     *req.LimitAmount,
+		RefreshValue:    *req.RefreshValue,
+		RefreshUnit:     req.RefreshUnit,
+		RefreshAligned:  req.RefreshAligned,
+		NextRefreshAt:   float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
+		ActiveStartHour: req.ActiveStartHour,
+		ActiveEndHour:   req.ActiveEndHour,
+		IsActive:        true,
+		CreatedAt:       float64(now.Unix()),
+		UpdatedAt:       float64(now.Unix()),
+	}
+	id, err := h.db.CreateLimiter(r.Context(), l)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	l.ID = id
+	writeJSON(w, http.StatusOK, l)
+}
+
+// updateLimiter replaces a limiter's rule fields. Per the product rule,
+// any full edit resets progress: current_cost goes back to 0 and
+// next_refresh_at is recomputed from now, rather than trying to carry a
+// partial window across a changed rule. is_active is untouched — that's
+// setLimiterActive's job.
+func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	var req limiterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if msg := validateLimiterRequest(req); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	existing, err := h.db.GetLimiter(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if existing == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	sessionID := strings.TrimSpace(req.SessionID)
+	conflict, err := h.db.FindOverlappingLimiter(r.Context(), sessionID, id, req.ActiveStartHour, req.ActiveEndHour)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if conflict != nil {
+		writeError(w, http.StatusConflict, overlapMessage(conflict))
+		return
+	}
+
+	now := time.Now()
+	existing.SessionID = sessionID
+	existing.LimitAmount = *req.LimitAmount
+	existing.CurrentCost = 0
+	existing.RefreshValue = *req.RefreshValue
+	existing.RefreshUnit = req.RefreshUnit
+	existing.RefreshAligned = req.RefreshAligned
+	existing.NextRefreshAt = float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix())
+	existing.ActiveStartHour = req.ActiveStartHour
+	existing.ActiveEndHour = req.ActiveEndHour
+	existing.UpdatedAt = float64(now.Unix())
+
+	if err := h.db.UpdateLimiter(r.Context(), *existing); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, existing)
+}
+
+type setLimiterActiveRequest struct {
+	IsActive *bool `json:"is_active"`
+}
+
+// setLimiterActive toggles a limiter's master switch without resetting its
+// accrued progress.
+func (h *handlers) setLimiterActive(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	var req setLimiterActiveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IsActive == nil {
+		writeError(w, http.StatusBadRequest, "is_active is required")
+		return
+	}
+
+	updatedAt := float64(time.Now().Unix())
+	if err := h.db.SetLimiterActive(r.Context(), id, *req.IsActive, updatedAt); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"is_active": *req.IsActive})
+}
+
+func (h *handlers) deleteLimiter(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := h.db.DeleteLimiter(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

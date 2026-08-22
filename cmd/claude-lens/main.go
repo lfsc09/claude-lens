@@ -64,7 +64,7 @@ func main() {
 
 	var proxyErr, adminErr error
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		// stop() also cancels ctx (see signal.NotifyContext), so if this
@@ -78,6 +78,10 @@ func main() {
 		defer wg.Done()
 		defer stop()
 		adminErr = adminSrv.Run(ctx, cfg.AdminAddr)
+	}()
+	go func() {
+		defer wg.Done()
+		db.RunLimiterRefreshLoop(ctx)
 	}()
 
 	<-ctx.Done()

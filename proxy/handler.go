@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -108,7 +109,50 @@ func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		sessionID := sessionIDFromRequest(r)
+		if blocked, by, err := h.db.CheckLimiters(r.Context(), sessionID); err != nil {
+			h.logger.Error("check limiters failed", "error", err, "session_id", sessionID)
+		} else if blocked {
+			writeLimiterBlocked(w, by)
+			return
+		}
+	}
 	h.rp.ServeHTTP(w, r)
+}
+
+// sessionIDFromRequest extracts and sanitizes the session id Claude Code
+// sends on a request, falling back to "default_session" when neither
+// header is present.
+func sessionIDFromRequest(r *http.Request) string {
+	return SanitizeSessionID(firstNonEmpty(
+		r.Header.Get("x-claude-code-session-id"),
+		r.Header.Get("x-session-id"),
+		"default_session",
+	))
+}
+
+// writeLimiterBlocked writes an Anthropic-shaped 429 error body so Claude
+// Code's existing error display renders it, instead of a generic
+// connection failure.
+func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
+	scope := "global"
+	if by.SessionID != "" {
+		scope = "session " + by.SessionID
+	}
+	message := fmt.Sprintf("Cost limit reached: %s limiter has spent $%.2f of its $%.2f budget", scope, by.CurrentCost, by.LimitAmount)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusTooManyRequests)
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"type": "error",
+		"error": map[string]string{
+			"type":    "rate_limit_error",
+			"message": message,
+		},
+	}); err != nil {
+		slog.Default().Warn("writeLimiterBlocked: write response", "error", err)
+	}
 }
 
 func (h *Handler) director(r *http.Request) {
@@ -140,11 +184,7 @@ func (h *Handler) director(r *http.Request) {
 
 	if r.Method == http.MethodPost {
 		meta.intercept = true
-		meta.sessionID = SanitizeSessionID(firstNonEmpty(
-			r.Header.Get("x-claude-code-session-id"),
-			r.Header.Get("x-session-id"),
-			"default_session",
-		))
+		meta.sessionID = sessionIDFromRequest(r)
 		if name := r.Header.Get("x-session-name"); name != "" {
 			meta.sessionName = &name
 		}

@@ -56,6 +56,24 @@ CREATE TABLE IF NOT EXISTS model_prices (
     updated_at        REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_model_prices_prefix ON model_prices (model_prefix);
+
+CREATE TABLE IF NOT EXISTS limiters (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT    NOT NULL DEFAULT '',
+    limit_amount      REAL    NOT NULL,
+    current_cost      REAL    NOT NULL DEFAULT 0,
+    refresh_value     INTEGER NOT NULL,
+    refresh_unit      TEXT    NOT NULL CHECK (refresh_unit IN ('minutes','hours','days','months')),
+    refresh_aligned   INTEGER NOT NULL DEFAULT 0,
+    next_refresh_at   REAL    NOT NULL,
+    active_start_hour INTEGER,
+    active_end_hour   INTEGER,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    created_at        REAL    NOT NULL,
+    updated_at        REAL    NOT NULL,
+    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_limiters_session_id ON limiters (session_id);
 `
 
 // newColumns lists columns added to the schema after the tables already
