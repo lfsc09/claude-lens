@@ -31,6 +31,18 @@ type Limiter struct {
 	CreatedAt       float64 `json:"created_at"`
 	UpdatedAt       float64 `json:"updated_at"`
 
+	// SlackWebhookURL, if set, is where this limiter's own budget alert is
+	// posted instead of the process-wide default (see DB.SetNotifications).
+	SlackWebhookURL string `json:"slack_webhook_url"`
+	// AlertThresholdPct, if set, fires a one-shot Slack alert (see AlertSent)
+	// the first time CurrentCost reaches this percentage of LimitAmount
+	// within the current refresh window. Nil disables the alert.
+	AlertThresholdPct *int `json:"alert_threshold_pct"`
+	// AlertSent marks that the AlertThresholdPct alert already fired for the
+	// current refresh window, so accrueLimiterCost doesn't resend it on
+	// every subsequent request. Reset to false whenever the window refreshes.
+	AlertSent bool `json:"alert_sent"`
+
 	// WithinActivePeriod reports whether ActiveStartHour/ActiveEndHour
 	// currently covers the server's local time. Not persisted — callers that
 	// return a Limiter to the client set it via WithinActivePeriodNow so the
@@ -39,7 +51,8 @@ type Limiter struct {
 }
 
 const limiterColumns = `id, session_id, limit_amount, current_cost, refresh_value, refresh_unit, refresh_aligned,
-	next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at`
+	next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at,
+	slack_webhook_url, alert_threshold_pct, alert_sent`
 
 // alignedRefreshCombos are the (refresh_unit, refresh_value) pairs with an
 // unambiguous calendar boundary — the only ones RefreshAligned may be set
@@ -64,11 +77,13 @@ func SupportsAlignedRefresh(unit string, value int) bool {
 
 func scanLimiter(row interface{ Scan(dest ...any) error }) (Limiter, error) {
 	var l Limiter
-	var aligned, active int
+	var aligned, active, alertSent int
 	err := row.Scan(&l.ID, &l.SessionID, &l.LimitAmount, &l.CurrentCost, &l.RefreshValue, &l.RefreshUnit, &aligned,
-		&l.NextRefreshAt, &l.ActiveStartHour, &l.ActiveEndHour, &active, &l.CreatedAt, &l.UpdatedAt)
+		&l.NextRefreshAt, &l.ActiveStartHour, &l.ActiveEndHour, &active, &l.CreatedAt, &l.UpdatedAt,
+		&l.SlackWebhookURL, &l.AlertThresholdPct, &alertSent)
 	l.RefreshAligned = aligned != 0
 	l.IsActive = active != 0
+	l.AlertSent = alertSent != 0
 	return l, err
 }
 
@@ -110,10 +125,12 @@ func (db *DB) GetLimiter(ctx context.Context, id int64) (*Limiter, error) {
 func (db *DB) CreateLimiter(ctx context.Context, l Limiter) (int64, error) {
 	res, err := db.sql.ExecContext(ctx,
 		`INSERT INTO limiters (session_id, limit_amount, current_cost, refresh_value, refresh_unit, refresh_aligned,
-			next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at,
+			slack_webhook_url, alert_threshold_pct, alert_sent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.SessionID, l.LimitAmount, l.CurrentCost, l.RefreshValue, l.RefreshUnit, boolToInt(l.RefreshAligned),
 		l.NextRefreshAt, l.ActiveStartHour, l.ActiveEndHour, boolToInt(l.IsActive), l.CreatedAt, l.UpdatedAt,
+		l.SlackWebhookURL, l.AlertThresholdPct, boolToInt(l.AlertSent),
 	)
 	if err != nil {
 		return 0, err
@@ -127,10 +144,12 @@ func (db *DB) CreateLimiter(ctx context.Context, l Limiter) (int64, error) {
 func (db *DB) UpdateLimiter(ctx context.Context, l Limiter) error {
 	_, err := db.sql.ExecContext(ctx,
 		`UPDATE limiters SET session_id = ?, limit_amount = ?, current_cost = ?, refresh_value = ?, refresh_unit = ?,
-			refresh_aligned = ?, next_refresh_at = ?, active_start_hour = ?, active_end_hour = ?, updated_at = ?
+			refresh_aligned = ?, next_refresh_at = ?, active_start_hour = ?, active_end_hour = ?, updated_at = ?,
+			slack_webhook_url = ?, alert_threshold_pct = ?, alert_sent = ?
 		 WHERE id = ?`,
 		l.SessionID, l.LimitAmount, l.CurrentCost, l.RefreshValue, l.RefreshUnit, boolToInt(l.RefreshAligned),
-		l.NextRefreshAt, l.ActiveStartHour, l.ActiveEndHour, l.UpdatedAt, l.ID,
+		l.NextRefreshAt, l.ActiveStartHour, l.ActiveEndHour, l.UpdatedAt,
+		l.SlackWebhookURL, l.AlertThresholdPct, boolToInt(l.AlertSent), l.ID,
 	)
 	return err
 }
@@ -267,24 +286,25 @@ func ComputeNextRefresh(now time.Time, unit string, value int, aligned bool) tim
 	}
 }
 
-// refreshIfDue zeroes CurrentCost and recomputes NextRefreshAt when now has
-// reached it, returning whether it fired. The caller is responsible for
-// persisting the change.
+// refreshIfDue zeroes CurrentCost, resets AlertSent, and recomputes
+// NextRefreshAt when now has reached it, returning whether it fired. The
+// caller is responsible for persisting the change.
 func refreshIfDue(l *Limiter, now time.Time) bool {
 	if float64(now.Unix()) < l.NextRefreshAt {
 		return false
 	}
 	l.CurrentCost = 0
+	l.AlertSent = false
 	l.NextRefreshAt = float64(ComputeNextRefresh(now, l.RefreshUnit, l.RefreshValue, l.RefreshAligned).Unix())
 	return true
 }
 
-// persistLimiterProgress writes back a limiter's current_cost and
-// next_refresh_at after refreshIfDue and/or an accrual.
+// persistLimiterProgress writes back a limiter's current_cost,
+// next_refresh_at, and alert_sent after refreshIfDue and/or an accrual.
 func (db *DB) persistLimiterProgress(ctx context.Context, l Limiter, updatedAt float64) error {
 	_, err := db.sql.ExecContext(ctx,
-		`UPDATE limiters SET current_cost = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?`,
-		l.CurrentCost, l.NextRefreshAt, updatedAt, l.ID,
+		`UPDATE limiters SET current_cost = ?, next_refresh_at = ?, alert_sent = ?, updated_at = ? WHERE id = ?`,
+		l.CurrentCost, l.NextRefreshAt, boolToInt(l.AlertSent), updatedAt, l.ID,
 	)
 	return err
 }
@@ -427,8 +447,11 @@ func (db *DB) CheckLimiters(ctx context.Context, sessionID string) (bool, *Limit
 }
 
 // accrueLimiterCost adds cost to every applicable, active, currently-in-
-// window limiter's running total. A limiter that is inactive or outside
-// its active period right now simply doesn't track this request at all.
+// window limiter's running total, and fires a Slack budget alert
+// (best-effort, asynchronous — see sendBudgetAlert) the moment a limiter's
+// AlertThresholdPct is newly crossed by this accrual. A limiter that is
+// inactive or outside its active period right now simply doesn't track this
+// request at all.
 func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost float64) error {
 	limiters, err := db.refreshApplicableLimiters(ctx, sessionID)
 	if err != nil {
@@ -441,10 +464,58 @@ func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost floa
 		if !l.IsActive || !withinActivePeriod(*l, now) {
 			continue
 		}
+
+		previousCost := l.CurrentCost
 		l.CurrentCost += cost
+
+		if l.AlertThresholdPct != nil && !l.AlertSent && l.LimitAmount > 0 {
+			threshold := l.LimitAmount * float64(*l.AlertThresholdPct) / 100
+			if l.CurrentCost >= threshold && previousCost < threshold {
+				l.AlertSent = true
+				db.sendBudgetAlert(*l, *l.AlertThresholdPct)
+			}
+		}
+
 		if err := db.persistLimiterProgress(ctx, *l, float64(now.Unix())); err != nil {
 			return fmt.Errorf("accrue limiter %d: %w", l.ID, err)
 		}
 	}
 	return nil
+}
+
+// sendBudgetAlert dispatches a Slack notification for l having crossed pct
+// of its budget, using l's own SlackWebhookURL if set or the process-wide
+// default otherwise. Fire-and-forget in its own goroutine with a
+// background context: delivery failures are logged, never propagated, so a
+// slow or unreachable Slack endpoint can't delay the proxied request or the
+// exchange save that triggered this accrual.
+func (db *DB) sendBudgetAlert(l Limiter, pct int) {
+	if db.notifier == nil {
+		return
+	}
+	webhookURL := l.SlackWebhookURL
+	if webhookURL == "" {
+		webhookURL = db.defaultWebhookURL
+	}
+	if webhookURL == "" {
+		return
+	}
+
+	text := budgetAlertText(l, pct)
+	go func() {
+		if err := db.notifier.Send(context.Background(), webhookURL, text); err != nil {
+			slog.Error("slack budget alert failed", "error", err, "limiter_id", l.ID, "session_id", l.SessionID)
+		}
+	}()
+}
+
+// budgetAlertText formats the Slack message body for a limiter crossing its
+// alert threshold.
+func budgetAlertText(l Limiter, pct int) string {
+	scope := "global"
+	if l.SessionID != "" {
+		scope = "session " + l.SessionID
+	}
+	return fmt.Sprintf(":warning: claude-lens: %s limiter has spent $%.2f of its $%.2f budget (%d%% threshold reached)",
+		scope, l.CurrentCost, l.LimitAmount, pct)
 }

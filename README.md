@@ -127,6 +127,8 @@ They all must be set in OS environment. The `.env` file is only read in developm
 | `CLENS_ADMIN_ADDR` | `:7802` | Admin server listen address. |
 | `CLENS_DATA_DIR` | `data` | Where the SQLite database is created. |
 | `CLENS_LOG_DIR` | `logs` | Where the rotating log file is written (5MB × 3 backups). |
+| `CLENS_SLACK_WEBHOOK_URL` | — | Default Slack incoming-webhook URL for cost alerts. Used for the single-request spike alert, and as the fallback for any limiter that doesn't set its own webhook in the `/limiters` admin UI. |
+| `CLENS_ALERT_REQUEST_COST_USD` | — | Posts a Slack alert whenever a single exchange costs at least this much (USD). Unset or `0` disables it. |
 
 ## Data and Logs
 

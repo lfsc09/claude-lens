@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +24,11 @@ import (
 )
 
 func newTestHandler(t *testing.T, upstreamURL string) (*Handler, *database.DB) {
+	t.Helper()
+	return newTestHandlerWithConfig(t, config.Config{AnthropicBaseURL: upstreamURL})
+}
+
+func newTestHandlerWithConfig(t *testing.T, cfg config.Config) (*Handler, *database.DB) {
 	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -34,7 +41,6 @@ func newTestHandler(t *testing.T, upstreamURL string) (*Handler, *database.DB) {
 		t.Fatalf("Refresh: %v", err)
 	}
 
-	cfg := config.Config{AnthropicBaseURL: upstreamURL}
 	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh(), status.NewFresh())
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
@@ -228,6 +234,109 @@ func TestNonStreamingPOST_BumpsLimitersFresh(t *testing.T) {
 	}
 	if v := h.limitersFresh.Version(); v == 0 {
 		t.Errorf("limitersFresh.Version() after save = %d, want > 0", v)
+	}
+}
+
+// TestNonStreamingPOST_RequestSpikeAlert confirms alertOnRequestSpike fires
+// a Slack notification when a single exchange's cost meets the configured
+// per-request threshold.
+func TestNonStreamingPOST_RequestSpikeAlert(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"hi there"}],"usage":{"input_tokens":1000000,"output_tokens":1000000}}`)
+	}))
+	defer upstream.Close()
+
+	var alertCount atomic.Int32
+	var alertBodyMu sync.Mutex
+	var alertBody string
+	alertServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		alertCount.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		alertBodyMu.Lock()
+		alertBody = string(body)
+		alertBodyMu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer alertServer.Close()
+
+	// claude-sonnet-5 is seeded at $3/$15 per million tokens; 1M in + 1M out
+	// costs $18, comfortably over the $1 alert threshold below.
+	h, db := newTestHandlerWithConfig(t, config.Config{
+		AnthropicBaseURL:    upstream.URL,
+		SlackWebhookURL:     alertServer.URL,
+		AlertRequestCostUSD: 1.0,
+	})
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-session-id", "sess-spike")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	waitForExchangeCount(t, db, "sess-spike", 1)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for alertCount.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := alertCount.Load(); n != 1 {
+		t.Fatalf("alert requests received = %d, want 1", n)
+	}
+	alertBodyMu.Lock()
+	body := alertBody
+	alertBodyMu.Unlock()
+	if !strings.Contains(body, "sess-spike") || !strings.Contains(body, "18.00") {
+		t.Errorf("alert body = %q, want it to mention the session id and the $18.00 cost", body)
+	}
+}
+
+// TestNonStreamingPOST_NoRequestSpikeAlertBelowThreshold confirms a cheap
+// exchange never reaches the Slack webhook when a spike threshold is set.
+func TestNonStreamingPOST_NoRequestSpikeAlertBelowThreshold(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":10}}`)
+	}))
+	defer upstream.Close()
+
+	var alertCount atomic.Int32
+	alertServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		alertCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer alertServer.Close()
+
+	h, db := newTestHandlerWithConfig(t, config.Config{
+		AnthropicBaseURL:    upstream.URL,
+		SlackWebhookURL:     alertServer.URL,
+		AlertRequestCostUSD: 1.0,
+	})
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+		strings.NewReader(`{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-session-id", "sess-no-spike")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	waitForExchangeCount(t, db, "sess-no-spike", 1)
+	time.Sleep(200 * time.Millisecond)
+	if n := alertCount.Load(); n != 0 {
+		t.Errorf("alert requests received = %d, want 0 (cost well under threshold)", n)
 	}
 }
 

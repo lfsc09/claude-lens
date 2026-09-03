@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,15 @@ type Config struct {
 	DataDir string
 	LogDir  string
 	DBPath  string
+
+	// SlackWebhookURL is the default Slack incoming-webhook target for cost
+	// alerts: always used for the single-request spike alert, and used as a
+	// fallback for a limiter's budget alert when it has no webhook of its
+	// own configured.
+	SlackWebhookURL string
+	// AlertRequestCostUSD triggers a Slack alert whenever a single exchange
+	// costs at least this much. Zero (the default) disables the alert.
+	AlertRequestCostUSD float64
 }
 
 const defaultAnthropicBaseURL = "https://api.anthropic.com"
@@ -39,6 +49,9 @@ func Load() (Config, error) {
 
 		DataDir: getEnv("CLENS_DATA_DIR", "data"),
 		LogDir:  getEnv("CLENS_LOG_DIR", "logs"),
+
+		SlackWebhookURL:     getEnv("CLENS_SLACK_WEBHOOK_URL", ""),
+		AlertRequestCostUSD: getEnvFloat("CLENS_ALERT_REQUEST_COST_USD", 0),
 	}
 	cfg.DBPath = filepath.Join(cfg.DataDir, "claude-lens.db")
 
@@ -57,4 +70,16 @@ func getEnv(name, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getEnvFloat(name string, fallback float64) float64 {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
 }

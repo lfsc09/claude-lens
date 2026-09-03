@@ -8,12 +8,28 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lfsc09/claude-lens/internal/notify"
 	_ "modernc.org/sqlite"
 )
 
 // DB wraps a *sql.DB configured for claude-lens' schema and concurrency model.
 type DB struct {
 	sql *sql.DB
+
+	// notifier and defaultWebhookURL drive budget-alert delivery from
+	// accrueLimiterCost. Unset (nil notifier) until SetNotifications is
+	// called, in which case alert dispatch is silently skipped.
+	notifier          *notify.Client
+	defaultWebhookURL string
+}
+
+// SetNotifications wires up Slack delivery for limiter budget-threshold
+// alerts. defaultWebhookURL is used by any limiter that doesn't set its own
+// slack_webhook_url. Safe to skip calling entirely — accrueLimiterCost just
+// won't send alerts.
+func (db *DB) SetNotifications(client *notify.Client, defaultWebhookURL string) {
+	db.notifier = client
+	db.defaultWebhookURL = defaultWebhookURL
 }
 
 const schema = `
@@ -71,7 +87,11 @@ CREATE TABLE IF NOT EXISTS limiters (
     is_active         INTEGER NOT NULL DEFAULT 1,
     created_at        REAL    NOT NULL,
     updated_at        REAL    NOT NULL,
-    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL))
+    slack_webhook_url   TEXT    NOT NULL DEFAULT '',
+    alert_threshold_pct INTEGER,
+    alert_sent          INTEGER NOT NULL DEFAULT 0,
+    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL)),
+    CHECK (alert_threshold_pct IS NULL OR (alert_threshold_pct BETWEEN 1 AND 100))
 );
 CREATE INDEX IF NOT EXISTS idx_limiters_session_id ON limiters (session_id);
 `
@@ -92,6 +112,11 @@ var newColumns = map[string][]string{
 	"model_prices": {
 		"cache_write_per_m REAL NOT NULL DEFAULT 0",
 		"cache_read_per_m REAL NOT NULL DEFAULT 0",
+	},
+	"limiters": {
+		"slack_webhook_url TEXT NOT NULL DEFAULT ''",
+		"alert_threshold_pct INTEGER",
+		"alert_sent INTEGER NOT NULL DEFAULT 0",
 	},
 }
 

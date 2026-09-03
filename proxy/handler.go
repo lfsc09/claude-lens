@@ -18,6 +18,7 @@ import (
 
 	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/notify"
 	"github.com/lfsc09/claude-lens/internal/parsing"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
@@ -55,6 +56,7 @@ type Handler struct {
 	target        *url.URL
 	rp            *httputil.ReverseProxy
 	logger        *slog.Logger
+	notifier      *notify.Client
 
 	// saveWG tracks saveExchange goroutines still writing to the database,
 	// so Server.Run can drain them before the process exits instead of
@@ -86,6 +88,7 @@ func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator
 		customHeaders: customHeaders,
 		target:        target,
 		logger:        slog.Default().With("component", "proxy"),
+		notifier:      notify.NewClient(),
 	}
 
 	transport := &http.Transport{
@@ -275,6 +278,9 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 				s := string(raw)
 				matchedPrice = &s
 			}
+
+			total := costs.InputCost + costs.OutputCost + costs.CacheCreationCost + costs.CacheReadCost
+			h.alertOnRequestSpike(meta, total)
 		}
 	}
 
@@ -305,6 +311,29 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	}
 	h.fresh.Bump()
 	h.limitersFresh.Bump()
+}
+
+// alertOnRequestSpike fires a Slack notification (fire-and-forget, on a
+// background context) when a single exchange's cost meets or exceeds the
+// configured per-request threshold. A zero threshold or unset webhook
+// disables this entirely.
+func (h *Handler) alertOnRequestSpike(meta *exchangeMeta, cost float64) {
+	if h.cfg.AlertRequestCostUSD <= 0 || h.cfg.SlackWebhookURL == "" || cost < h.cfg.AlertRequestCostUSD {
+		return
+	}
+
+	model := "unknown model"
+	if meta.model != nil {
+		model = *meta.model
+	}
+	text := fmt.Sprintf(":rotating_light: claude-lens: a single request cost $%.2f (%s, session %s) — over the $%.2f alert threshold",
+		cost, model, meta.sessionID, h.cfg.AlertRequestCostUSD)
+
+	go func() {
+		if err := h.notifier.Send(context.Background(), h.cfg.SlackWebhookURL, text); err != nil {
+			h.logger.Error("slack request-spike alert failed", "error", err, "session_id", meta.sessionID)
+		}
+	}()
 }
 
 func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
