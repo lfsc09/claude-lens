@@ -40,7 +40,7 @@ func main() {
 	}
 	defer db.Close()
 
-	db.SetNotifications(notify.NewClient(), cfg.SlackWebhookURL)
+	db.SetNotifications(notify.NewClient())
 
 	est := pricing.New(db)
 	if err := est.Refresh(ctx); err != nil {

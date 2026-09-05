@@ -431,6 +431,9 @@ type limiterRequest struct {
 	// limiter's spend reaches this percentage of its budget within the
 	// current refresh window. Nil disables the alert.
 	AlertThresholdPct *int `json:"alert_threshold_pct"`
+	// AlertRequestCostUSD fires a Slack alert every time a single exchange
+	// governed by this limiter costs at least this much. Nil disables it.
+	AlertRequestCostUSD *float64 `json:"alert_request_cost_usd"`
 }
 
 var limiterRefreshUnits = map[string]bool{"minutes": true, "hours": true, "days": true, "months": true}
@@ -460,8 +463,14 @@ func validateLimiterRequest(req limiterRequest) string {
 	if req.AlertThresholdPct != nil && (*req.AlertThresholdPct < 1 || *req.AlertThresholdPct > 100) {
 		return "alert_threshold_pct must be between 1 and 100"
 	}
+	if req.AlertRequestCostUSD != nil && *req.AlertRequestCostUSD <= 0 {
+		return "alert_request_cost_usd must be a positive number"
+	}
 	if req.SlackWebhookURL != "" && !strings.HasPrefix(req.SlackWebhookURL, "https://") {
 		return "slack_webhook_url must be a https:// URL"
+	}
+	if req.SlackWebhookURL == "" && (req.AlertThresholdPct != nil || req.AlertRequestCostUSD != nil) {
+		return "slack_webhook_url is required when an alert is configured"
 	}
 	return ""
 }
@@ -519,19 +528,20 @@ func (h *handlers) createLimiter(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	l := database.Limiter{
-		SessionID:         sessionID,
-		LimitAmount:       *req.LimitAmount,
-		RefreshValue:      *req.RefreshValue,
-		RefreshUnit:       req.RefreshUnit,
-		RefreshAligned:    req.RefreshAligned,
-		NextRefreshAt:     float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
-		ActiveStartHour:   req.ActiveStartHour,
-		ActiveEndHour:     req.ActiveEndHour,
-		IsActive:          true,
-		CreatedAt:         float64(now.Unix()),
-		UpdatedAt:         float64(now.Unix()),
-		SlackWebhookURL:   strings.TrimSpace(req.SlackWebhookURL),
-		AlertThresholdPct: req.AlertThresholdPct,
+		SessionID:           sessionID,
+		LimitAmount:         *req.LimitAmount,
+		RefreshValue:        *req.RefreshValue,
+		RefreshUnit:         req.RefreshUnit,
+		RefreshAligned:      req.RefreshAligned,
+		NextRefreshAt:       float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
+		ActiveStartHour:     req.ActiveStartHour,
+		ActiveEndHour:       req.ActiveEndHour,
+		IsActive:            true,
+		CreatedAt:           float64(now.Unix()),
+		UpdatedAt:           float64(now.Unix()),
+		SlackWebhookURL:     strings.TrimSpace(req.SlackWebhookURL),
+		AlertThresholdPct:   req.AlertThresholdPct,
+		AlertRequestCostUSD: req.AlertRequestCostUSD,
 	}
 	id, err := h.db.CreateLimiter(r.Context(), l)
 	if err != nil {
@@ -598,6 +608,7 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 	existing.UpdatedAt = float64(now.Unix())
 	existing.SlackWebhookURL = strings.TrimSpace(req.SlackWebhookURL)
 	existing.AlertThresholdPct = req.AlertThresholdPct
+	existing.AlertRequestCostUSD = req.AlertRequestCostUSD
 	if scheduleChanged {
 		existing.CurrentCost = 0
 		existing.AlertSent = false

@@ -22,6 +22,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   const startHourSelect = document.getElementById('limiter-active-start-hour');
   const endHourSelect = document.getElementById('limiter-active-end-hour');
   const alertThresholdPctInput = document.getElementById('limiter-alert-threshold-pct');
+  const alertRequestCostUsdInput = document.getElementById('limiter-alert-request-cost-usd');
   const slackWebhookUrlInput = document.getElementById('limiter-slack-webhook-url');
 
   function populateHourSelect(select) {
@@ -48,11 +49,14 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     return `${badge}${alertBadge(l)}`;
   }
 
-  // Small bell indicator shown next to the scope badge when a Slack budget
-  // alert is armed for this limiter, with the threshold in a tooltip.
+  // Small bell indicator shown next to the scope badge when either Slack
+  // alert is armed for this limiter, with the details in a tooltip.
   function alertBadge(l) {
-    if (!l.alert_threshold_pct) return '';
-    const tip = `Slack alert at ${l.alert_threshold_pct}% of budget${l.alert_sent ? ' (already sent this window)' : ''}`;
+    if (!l.alert_threshold_pct && !l.alert_request_cost_usd) return '';
+    const lines = [];
+    if (l.alert_threshold_pct) lines.push(`At ${l.alert_threshold_pct}% of budget${l.alert_sent ? ' (already sent this window)' : ''}`);
+    if (l.alert_request_cost_usd) lines.push(`On a single request over ${fmtCost(l.alert_request_cost_usd)}`);
+    const tip = `Slack alert:\n${lines.join('\n')}`;
     return ` <span data-tip="${esc(tip)}" class="text-amber-500 cursor-default" aria-label="${esc(tip)}">🔔</span>`;
   }
 
@@ -180,6 +184,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     updateActivePeriodInputs();
 
     alertThresholdPctInput.value = l.alert_threshold_pct ?? '';
+    alertRequestCostUsdInput.value = l.alert_request_cost_usd ?? '';
     slackWebhookUrlInput.value = l.slack_webhook_url ?? '';
   }
 
@@ -199,6 +204,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     const data = new FormData(form);
     const alwaysActive = alwaysActiveCheckbox.checked;
     const alertThresholdPct = String(data.get('alert_threshold_pct') || '').trim();
+    const alertRequestCostUsd = String(data.get('alert_request_cost_usd') || '').trim();
 
     const payload = {
       session_id: String(data.get('session_id') || '').trim(),
@@ -210,6 +216,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
       active_end_hour: alwaysActive ? null : parseInt(data.get('active_end_hour'), 10),
       slack_webhook_url: String(data.get('slack_webhook_url') || '').trim(),
       alert_threshold_pct: alertThresholdPct ? parseInt(alertThresholdPct, 10) : null,
+      alert_request_cost_usd: alertRequestCostUsd ? parseFloat(alertRequestCostUsd) : null,
     };
 
     const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);

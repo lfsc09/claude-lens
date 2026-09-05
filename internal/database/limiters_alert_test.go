@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestAccrueLimiterCost_BudgetAlertFiresOnceOnThresholdCross(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	server, count := newAlertServer(t)
-	db.SetNotifications(notify.NewClient(), server.URL)
+	db.SetNotifications(notify.NewClient())
 
 	id, err := db.CreateLimiter(ctx, Limiter{
 		SessionID:         "sess_alert",
@@ -65,6 +66,7 @@ func TestAccrueLimiterCost_BudgetAlertFiresOnceOnThresholdCross(t *testing.T) {
 		CreatedAt:         float64(now.Unix()),
 		UpdatedAt:         float64(now.Unix()),
 		AlertThresholdPct: intPtr(80),
+		SlackWebhookURL:   server.URL,
 	})
 	if err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
@@ -99,7 +101,7 @@ func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	server, count := newAlertServer(t)
-	db.SetNotifications(notify.NewClient(), server.URL)
+	db.SetNotifications(notify.NewClient())
 
 	id, err := db.CreateLimiter(ctx, Limiter{
 		SessionID:         "sess_reset",
@@ -111,6 +113,7 @@ func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 		CreatedAt:         float64(now.Unix()),
 		UpdatedAt:         float64(now.Unix()),
 		AlertThresholdPct: intPtr(50),
+		SlackWebhookURL:   server.URL,
 	})
 	if err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
@@ -152,17 +155,130 @@ func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 	}
 }
 
-func TestAccrueLimiterCost_BudgetAlertPrefersLimiterWebhookOverDefault(t *testing.T) {
+func TestAccrueLimiterCost_NoAlertWhenThresholdUnset(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	now := time.Now()
+	server, count := newAlertServer(t)
+	db.SetNotifications(notify.NewClient())
 
-	defaultServer, defaultCount := newAlertServer(t)
-	limiterServer, limiterCount := newAlertServer(t)
-	db.SetNotifications(notify.NewClient(), defaultServer.URL)
+	if _, err := db.CreateLimiter(ctx, Limiter{
+		SessionID:       "sess_no_alert",
+		LimitAmount:     1.0,
+		RefreshValue:    60,
+		RefreshUnit:     "minutes",
+		NextRefreshAt:   float64(now.Add(time.Hour).Unix()),
+		IsActive:        true,
+		CreatedAt:       float64(now.Unix()),
+		UpdatedAt:       float64(now.Unix()),
+		SlackWebhookURL: server.URL,
+		// AlertThresholdPct/AlertRequestCostUSD left nil: alerting disabled.
+	}); err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
 
-	_, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:         "sess_own_webhook",
+	saveExchangeWithCost(t, db, "sess_no_alert", 1.0)
+	assertNoMoreAlerts(t, count, 0)
+}
+
+// TestAccrueLimiterCost_RequestSpikeAlertFiresOverThreshold confirms a
+// single exchange costing at least AlertRequestCostUSD fires an alert, with
+// no "already sent" gating — unlike the budget alert, this is expected to
+// fire on every qualifying request.
+func TestAccrueLimiterCost_RequestSpikeAlertFiresOverThreshold(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+	server, count := newAlertServer(t)
+	db.SetNotifications(notify.NewClient())
+
+	if _, err := db.CreateLimiter(ctx, Limiter{
+		SessionID:           "sess_spike",
+		LimitAmount:         100.0,
+		RefreshValue:        60,
+		RefreshUnit:         "minutes",
+		NextRefreshAt:       float64(now.Add(time.Hour).Unix()),
+		IsActive:            true,
+		CreatedAt:           float64(now.Unix()),
+		UpdatedAt:           float64(now.Unix()),
+		AlertRequestCostUSD: floatPtr(1.0),
+		SlackWebhookURL:     server.URL,
+	}); err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+
+	// Below the per-request threshold: no alert.
+	saveExchangeWithCost(t, db, "sess_spike", 0.50)
+	assertNoMoreAlerts(t, count, 0)
+
+	// Meets the threshold: fires.
+	saveExchangeWithCost(t, db, "sess_spike", 1.0)
+	waitForCount(t, count, 1)
+
+	// Fires again on a second qualifying request in the same window — no
+	// "already sent" gating like the budget alert has.
+	saveExchangeWithCost(t, db, "sess_spike", 2.0)
+	waitForCount(t, count, 2)
+}
+
+// TestAccrueLimiterCost_NoRequestSpikeAlertWhenUnsetOrInactive confirms the
+// request-spike alert respects both AlertRequestCostUSD being unset and the
+// same is-active/in-window gate the budget alert uses.
+func TestAccrueLimiterCost_NoRequestSpikeAlertWhenUnsetOrInactive(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+	server, count := newAlertServer(t)
+	db.SetNotifications(notify.NewClient())
+
+	if _, err := db.CreateLimiter(ctx, Limiter{
+		SessionID:       "sess_spike_unset",
+		LimitAmount:     100.0,
+		RefreshValue:    60,
+		RefreshUnit:     "minutes",
+		NextRefreshAt:   float64(now.Add(time.Hour).Unix()),
+		IsActive:        true,
+		CreatedAt:       float64(now.Unix()),
+		UpdatedAt:       float64(now.Unix()),
+		SlackWebhookURL: server.URL,
+		// AlertRequestCostUSD left nil.
+	}); err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+	saveExchangeWithCost(t, db, "sess_spike_unset", 50.0)
+	assertNoMoreAlerts(t, count, 0)
+
+	if _, err := db.CreateLimiter(ctx, Limiter{
+		SessionID:           "sess_spike_inactive",
+		LimitAmount:         100.0,
+		RefreshValue:        60,
+		RefreshUnit:         "minutes",
+		NextRefreshAt:       float64(now.Add(time.Hour).Unix()),
+		IsActive:            false,
+		CreatedAt:           float64(now.Unix()),
+		UpdatedAt:           float64(now.Unix()),
+		AlertRequestCostUSD: floatPtr(1.0),
+		SlackWebhookURL:     server.URL,
+	}); err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+	saveExchangeWithCost(t, db, "sess_spike_inactive", 50.0)
+	assertNoMoreAlerts(t, count, 0)
+}
+
+// TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert drives
+// accrueLimiterCost from many goroutines whose combined cost crosses the
+// budget threshold, and asserts exactly one Slack alert is sent — guarding
+// against the read-check-write race on AlertSent. Run with -race.
+func TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+	server, count := newAlertServer(t)
+	db.SetNotifications(notify.NewClient())
+
+	if _, err := db.CreateLimiter(ctx, Limiter{
+		SessionID:         "sess_concurrent",
 		LimitAmount:       1.0,
 		RefreshValue:      60,
 		RefreshUnit:       "minutes",
@@ -171,38 +287,38 @@ func TestAccrueLimiterCost_BudgetAlertPrefersLimiterWebhookOverDefault(t *testin
 		CreatedAt:         float64(now.Unix()),
 		UpdatedAt:         float64(now.Unix()),
 		AlertThresholdPct: intPtr(50),
-		SlackWebhookURL:   limiterServer.URL,
-	})
-	if err != nil {
-		t.Fatalf("CreateLimiter: %v", err)
-	}
-
-	saveExchangeWithCost(t, db, "sess_own_webhook", 0.60)
-	waitForCount(t, limiterCount, 1)
-	assertNoMoreAlerts(t, defaultCount, 0)
-}
-
-func TestAccrueLimiterCost_NoAlertWhenThresholdUnset(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
-	now := time.Now()
-	server, count := newAlertServer(t)
-	db.SetNotifications(notify.NewClient(), server.URL)
-
-	if _, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:     "sess_no_alert",
-		LimitAmount:   1.0,
-		RefreshValue:  60,
-		RefreshUnit:   "minutes",
-		NextRefreshAt: float64(now.Add(time.Hour).Unix()),
-		IsActive:      true,
-		CreatedAt:     float64(now.Unix()),
-		UpdatedAt:     float64(now.Unix()),
-		// AlertThresholdPct left nil: alerting disabled for this limiter.
+		SlackWebhookURL:   server.URL,
 	}); err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
 
-	saveExchangeWithCost(t, db, "sess_no_alert", 1.0)
-	assertNoMoreAlerts(t, count, 0)
+	const goroutines = 20
+	var wg sync.WaitGroup
+	var failures atomic.Int32
+	wg.Add(goroutines)
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			// Each accrual alone crosses the 50% threshold of the $1.00
+			// budget, so every one of them independently observes the
+			// crossing if the read-check-write isn't serialized.
+			if err := db.SaveExchange(ctx, Exchange{
+				SessionID:   "sess_concurrent",
+				Path:        "/v1/messages",
+				Timestamp:   float64(time.Now().Unix()),
+				RawRequest:  "{}",
+				RawResponse: "{}",
+				InputCost:   floatPtr(0.60),
+			}); err != nil {
+				failures.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := failures.Load(); n != 0 {
+		t.Fatalf("SaveExchange failed %d/%d times", n, goroutines)
+	}
+
+	waitForCount(t, count, 1)
+	assertNoMoreAlerts(t, count, 1)
 }
