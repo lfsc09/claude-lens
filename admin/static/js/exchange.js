@@ -138,6 +138,7 @@ import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText
             <div class="flex items-center gap-2">
               <h2 class="font-semibold uppercase tracking-wide">Request</h2>
               <button type="button" id="request-copy-raw" class="px-2 py-1 rounded bg-gray-200 text-[.7rem] uppercase font-medium tracking-wide hover:bg-gray-300">Copy Raw</button>
+              <button type="button" id="request-download-raw" class="px-2 py-1 rounded bg-gray-200 text-[.7rem] uppercase font-medium tracking-wide hover:bg-gray-300">Download Raw</button>
             </div>
             <div class="flex flex-col gap-2 items-end">
               <span class="text-xs text-gray-700 font-mono">${fmtInt(exchange.raw_request_tokens)} tokens</span>
@@ -242,6 +243,33 @@ import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText
     } finally {
       setTimeout(() => { trigger.textContent = 'Copy Raw'; }, 1500);
     }
+  });
+
+  /**
+   * Prompts the browser to save the given text content as a local file.
+   * @param {string} filename - Name for the downloaded file.
+   * @param {string} content - File content to write.
+   */
+  function downloadAsFile(filename, content) {
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  document.addEventListener('click', (e) => {
+    const trigger = e.target.closest('#request-download-raw');
+    if (!trigger || !derivedExchange?.raw_request) return;
+    let content = derivedExchange.raw_request;
+    try {
+      content = JSON.stringify(JSON.parse(content), null, 4);
+    } catch {
+      // raw_request wasn't valid JSON; fall back to the original text.
+    }
+    downloadAsFile(`exchange-${derivedExchange.id}-request.json`, content);
   });
 
   load();
