@@ -35,8 +35,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if *feed {
-		if err := runFeed(cfg, *table, *row); err != nil {
+		if err := runFeed(ctx, cfg, *table, *row); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -44,9 +47,6 @@ func main() {
 	}
 
 	logging.Setup(cfg)
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	db, err := database.Open(ctx, cfg.DBPath)
 	if err != nil {

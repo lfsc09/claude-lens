@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,7 +26,7 @@ var feedTables = map[string]string{
 // through its Admin UI. All field validation for row lives in the admin
 // handler that receives it; runFeed only checks that table is known and row
 // is syntactically valid JSON before making the request.
-func runFeed(cfg config.Config, table, row string) error {
+func runFeed(ctx context.Context, cfg config.Config, table, row string) error {
 	endpoint, ok := feedTables[table]
 	if !ok {
 		names := make([]string, 0, len(feedTables))
@@ -40,8 +41,14 @@ func runFeed(cfg config.Config, table, row string) error {
 	}
 
 	url := "http://" + dialAddr(cfg.AdminAddr) + endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(row)))
+	if err != nil {
+		return fmt.Errorf("build feed request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(url, "application/json", bytes.NewReader([]byte(row)))
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("could not reach claude-lens admin API at %s (is the service running?): %w", url, err)
 	}

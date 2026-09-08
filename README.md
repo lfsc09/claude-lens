@@ -159,7 +159,7 @@ claude-lens --feed --table model_prices --row '{"model_prefix": "claude-sonnet-5
 Add limiter:
 
 ```sh
-claude-lens --feed --table limiters --row '{"session_id": "", "limit_amount": 20, "refresh_value": 1, "refresh_unit": "days", "refresh_aligned": 1}'
+claude-lens --feed --table limiters --row '{"session_id": "", "limit_amount": 20, "refresh_value": 1, "refresh_unit": "days", "refresh_aligned": true}'
 ```
 
 ## How it works
