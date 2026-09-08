@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,22 +17,36 @@ import (
 	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/logging"
+	"github.com/lfsc09/claude-lens/internal/notify"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
 	"github.com/lfsc09/claude-lens/proxy"
 )
 
 func main() {
+	feed := flag.Bool("feed", false, "seed a single row into a table via the running admin API, instead of starting the service")
+	table := flag.String("table", "", "table to seed with --feed (limiters, model_prices)")
+	row := flag.String("row", "", "row to insert with --feed, as a JSON object")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
 
-	logging.Setup(cfg)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *feed {
+		if err := runFeed(ctx, cfg, *table, *row); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	logging.Setup(cfg)
 
 	db, err := database.Open(ctx, cfg.DBPath)
 	if err != nil {
@@ -38,6 +54,8 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	db.SetNotifications(notify.NewClient())
 
 	est := pricing.New(db)
 	if err := est.Refresh(ctx); err != nil {

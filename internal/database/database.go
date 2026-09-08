@@ -7,13 +7,33 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/lfsc09/claude-lens/internal/notify"
 	_ "modernc.org/sqlite"
 )
 
 // DB wraps a *sql.DB configured for claude-lens' schema and concurrency model.
 type DB struct {
 	sql *sql.DB
+
+	// notifier drives Slack alert delivery from accrueLimiterCost. Unset
+	// (nil) until SetNotifications is called, in which case alert dispatch
+	// is silently skipped.
+	notifier *notify.Client
+
+	// alertMu serializes accrueLimiterCost's read-check-write of each
+	// limiter's alert state, so two exchanges completing close together for
+	// the same limiter can't both observe AlertSent == false and send a
+	// duplicate budget-threshold alert.
+	alertMu sync.Mutex
+}
+
+// SetNotifications wires up Slack delivery for limiter alerts (both the
+// budget-threshold and per-request-cost kinds). Safe to skip calling
+// entirely — accrueLimiterCost just won't send alerts.
+func (db *DB) SetNotifications(client *notify.Client) {
+	db.notifier = client
 }
 
 const schema = `
@@ -43,6 +63,27 @@ CREATE TABLE IF NOT EXISTS exchanges (
 CREATE INDEX IF NOT EXISTS idx_exchanges_session_id ON exchanges (session_id);
 CREATE INDEX IF NOT EXISTS idx_exchanges_timestamp  ON exchanges (timestamp);
 
+CREATE TABLE IF NOT EXISTS exchanges_ledger (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    exchange_id           INTEGER REFERENCES exchanges(id) ON DELETE SET NULL,
+    session_id            TEXT    NOT NULL,
+    timestamp             REAL    NOT NULL,
+    model                 TEXT,
+    input_tokens          INTEGER,
+    output_tokens         INTEGER,
+    cache_creation_tokens INTEGER,
+    cache_read_tokens     INTEGER,
+    cost                  REAL,
+    input_cost            REAL,
+    output_cost           REAL,
+    cache_creation_cost   REAL,
+    cache_read_cost       REAL,
+    matched_price         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_exchanges_ledger_session_id  ON exchanges_ledger (session_id);
+CREATE INDEX IF NOT EXISTS idx_exchanges_ledger_timestamp   ON exchanges_ledger (timestamp);
+CREATE INDEX IF NOT EXISTS idx_exchanges_ledger_exchange_id ON exchanges_ledger (exchange_id);
+
 CREATE TABLE IF NOT EXISTS model_prices (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     model_prefix      TEXT    NOT NULL,
@@ -71,7 +112,13 @@ CREATE TABLE IF NOT EXISTS limiters (
     is_active         INTEGER NOT NULL DEFAULT 1,
     created_at        REAL    NOT NULL,
     updated_at        REAL    NOT NULL,
-    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL))
+    slack_webhook_url    TEXT    NOT NULL DEFAULT '',
+    alert_threshold_pct  INTEGER,
+    alert_sent           INTEGER NOT NULL DEFAULT 0,
+    alert_request_cost_usd REAL,
+    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL)),
+    CHECK (alert_threshold_pct IS NULL OR (alert_threshold_pct BETWEEN 1 AND 100)),
+    CHECK (alert_request_cost_usd IS NULL OR alert_request_cost_usd > 0)
 );
 CREATE INDEX IF NOT EXISTS idx_limiters_session_id ON limiters (session_id);
 `
@@ -92,6 +139,12 @@ var newColumns = map[string][]string{
 	"model_prices": {
 		"cache_write_per_m REAL NOT NULL DEFAULT 0",
 		"cache_read_per_m REAL NOT NULL DEFAULT 0",
+	},
+	"limiters": {
+		"slack_webhook_url TEXT NOT NULL DEFAULT ''",
+		"alert_threshold_pct INTEGER",
+		"alert_sent INTEGER NOT NULL DEFAULT 0",
+		"alert_request_cost_usd REAL",
 	},
 }
 
@@ -179,6 +232,29 @@ func migrateModelPricesToRules(ctx context.Context, sqlDB *sql.DB) error {
 	return tx.Commit()
 }
 
+// migrateExchangesLedgerBackfill copies every exchange's cost/token data
+// into exchanges_ledger for rows that predate that table's existence. The
+// NOT EXISTS guard makes this safe on every startup: a no-op on a fresh DB
+// (exchanges is empty), a one-time full backfill on an upgrade, and a no-op
+// again afterward since SaveExchange keeps both tables in sync going
+// forward.
+func migrateExchangesLedgerBackfill(ctx context.Context, sqlDB *sql.DB) error {
+	_, err := sqlDB.ExecContext(ctx, `
+		INSERT INTO exchanges_ledger
+		    (exchange_id, session_id, timestamp, model,
+		     input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+		     cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price)
+		SELECT id, session_id, timestamp, model,
+		       input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+		       cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price
+		FROM exchanges e
+		WHERE NOT EXISTS (SELECT 1 FROM exchanges_ledger l WHERE l.exchange_id = e.id)`)
+	if err != nil {
+		return fmt.Errorf("backfill exchanges_ledger: %w", err)
+	}
+	return nil
+}
+
 func tableColumns(ctx context.Context, sqlDB *sql.DB, table string) (map[string]bool, error) {
 	rows, err := sqlDB.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
@@ -210,9 +286,17 @@ func tableColumns(ctx context.Context, sqlDB *sql.DB, table string) (map[string]
 // this *DB from the same process. Serializing at the pool level avoids
 // SQLITE_BUSY races without needing retry logic throughout the query code;
 // busy_timeout gives any queued writer up to 5s to acquire the lock before
-// failing outright.
+// failing outright. _foreign_keys=on turns on SQLite's foreign-key
+// enforcement (off by default per connection) so exchanges_ledger's
+// ON DELETE SET NULL on exchange_id actually fires. Because of this, any
+// future migration that rebuilds exchanges (drop+recreate under a new
+// shape, as migrateModelPricesToRules does for model_prices) must wrap the
+// drop in PRAGMA foreign_keys=OFF / =ON: SQLite performs an implicit
+// delete-all before dropping a table that's an FK parent, which would
+// otherwise cascade-null every exchanges_ledger.exchange_id even though the
+// rows are only meant to be recreated, not gone.
 func Open(ctx context.Context, path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000", path)
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on", path)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -231,6 +315,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err := migrateModelPricesToRules(ctx, sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate model_prices to rules: %w", err)
+	}
+	if err := migrateExchangesLedgerBackfill(ctx, sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("backfill exchanges_ledger: %w", err)
 	}
 
 	db := &DB{sql: sqlDB}
