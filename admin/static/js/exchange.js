@@ -1,4 +1,4 @@
-import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText } from './app.js';
+import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText } from './app.js';
 
 'use strict';
 
@@ -235,30 +235,8 @@ import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText
   document.addEventListener('click', async (e) => {
     const trigger = e.target.closest('#request-copy-raw');
     if (!trigger || !derivedExchange?.raw_request) return;
-    try {
-      await navigator.clipboard.writeText(derivedExchange.raw_request);
-      trigger.textContent = 'Copied!';
-    } catch {
-      trigger.textContent = 'Failed';
-    } finally {
-      setTimeout(() => { trigger.textContent = 'Copy Raw'; }, 1500);
-    }
+    await copyTextToClipboard(trigger, derivedExchange.raw_request, 'Copy Raw');
   });
-
-  /**
-   * Prompts the browser to save the given text content as a local file.
-   * @param {string} filename - Name for the downloaded file.
-   * @param {string} content - File content to write.
-   */
-  function downloadAsFile(filename, content) {
-    const blob = new Blob([content], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
 
   document.addEventListener('click', (e) => {
     const trigger = e.target.closest('#request-download-raw');
@@ -269,7 +247,7 @@ import { esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText
     } catch {
       // raw_request wasn't valid JSON; fall back to the original text.
     }
-    downloadAsFile(`exchange-${derivedExchange.id}-request.json`, content);
+    downloadTextFile(`exchange-${derivedExchange.id}-request.json`, content);
   });
 
   load();
