@@ -67,7 +67,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
   function render() {
     dropzone.classList.add('hidden');
     const { rawText, payload, sourceLabel } = loaded;
-    const model = payload.model || '—';
+    const model = payload.model ?? '—';
     const isStreaming = !!payload.stream;
 
     content.innerHTML = `
@@ -106,8 +106,8 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
         <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between">
           <div class="flex items-center gap-2">
             <h2 class="font-semibold uppercase tracking-wide">Request</h2>
-            <button type="button" id="analyze-copy-raw" class="px-2 py-1 rounded bg-gray-200 text-[.7rem] uppercase font-medium tracking-wide hover:bg-gray-300">Copy Raw</button>
-            <button type="button" id="analyze-download-raw" class="px-2 py-1 rounded bg-gray-200 text-[.7rem] uppercase font-medium tracking-wide hover:bg-gray-300">Download Raw</button>
+            <button type="button" id="analyze-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Copy Raw</button>
+            <button type="button" id="analyze-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Download Raw</button>
           </div>
           <span class="text-xs text-gray-500 font-mono">${fmtBytes(estimateBytes(rawText))}</span>
         </div>

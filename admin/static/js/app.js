@@ -5,7 +5,7 @@
 
 const txtEncoder = new TextEncoder();
 
-const NAV_LINK_ACTIVE = 'py-1 px-2 rounded-lg bg-emerald-700 text-emerald-50 shadow-md hover:shadow-emerald-700/50 transition';
+const NAV_LINK_ACTIVE = 'text-emerald-50 py-1 px-2 rounded-lg bg-emerald-700 shadow-md hover:shadow-emerald-700/50 transition';
 const NAV_LINK_INACTIVE = 'text-gray-600 hover:text-gray-900';
 
 /**
@@ -24,8 +24,8 @@ class SiteNav extends HTMLElement {
     const exchangesActive = active === 'exchanges' || active === 'analyze-exchange';
     const linkClass = (key) => (key === active ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE);
     const menuItemClass = (key) => (key === active
-      ? 'block px-3 py-2 text-emerald-700 font-semibold bg-emerald-50'
-      : 'block px-3 py-2 text-gray-600 hover:bg-gray-50 hover:text-gray-900');
+      ? 'block text-emerald-700 font-semibold px-3 py-2 bg-emerald-50'
+      : 'block text-gray-600 hover:text-gray-900 px-3 py-2 hover:bg-gray-50');
 
     this.innerHTML = `
       <header class="px-6 py-3 bg-white border-b border-gray-200">
@@ -42,7 +42,7 @@ class SiteNav extends HTMLElement {
                 <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
-            <div id="exchanges-menu" role="menu" aria-labelledby="exchanges-menu-button" class="hidden absolute left-0 mt-2 w-48 bg-white rounded-lg border border-gray-200 shadow-lg py-1 z-50">
+            <div id="exchanges-menu" role="menu" aria-labelledby="exchanges-menu-button" class="hidden absolute left-0 z-50 w-48 mt-2 py-1 bg-white rounded-lg border border-gray-200 shadow-lg">
               <a href="/exchanges" role="menuitem" class="${menuItemClass('exchanges')}">All Exchanges</a>
               <a href="/exchanges/analyze" role="menuitem" class="${menuItemClass('analyze-exchange')}">Analyze Exchange</a>
             </div>
