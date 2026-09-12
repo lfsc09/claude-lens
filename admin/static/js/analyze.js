@@ -73,7 +73,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
     content.innerHTML = `
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold">Loaded request</h2>
-        <button type="button" id="analyze-reset" class="px-3 py-1.5 rounded-lg bg-gray-200 text-xs uppercase font-medium tracking-wide hover:bg-gray-300">Analyze another</button>
+        <button type="button" id="analyze-reset" class="text-xs uppercase font-medium tracking-wide px-3 py-1.5 rounded-lg bg-gray-200 hover:bg-gray-300">Analyze another</button>
       </div>
       <div class="overflow-x-auto bg-white rounded-lg border border-gray-200">
         <table class="w-full text-xs">
@@ -103,7 +103,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
         </table>
       </div>
       <section class="flex flex-col gap-0.5">
-        <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between">
+        <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
           <div class="flex items-center gap-2">
             <h2 class="font-semibold uppercase tracking-wide">Request</h2>
             <button type="button" id="analyze-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Copy Raw</button>
@@ -111,7 +111,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
           </div>
           <span class="text-xs text-gray-500 font-mono">${fmtBytes(estimateBytes(rawText))}</span>
         </div>
-        <div class="bg-white rounded-b-lg border border-gray-200 p-4">
+        <div class="p-4 bg-white rounded-b-lg border border-gray-200">
           <andypf-json-viewer
             id="analyze-json-viewer"
             indent="4"
