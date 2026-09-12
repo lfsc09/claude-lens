@@ -40,7 +40,6 @@ const schema = `
 CREATE TABLE IF NOT EXISTS exchanges (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id            TEXT    NOT NULL,
-    session_name          TEXT,
     path                  TEXT    NOT NULL,
     timestamp             REAL    NOT NULL,
     is_streaming          INTEGER NOT NULL DEFAULT 0,
@@ -131,6 +130,12 @@ CREATE TABLE IF NOT EXISTS settings (
     litellm_last_attempt_at        REAL    NOT NULL DEFAULT 0,
     updated_at                     REAL    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_names (
+    session_id TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 `
 
 // newColumns lists columns added to the schema after the tables already
@@ -180,6 +185,27 @@ func migrateSchema(ctx context.Context, sqlDB *sql.DB) error {
 				return fmt.Errorf("add column %s.%s: %w", table, name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// migrateDropExchangesSessionName drops exchanges.session_name, superseded
+// by the session_names table (session naming is now a manual rename kept
+// independent of the exchange log, not a column populated per-row). Guarded
+// by the column's presence: a no-op on a fresh DB (schema above never
+// creates it) or an already-migrated one. session_name is part of no index,
+// PK, or CHECK constraint, so this is a plain column drop, not a table
+// rebuild.
+func migrateDropExchangesSessionName(ctx context.Context, sqlDB *sql.DB) error {
+	cols, err := tableColumns(ctx, sqlDB, "exchanges")
+	if err != nil {
+		return fmt.Errorf("inspect columns of exchanges: %w", err)
+	}
+	if !cols["session_name"] {
+		return nil
+	}
+	if _, err := sqlDB.ExecContext(ctx, "ALTER TABLE exchanges DROP COLUMN session_name"); err != nil {
+		return fmt.Errorf("drop exchanges.session_name: %w", err)
 	}
 	return nil
 }
@@ -404,6 +430,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err := migrateSchema(ctx, sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+	if err := migrateDropExchangesSessionName(ctx, sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("drop exchanges.session_name: %w", err)
 	}
 	if err := migrateModelPricesToRules(ctx, sqlDB); err != nil {
 		sqlDB.Close()

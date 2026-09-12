@@ -185,8 +185,7 @@ graph LR
 Only POST requests are intercepted (GET/PUT/DELETE pass through
 untouched). For each one, the database records:
 
-- Session ID (from `x-claude-code-session-id` or `x-session-id`) and
-  session name (`x-session-name`, if set)
+- Session ID (from `x-claude-code-session-id` or `x-session-id`)
 - The full message array sent by the client
 - The assistant's response text
 - `input_tokens`/`output_tokens`, plus `cache_creation_input_tokens`/
