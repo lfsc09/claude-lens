@@ -178,11 +178,11 @@ export function fmtCountdown(ts) {
 export function fmtActivePeriod(l) {
   if (l.active_start_hour == null) {
     return l.is_active
-      ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Always</span>'
-      : '<span class="px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded font-medium">Always</span>';
+      ? '<span class="text-blue-700 font-medium px-1.5 py-0.5 bg-blue-50 rounded">Always</span>'
+      : '<span class="text-gray-400 font-medium px-1.5 py-0.5 bg-gray-50 rounded">Always</span>';
   }
   const color = l.within_active_period && l.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-50 text-gray-400';
-  return `<span class="px-1.5 py-0.5 ${color} rounded font-medium">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
+  return `<span class="font-medium px-1.5 py-0.5 ${color} rounded">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
 }
 
 /**
@@ -193,8 +193,8 @@ export function fmtActivePeriod(l) {
 export function progressBar(l, height = 'h-1.5') {
   const pct = l.limit_amount > 0 ? Math.min(100, (l.current_cost / l.limit_amount) * 100) : 0;
   const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
-  return `<div class="w-full flex flex-col items-end">
-    <div class="${height} w-full bg-gray-200 rounded-full overflow-hidden">
+  return `<div class="flex flex-col items-end w-full">
+    <div class="${height} w-full overflow-hidden bg-gray-200 rounded-full">
       <div class="h-full ${l.within_active_period && l.is_active ? barColor : 'bg-gray-400'}" style="width:${pct}%"></div>
     </div>
     <div class="text-xs text-gray-500 mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
@@ -233,7 +233,7 @@ export function costTooltip(row) {
   if (row.cache_creation_cost != null) parts.push(`<div class="flex justify-between"><b>Cache create:</b><span>${fmtCost(row.cache_creation_cost)}</span></div>`);
   if (row.cache_read_cost != null) parts.push(`<div class="flex justify-between"><b>Cache read:</b><span>${fmtCost(row.cache_read_cost)}</span></div>`);
   if (row.output_cost != null) parts.push(`<div class="flex justify-between mt-1.5"><b>Output:</b><span>${fmtCost(row.output_cost)}</span></div>`);
-  return parts.length ? '<div class="w-32 flex flex-col gap-0.5">' + parts.join('') + '</div>' : '';
+  return parts.length ? '<div class="flex flex-col w-32 gap-0.5">' + parts.join('') + '</div>' : '';
 }
 
 export function tokensTooltip(row) {
@@ -242,7 +242,7 @@ export function tokensTooltip(row) {
   if (row.cache_creation_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache create:</b><span>${fmtTokens(row.cache_creation_tokens)}</span></div>`);
   if (row.cache_read_tokens != null) parts.push(`<div class="flex justify-between"><b>Cache read:</b><span>${fmtTokens(row.cache_read_tokens)}</span></div>`);
   if (row.output_tokens != null) parts.push(`<div class="flex justify-between mt-1.5"><b>Output:</b><span>${fmtTokens(row.output_tokens)}</span></div>`);
-  return parts.length ? '<div class="w-32 flex flex-col gap-0.5">' + parts.join('') + '</div>' : '';
+  return parts.length ? '<div class="flex flex-col w-32 gap-0.5">' + parts.join('') + '</div>' : '';
 }
 
 // Single floating tooltip driven by [data-tip] elements: one fixed-position
@@ -417,9 +417,9 @@ export function renderPaginationControls(containerId, state, pageSizes, onSizeOr
     : `<span class="text-gray-300">${label}</span>`;
 
   container.innerHTML = `
-    <div class="flex items-center gap-2 text-gray-500">
+    <div class="flex items-center text-gray-500 gap-2">
       <label for="${containerId}-page-size-select">Rows per page</label>
-      <select id="${containerId}-page-size-select" class="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500">
+      <select id="${containerId}-page-size-select" class="text-sm px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         ${pageSizes.map((s) => `<option value="${s}" ${s === pageSize ? 'selected' : ''}>${s}</option>`).join('')}
       </select>
       <span>${total > 0 ? `${from}–${to} of ${total}` : '0 of 0'} results</span>
@@ -430,7 +430,7 @@ export function renderPaginationControls(containerId, state, pageSizes, onSizeOr
       <span class="flex items-center gap-1.5 text-gray-500">
         Page
         <input id="${containerId}-page-jump-input" type="number" min="1" max="${totalPages}" value="${page}"
-          class="border border-gray-300 rounded px-2 py-1 text-sm w-16 text-center focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          class="w-16 text-sm text-center px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         of ${totalPages}
       </span>
       ${navLink('Next', page + 1, page < totalPages)}

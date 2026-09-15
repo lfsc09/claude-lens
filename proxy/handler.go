@@ -31,7 +31,6 @@ import (
 type exchangeMeta struct {
 	intercept     bool
 	sessionID     string
-	sessionName   *string
 	path          string
 	timestamp     float64
 	rawRequest    string
@@ -187,9 +186,6 @@ func (h *Handler) director(r *http.Request) {
 	if r.Method == http.MethodPost {
 		meta.intercept = true
 		meta.sessionID = sessionIDFromRequest(r)
-		if name := r.Header.Get("x-session-name"); name != "" {
-			meta.sessionName = &name
-		}
 		meta.timestamp = float64(time.Now().UnixNano()) / 1e9
 
 		body, err := io.ReadAll(r.Body)
@@ -280,7 +276,6 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 
 	err := h.db.SaveExchange(ctx, database.Exchange{
 		SessionID:           meta.sessionID,
-		SessionName:         meta.sessionName,
 		Path:                meta.path,
 		Timestamp:           meta.timestamp,
 		IsStreaming:         meta.isStreaming,

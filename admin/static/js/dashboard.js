@@ -110,6 +110,12 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   let sessionPageSize = DEFAULT_SESSION_PAGE_SIZE;
   let sessionTotal = 0;
 
+  // editingSessionId/editingDraft track an in-progress Ctrl+click rename so
+  // renderSessionRows() (driven by SSE deltas and the 30s countdown tick)
+  // can re-render that row back into edit mode instead of clobbering it.
+  let editingSessionId = null;
+  let editingDraft = '';
+
   function sessionLimiterCell(session) {
     const l = limitersBySession.get(session.session_id);
     if (!l) return '<span class="text-gray-300">—</span>';
@@ -150,23 +156,26 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
       cache_read_tokens: session.context_cache_read_tokens,
     };
     const sessionQuery = 'session = ' + JSON.stringify(session.session_id);
-    const nameHtml = `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 hover:underline font-medium">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
+    const isEditing = session.session_id === editingSessionId;
+    const nameHtml = isEditing
+      ? `<input type="text" class="w-full max-w-56 text-sm px-1.5 py-0.5 border border-emerald-400 rounded focus:outline-none focus:ring-1 focus:ring-emerald-400 session-name-input" value="${esc(editingDraft)}" maxlength="200">`
+      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 font-medium hover:underline">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
     return `<tr class="hover:bg-gray-50">
-      <td class="px-4 py-2">${nameHtml}</td>
-      <td class="px-4 py-2 text-right text-gray-700">${session.exchange_count}</td>
-      <td class="px-4 py-2 text-gray-700">${esc(session.model || '—')}</td>
-      <td class="px-4 py-2 text-right text-gray-700" data-tip="${esc(tokensTooltip(tokensRow))}">
+      <td class="px-4 py-2 session-name-cell" data-session-id="${esc(session.session_id)}">${nameHtml}</td>
+      <td class="text-right text-gray-700 px-4 py-2">${session.exchange_count}</td>
+      <td class="text-gray-700 px-4 py-2">${esc(session.model || '—')}</td>
+      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(tokensTooltip(tokensRow))}">
         ${fmtTokens(totalTok)}
       </td>
-      <td class="px-4 py-2 text-right text-gray-700" data-tip="${esc(tokensTooltip(contextRow))}">
+      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(tokensTooltip(contextRow))}">
         ${fmtTokens(contextSize)}
       </td>
-      <td class="px-4 py-2 text-right text-gray-700" data-tip="${esc(costTooltip(costsRow))}">
+      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(costTooltip(costsRow))}">
         ${costStr}
         <p class="text-xs text-gray-400">avg ${avgCostStr}</p>
       </td>
-      <td class="px-4 py-2 text-gray-400 whitespace-nowrap">${fmtTime(session.last_updated)}</td>
-      <td class="px-4 py-2 whitespace-nowrap text-right w-36">${sessionLimiterCell(session)}</td>
+      <td class="text-gray-400 whitespace-nowrap px-4 py-2">${fmtTime(session.last_updated)}</td>
+      <td class="w-36 whitespace-nowrap text-right px-4 py-2">${sessionLimiterCell(session)}</td>
       </tr>`;
   }
 
@@ -175,7 +184,92 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     if (!tbody) return;
     tbody.innerHTML = lastSessionRows.length
       ? lastSessionRows.map(buildSessionRow).join('')
-      : '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No sessions yet.</td></tr>';
+      : '<tr><td colspan="8" class="text-center text-gray-400 px-4 py-8">No sessions yet.</td></tr>';
+    if (editingSessionId !== null) {
+      const input = tbody.querySelector('.session-name-input');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }
+  }
+
+  /**
+   * Enters inline-rename mode for a session's name cell.
+   * @param {string} sessionId - Session to rename.
+   */
+  function startEditingSession(sessionId) {
+    const session = lastSessionRows.find((r) => r.session_id === sessionId);
+    editingSessionId = sessionId;
+    editingDraft = session?.session_name || '';
+    renderSessionRows();
+  }
+
+  /**
+   * Exits inline-rename mode without saving.
+   */
+  function stopEditingSession() {
+    editingSessionId = null;
+    editingDraft = '';
+    renderSessionRows();
+  }
+
+  /**
+   * Commits the rename input's current value via PATCH, then patches the
+   * matching row in lastSessionRows with the server-confirmed name.
+   * @param {HTMLInputElement} input - The rename input being committed.
+   */
+  async function commitSessionName(input) {
+    const sessionId = editingSessionId;
+    const name = input.value.trim();
+    const session = lastSessionRows.find((r) => r.session_id === sessionId);
+    if (name === (session?.session_name || '')) {
+      stopEditingSession();
+      return;
+    }
+    editingSessionId = null;
+    editingDraft = '';
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/name`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        lastSessionRows = lastSessionRows.map((r) => (r.session_id === sessionId ? { ...r, session_name: data.session_name } : r));
+      }
+    } finally {
+      renderSessionRows();
+    }
+  }
+
+  const sessionStatsTbody = document.getElementById('session-stats-tbody');
+  if (sessionStatsTbody) {
+    sessionStatsTbody.addEventListener('click', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const cell = e.target.closest('.session-name-cell');
+      if (!cell) return;
+      e.preventDefault();
+      startEditingSession(cell.dataset.sessionId);
+    });
+
+    sessionStatsTbody.addEventListener('keydown', (e) => {
+      if (!e.target.classList.contains('session-name-input')) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitSessionName(e.target);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        stopEditingSession();
+      }
+    });
+
+    sessionStatsTbody.addEventListener('focusout', (e) => {
+      if (!e.target.classList.contains('session-name-input')) return;
+      if (editingSessionId === null) return;
+      stopEditingSession();
+    });
   }
 
   function renderSessionPagination() {
@@ -363,7 +457,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     }
 
     // Day label column — height matches cell h-7 + gap-1
-    const dayLabelsHtml = DAY_LABELS.map((d) => `<div class="text-xs text-gray-400 w-8 h-7 flex items-center">${d}</div>`).join('');
+    const dayLabelsHtml = DAY_LABELS.map((d) => `<div class="flex items-center w-8 h-7 text-xs text-gray-400">${d}</div>`).join('');
 
     const monthLabelSeen = {};
 
@@ -389,16 +483,16 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         const txt = fmtCell(cost);
         const tip = `<div class="flex gap-2"><b>${key}:</b><span>${cost > 0 ? `$${cost.toFixed(6)}` : 'no activity'}</span></div>`;
 
-        return `<div class="w-16 h-7 rounded-sm ${clr.bg} ${clr.text} ${isWeekend && level === 0 ? 'bg-gray-200' : ''} flex items-center justify-center text-[.7rem] font-mono overflow-hidden cursor-default" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+        return `<div class="flex items-center justify-center overflow-hidden w-16 h-7 text-xs font-mono cursor-default rounded-sm ${clr.bg} ${clr.text} ${isWeekend && level === 0 ? 'bg-gray-200' : ''}" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
       }).join('');
 
       return `<div class="flex flex-col gap-1 ${gapClass}">
-        <div class="text-xs text-gray-500 font-medium h-7 flex items-end pb-0.5 whitespace-nowrap">${monthLabel}</div>
+        <div class="flex items-end h-7 text-xs text-gray-500 font-medium whitespace-nowrap pb-0.5">${monthLabel}</div>
         ${daysHtml}
         </div>`;
     }).join('');
 
-    container.innerHTML = `<div class="flex gap-1 items-start">
+    container.innerHTML = `<div class="flex items-start gap-1">
       <div class="flex flex-col gap-1 pt-8 flex-shrink-0 mr-1">${dayLabelsHtml}</div>
       ${weeksHtml}
       </div>`;

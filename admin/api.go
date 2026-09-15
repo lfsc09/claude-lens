@@ -248,6 +248,42 @@ func (h *handlers) sessionStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionStatsResponse{Rows: rows, Total: total})
 }
 
+type sessionNameRequest struct {
+	Name string `json:"name"`
+}
+
+// setSessionName sets or clears a session's display name. An empty (or
+// whitespace-only) name clears it back to showing the raw session id.
+func (h *handlers) setSessionName(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("sessionID")
+	if sessionID == "" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	var req sessionNameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if len(name) > 200 {
+		writeError(w, http.StatusBadRequest, "name must be at most 200 characters")
+		return
+	}
+
+	if err := h.db.SetSessionName(r.Context(), sessionID, name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp := map[string]any{"session_id": sessionID, "session_name": nil}
+	if name != "" {
+		resp["session_name"] = name
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // dailyCosts powers the dashboard's spending heatmap. ?days= defaults to 60
 // (the heatmap's fixed window) and falls back to that default for anything
 // absent, non-numeric, or non-positive.

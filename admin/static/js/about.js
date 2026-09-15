@@ -35,7 +35,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling } 
       totalSize += t.size_bytes;
       html += `
         <tr>
-          <td class="px-4 py-2 font-mono">${esc(t.name)}</td>
+          <td class="font-mono px-4 py-2">${esc(t.name)}</td>
           <td class="text-right px-4 py-2">${fmtInt(t.row_count)}</td>
           <td class="text-right px-4 py-2">${fmtBytes(t.size_bytes)}</td>
         </tr>`;

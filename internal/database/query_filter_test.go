@@ -20,8 +20,8 @@ func TestCompileExchangeFilter_Valid(t *testing.T) {
 		{"number gt", `cost > 0.5`, "cost > ?", []any{0.5}},
 		{"number no spaces", `cost>=0.5`, "cost >= ?", []any{0.5}},
 		{"negative number", `id != -1`, "id != ?", []any{-1.0}},
-		{"session maps to two columns", `session = "abc"`, "(session_id = ? OR session_name = ?)", []any{"abc", "abc"}},
-		{"session like maps to two columns", `session like abc`, `(session_id LIKE ? ESCAPE '\' OR session_name LIKE ? ESCAPE '\')`, []any{"%abc%", "%abc%"}},
+		{"session maps to two columns", `session = "abc"`, "(exchanges.session_id = ? OR sn.name = ?)", []any{"abc", "abc"}},
+		{"session like maps to two columns", `session like abc`, `(exchanges.session_id LIKE ? ESCAPE '\' OR sn.name LIKE ? ESCAPE '\')`, []any{"%abc%", "%abc%"}},
 		{"bool true", `stream = true`, "is_streaming = ?", []any{1}},
 		{"bool false", `stream = false`, "is_streaming = ?", []any{0}},
 		{"date", `date >= 2026-08-01`, "timestamp >= ?", nil}, // arg checked separately (depends on local tz)

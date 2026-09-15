@@ -14,7 +14,6 @@ import (
 // Exchange is a row to be written after a proxied request/response completes.
 type Exchange struct {
 	SessionID           string
-	SessionName         *string
 	Path                string
 	Timestamp           float64
 	IsStreaming         bool
@@ -153,13 +152,13 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO exchanges
-			(session_id, session_name, path, timestamp, is_streaming,
+			(session_id, path, timestamp, is_streaming,
 			 input_messages, output_text, input_tokens, output_tokens,
 			 cache_creation_tokens, cache_read_tokens,
 			 model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
 			 raw_request, raw_response)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.SessionID, e.SessionName, e.Path, e.Timestamp, boolToInt(e.IsStreaming),
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.SessionID, e.Path, e.Timestamp, boolToInt(e.IsStreaming),
 		e.InputMessages, e.OutputText, e.InputTokens, e.OutputTokens,
 		e.CacheCreationTokens, e.CacheReadTokens,
 		e.Model, cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost, e.MatchedPrice,
@@ -223,11 +222,12 @@ func (db *DB) GetExchanges(ctx context.Context, filterQuery string, limit, offse
 		return nil, err
 	}
 
-	query := `SELECT id, session_id, session_name, path, timestamp, is_streaming,
-	                  input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-	                  model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost,
+	query := `SELECT exchanges.id, exchanges.session_id, sn.name, exchanges.path, exchanges.timestamp, exchanges.is_streaming,
+	                  exchanges.input_tokens, exchanges.output_tokens, exchanges.cache_creation_tokens, exchanges.cache_read_tokens,
+	                  exchanges.model, exchanges.cost, exchanges.input_cost, exchanges.output_cost, exchanges.cache_creation_cost, exchanges.cache_read_cost,
 	                  ` + totalTokensExpr + ` AS total_tokens
-	           FROM exchanges `
+	           FROM exchanges
+	           LEFT JOIN session_names sn ON sn.session_id = exchanges.session_id `
 	args := []any{}
 	if where != "" {
 		query += "WHERE " + where + " "
@@ -267,7 +267,7 @@ func (db *DB) CountExchanges(ctx context.Context, filterQuery string) (int, erro
 		return 0, err
 	}
 
-	query := "SELECT COUNT(*) FROM exchanges "
+	query := "SELECT COUNT(*) FROM exchanges LEFT JOIN session_names sn ON sn.session_id = exchanges.session_id "
 	if where != "" {
 		query += "WHERE " + where
 	}
@@ -285,12 +285,14 @@ func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail,
 	var isStreaming int
 	var matchedPrice sql.NullString
 	err := db.sql.QueryRowContext(ctx,
-		`SELECT id, session_id, session_name, path, timestamp, is_streaming,
+		`SELECT exchanges.id, exchanges.session_id, sn.name, exchanges.path, exchanges.timestamp, exchanges.is_streaming,
 		        input_messages, output_text, input_tokens, output_tokens,
 		        cache_creation_tokens, cache_read_tokens,
 		        model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
 		        raw_request, raw_response
-		 FROM exchanges WHERE id = ?`, id,
+		 FROM exchanges
+		 LEFT JOIN session_names sn ON sn.session_id = exchanges.session_id
+		 WHERE exchanges.id = ?`, id,
 	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp, &isStreaming,
 		&e.InputMessages, &e.OutputText, &e.InputTokens, &e.OutputTokens,
 		&e.CacheCreationTokens, &e.CacheReadTokens,
@@ -361,7 +363,7 @@ func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float
 // differently. The le.* columns are wrapped in MAX() only to satisfy
 // GROUP BY e.session_id; last_exchange already joins 1:1 per session, so
 // it's a no-op, not an actual aggregation.
-const sessionStatsColumns = `e.session_id, MAX(e.session_name),
+const sessionStatsColumns = `e.session_id, MAX(sn.name),
 		        COUNT(*),
 		        COALESCE(SUM(e.input_tokens), 0), COALESCE(SUM(e.output_tokens), 0),
 		        COALESCE(SUM(e.cache_creation_tokens), 0), COALESCE(SUM(e.cache_read_tokens), 0),
@@ -409,6 +411,7 @@ func (db *DB) GetSessionStats(ctx context.Context, limit, offset int) ([]Session
 		 FROM exchanges e
 		 LEFT JOIN top_models tm ON tm.session_id = e.session_id
 		 LEFT JOIN last_exchange le ON le.session_id = e.session_id
+		 LEFT JOIN session_names sn ON sn.session_id = e.session_id
 		 GROUP BY e.session_id
 		 ORDER BY MAX(e.timestamp) DESC
 		 LIMIT ? OFFSET ?`,
@@ -438,6 +441,7 @@ func (db *DB) GetSessionStatsSince(ctx context.Context, sinceID int64) ([]Sessio
 		 FROM exchanges e
 		 LEFT JOIN top_models tm ON tm.session_id = e.session_id
 		 LEFT JOIN last_exchange le ON le.session_id = e.session_id
+		 LEFT JOIN session_names sn ON sn.session_id = e.session_id
 		 WHERE e.session_id IN (SELECT DISTINCT session_id FROM exchanges WHERE id > ?)
 		 GROUP BY e.session_id
 		 ORDER BY MAX(e.timestamp) DESC`,
@@ -564,6 +568,28 @@ func (db *DB) DeleteExchanges(ctx context.Context, sessionID string) (int64, err
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// SetSessionName sets or clears a session's display name. An empty (after
+// trimming) name removes the mapping entirely, reverting the session to
+// showing its raw id. session_names is deliberately left untouched by
+// DeleteExchanges — a name is session identity, independent of the raw
+// exchange log, the same way exchanges_ledger survives that delete.
+func (db *DB) SetSessionName(ctx context.Context, sessionID, name string) error {
+	if sessionID == "" {
+		return errors.New("session_id is required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		_, err := db.sql.ExecContext(ctx, "DELETE FROM session_names WHERE session_id = ?", sessionID)
+		return err
+	}
+	_, err := db.sql.ExecContext(ctx,
+		`INSERT INTO session_names (session_id, name, updated_at) VALUES (?, ?, ?)
+		 ON CONFLICT(session_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+		sessionID, name, float64(time.Now().Unix()),
+	)
+	return err
 }
 
 func boolToInt(b bool) int {

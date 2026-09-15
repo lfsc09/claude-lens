@@ -19,19 +19,19 @@
     <h1 class="text-xl font-semibold mb-5">Analyze Exchange</h1>
 
     <div id="dropzone" tabindex="0" role="button" aria-label="Load a request payload"
-      class="flex flex-col items-center justify-center gap-2 text-center border-2 border-dashed border-gray-300 rounded-lg bg-white py-16 px-6 cursor-pointer hover:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition">
+      class="flex flex-col items-center justify-center text-center gap-2 py-16 px-6 border-2 border-dashed border-gray-300 rounded-lg bg-white cursor-pointer transition hover:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500">
       <p class="text-gray-600 font-medium">Drop a <code class="font-mono text-xs">.json</code> request file, click to browse, or paste (Ctrl/Cmd+V) raw JSON</p>
       <p class="text-xs text-gray-400">Nothing is uploaded anywhere — everything stays in this browser tab.</p>
       <input type="file" id="dropzone-input" accept="application/json,.json" class="hidden">
     </div>
 
-    <p id="analyze-error" class="hidden mt-4 text-sm text-red-600"></p>
+    <p id="analyze-error" class="hidden text-sm text-red-600 mt-4"></p>
 
     <div id="analyze-content" class="hidden flex-col gap-6 mt-6"></div>
   </main>
 
   <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
-  <div id="app-tooltip" role="tooltip" class="whitespace-pre-line fixed z-50 max-w-xs text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
+  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <script type="module" src="/js/analyze.js"></script>
 </body>

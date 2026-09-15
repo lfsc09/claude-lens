@@ -159,7 +159,6 @@ func TestNonStreamingPOST_SavesExchangeWithCost(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
 		strings.NewReader(`{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("x-session-id", "sess-abc")
-	req.Header.Set("x-session-name", "My Session")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -173,9 +172,6 @@ func TestNonStreamingPOST_SavesExchangeWithCost(t *testing.T) {
 
 	waitForExchangeCount(t, db, "sess-abc", 1)
 	detail := mustGetExchange(t, db, "sess-abc")
-	if detail.SessionName == nil || *detail.SessionName != "My Session" {
-		t.Errorf("SessionName = %v, want %q", detail.SessionName, "My Session")
-	}
 	// claude-sonnet-5 is seeded at $3/$15 per million tokens; 1M in + 1M out.
 	if detail.Cost == nil || *detail.Cost != 18.0 {
 		t.Errorf("Cost = %v, want 18.0", detail.Cost)

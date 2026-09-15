@@ -28,12 +28,12 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     if (!rows) return '';
     return `<div class="pt-3 border-t border-gray-100">
       <p class="text-xs font-medium uppercase tracking-wide text-amber-600 mb-1.5">Above 200k tokens</p>
-      <div class="text-sm grid grid-cols-2 gap-y-1.5 gap-x-4">${rows}</div>
+      <div class="grid grid-cols-2 text-sm gap-y-1.5 gap-x-4">${rows}</div>
     </div>`;
   }
 
   function buildCard(p) {
-    return `<article class="flex flex-col gap-3 bg-white rounded-lg border border-gray-200 p-4" data-id="${p.id}">
+    return `<article class="flex flex-col gap-3 p-4 bg-white rounded-lg border border-gray-200" data-id="${p.id}">
       <div class="flex items-start justify-between gap-2">
         <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
         <div class="shrink-0 flex items-center gap-2">
@@ -42,7 +42,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
         </div>
       </div>
       <div class="pt-3 border-t border-gray-100">
-        <div class="text-sm grid grid-cols-2 gap-y-1.5 gap-x-4">
+        <div class="grid grid-cols-2 text-sm gap-y-1.5 gap-x-4">
           <div class="flex justify-between"><span class="text-gray-500">Input $/M</span><span class="font-mono text-gray-700">${fmtCost(p.input_per_m)}</span></div>
           <div class="flex justify-between"><span class="text-gray-500">Output $/M</span><span class="font-mono text-gray-700">${fmtCost(p.output_per_m)}</span></div>
           <div class="flex justify-between"><span class="text-gray-500">Cache write $/M</span><span class="font-mono text-gray-700">${fmtCost(p.cache_write_per_m)}</span></div>
@@ -51,7 +51,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
       </div>
       ${above200kSectionHtml(p)}
       <div class="flex-1 flex items-end">
-        <div class="w-full pt-3 border-t border-gray-100 flex justify-end">
+        <div class="flex justify-end w-full pt-3 border-t border-gray-100">
           <p class="text-xs text-gray-400">Updated ${fmtTime(p.updated_at)}</p>
         </div>
       </div>

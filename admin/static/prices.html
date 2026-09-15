@@ -20,21 +20,21 @@
       <h1 class="text-xl font-semibold">Model prices</h1>
       <div class="shrink-0 flex items-center gap-3">
         <div id="sync-litellm-menu" class="relative">
-          <div class="inline-flex items-stretch rounded-md border border-emerald-600 overflow-hidden">
+          <div class="inline-flex items-stretch overflow-hidden rounded-md border border-emerald-600">
             <button id="sync-litellm-btn" type="button"
               class="text-emerald-700 text-sm font-medium px-4 py-2 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed">
               Sync from LiteLLM
             </button>
             <button id="sync-litellm-toggle" type="button" aria-haspopup="true" aria-expanded="false"
               aria-controls="sync-litellm-panel" aria-label="Auto-sync settings"
-              class="px-2 border-l border-emerald-600 text-emerald-700 hover:bg-emerald-50">
+              class="text-emerald-700 px-2 border-l border-emerald-600 hover:bg-emerald-50">
               <svg id="sync-litellm-chevron" class="h-3 w-3 transition-transform" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
           </div>
           <div id="sync-litellm-panel"
-            class="hidden absolute right-0 z-10 mt-2 w-72 flex flex-col gap-3 p-4 bg-white border border-gray-200 rounded-lg shadow-lg">
+            class="hidden flex flex-col absolute right-0 z-10 w-72 gap-3 mt-2 p-4 bg-white border border-gray-200 rounded-lg shadow-lg">
             <div class="flex items-center gap-1.5">
               <label for="litellm-sync-interval" class="text-xs text-gray-500 whitespace-nowrap">Auto-sync every</label>
               <input type="number" id="litellm-sync-interval" min="0" step="1" placeholder="60"
@@ -62,7 +62,7 @@
   </main>
 
   <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
-  <div id="app-tooltip" role="tooltip" class="whitespace-pre-line fixed z-50 max-w-xs text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
+  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <!-- ── Add/Edit Price Dialog ───────────────────────────────────────────── -->
   <dialog id="price-dialog" class="w-full max-w-md p-6 border border-gray-300 rounded-lg">

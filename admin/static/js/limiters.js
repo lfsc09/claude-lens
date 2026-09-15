@@ -44,8 +44,8 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
 
   function scopeBadge(l) {
     const badge = !l.session_id
-      ? '<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-medium">Global</span>'
-      : `<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded font-medium">${esc(fmtSessionId(l.session_id))}</span>`;
+      ? '<span class="text-blue-700 font-medium px-1.5 py-0.5 bg-blue-50 rounded">Global</span>'
+      : `<span class="text-emerald-700 font-medium px-1.5 py-0.5 bg-emerald-50 rounded">${esc(fmtSessionId(l.session_id))}</span>`;
     return `${badge}${alertBadge(l)}`;
   }
 
@@ -61,7 +61,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   }
 
   function statusToggle(l) {
-    return `<button type="button" class="toggle-active-btn relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${l.is_active ? 'bg-emerald-600' : 'bg-gray-300'}"
+    return `<button type="button" class="toggle-active-btn inline-flex items-center relative h-5 w-9 rounded-full transition-colors ${l.is_active ? 'bg-emerald-600' : 'bg-gray-300'}"
       data-id="${l.id}" data-active="${l.is_active}" aria-pressed="${l.is_active}" aria-label="Toggle limiter active">
       <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${l.is_active ? 'translate-x-5' : 'translate-x-0.5'}"></span>
     </button>`;
@@ -71,16 +71,16 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     return `<tr class="hover:bg-gray-50 transition-colors" data-id="${l.id}">
       <td class="px-4 py-2">${scopeBadge(l)}</td>
       <td class="px-4 py-2">${fmtCost(l.limit_amount)}</td>
-      <td class="px-4 py-2 w-40">${progressBar(l)}</td>
-      <td class="px-4 py-2 whitespace-nowrap">
+      <td class="w-40 px-4 py-2">${progressBar(l)}</td>
+      <td class="whitespace-nowrap px-4 py-2">
         <div>${esc(fmtRefresh(l))}</div>
         <div class="text-xs text-gray-400" data-countdown="${l.id}">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</div>
       </td>
-      <td class="px-4 py-2 whitespace-nowrap">${fmtActivePeriod(l)}</td>
+      <td class="whitespace-nowrap px-4 py-2">${fmtActivePeriod(l)}</td>
       <td class="px-4 py-2">${statusToggle(l)}</td>
-      <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${fmtTime(l.updated_at)}</td>
-      <td class="px-4 py-2 text-right whitespace-nowrap">
-        <button type="button" command="show-modal" commandfor="limiter-dialog" class="edit-btn text-sm text-gray-400 hover:text-gray-700 mr-3">Edit</button>
+      <td class="text-gray-500 whitespace-nowrap px-4 py-2">${fmtTime(l.updated_at)}</td>
+      <td class="text-right whitespace-nowrap px-4 py-2">
+        <button type="button" command="show-modal" commandfor="limiter-dialog" class="edit-btn text-sm text-gray-400 mr-3 hover:text-gray-700">Edit</button>
         <button type="button" class="delete-btn text-sm text-gray-400 hover:text-red-600">Delete</button>
       </td>
     </tr>`;
@@ -92,7 +92,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
 
     limitersById.clear();
     if (!limiters.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-400">No limiters configured.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400 px-4 py-8">No limiters configured.</td></tr>';
       return;
     }
 

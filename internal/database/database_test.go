@@ -114,7 +114,6 @@ func TestSaveAndGetExchange(t *testing.T) {
 	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15}`
 	e := Exchange{
 		SessionID:     "sess-1",
-		SessionName:   strPtr("my session"),
 		Path:          "/v1/messages",
 		Timestamp:     now,
 		IsStreaming:   true,
@@ -302,7 +301,7 @@ func TestGetExchanges_FilterQuery(t *testing.T) {
 			IsStreaming:         false,
 		},
 		{ // row 2
-			SessionID: "sess-b", SessionName: strPtr("my project"), Path: "/v1/messages", Timestamp: base + 100,
+			SessionID: "sess-b", Path: "/v1/messages", Timestamp: base + 100,
 			RawRequest: "{}", RawResponse: "{}",
 			Model:        strPtr("claude-haiku-4-5"),
 			InputTokens:  intPtr(200),
@@ -424,8 +423,11 @@ func TestGetSessionStats(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "old", SessionName: strPtr("Old"), Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}"})
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "new", SessionName: strPtr("New"), Path: "/p", Timestamp: now + 10, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "old", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "new", Path: "/p", Timestamp: now + 10, RawRequest: "{}", RawResponse: "{}"})
+	if err := db.SetSessionName(ctx, "old", "Old"); err != nil {
+		t.Fatalf("SetSessionName: %v", err)
+	}
 
 	stats, err := db.GetSessionStats(ctx, 50, 0)
 	if err != nil {
@@ -436,6 +438,9 @@ func TestGetSessionStats(t *testing.T) {
 	}
 	if stats[0].SessionID != "new" {
 		t.Errorf("expected most-recently-active session first, got %+v", stats[0])
+	}
+	if stats[1].SessionID != "old" || stats[1].SessionName == nil || *stats[1].SessionName != "Old" {
+		t.Errorf("expected session_names join to populate SessionName, got %+v", stats[1])
 	}
 
 	page, err := db.GetSessionStats(ctx, 1, 0)
