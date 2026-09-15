@@ -171,6 +171,23 @@ claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet
 
 `--row` must still be the full row on a match — any field it omits that the table accepts is reset to its default (e.g. an omitted `cache_read_per_m` becomes `0`, an omitted `*_above_200k` becomes unset), not left as its current value.
 
+## Slack alerts
+
+A limiter with a `slack_webhook_url` set gets notified when it crosses its alert thresholds. Every notification is a Slack [incoming webhook](https://api.slack.com/messaging/webhooks) POST with the same minimal JSON structure — a single `text` field, no blocks or attachments:
+
+```json
+{
+  "text": "<message>"
+}
+```
+
+| Trigger | Message format | Example |
+|---|---|---|
+| Limiter's accumulated cost crosses `alert_threshold_pct` of its budget | `:warning: claude-lens: <scope> limiter has spent $<current> of its $<budget> budget (<pct>% threshold reached)` | `:warning: claude-lens: global limiter has spent $16.00 of its $20.00 budget (80% threshold reached)` |
+| A single exchange's cost meets or exceeds `alert_request_cost_usd` | `:rotating_light: claude-lens: a single request cost $<cost> (<model>, <scope>) — over the $<threshold> alert threshold` | `:rotating_light: claude-lens: a single request cost $1.50 (claude-opus-5, session abc123) — over the $1.00 alert threshold` |
+
+`<scope>` is `global` for a limiter with no `session_id`, or `session <id>` otherwise. Each alert is sent at most once per threshold crossing (budget alerts reset only when the limiter's period refreshes).
+
 ## How it works
 
 ```mermaid
