@@ -146,7 +146,8 @@ claude-lens --feed --table table_name --row '{"column1":"value1","column2":"valu
 |---|---|
 | `--feed` | Enable feeding data into the database |
 | `--table` | Specify the table to insert the row into |
-| `--row` | JSON string representing the row to insert |
+| `--row` | JSON string representing the row to insert or update |
+| `--match` | JSON string of column:value pairs; if it matches exactly one existing row, `--row` updates it instead of inserting a new one |
 
 ### Examples
 
@@ -161,6 +162,14 @@ Add limiter:
 ```sh
 claude-lens --feed --table limiters --row '{"session_id": "", "limit_amount": 20, "refresh_value": 1, "refresh_unit": "days", "refresh_aligned": true}'
 ```
+
+Update price if it exists, otherwise create it (`--match` finds the row by `model_prefix`; if more than one row matches, the command fails instead of guessing):
+
+```sh
+claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet-5"}' --row '{"model_prefix": "claude-sonnet-5", "input_per_m": 3, "output_per_m": 15, "cache_write_per_m": 4, "cache_read_per_m": 0.2}'
+```
+
+`--row` must still be the full row on a match — any field it omits that the table accepts is reset to its default (e.g. an omitted `cache_read_per_m` becomes `0`, an omitted `*_above_200k` becomes unset), not left as its current value.
 
 ## How it works
 
