@@ -105,17 +105,17 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
     const modelLabel = esc(row.model || '—');
     return `<tr class="hover:bg-gray-50">
       <td class="px-4 py-2"><a href="/exchanges/${row.id}" class="text-emerald-600 hover:underline">${row.id}</a></td>
-      <td class="px-4 py-2 max-w-xs truncate text-gray-700">${label}</td>
-      <td class="px-4 py-2 font-mono max-w-xs">
+      <td class="max-w-xs truncate text-gray-700 px-4 py-2">${label}</td>
+      <td class="max-w-xs font-mono px-4 py-2">
         <div class="flex flex-col">
           <span class="text-sm text-gray-700 truncate">${modelLabel}</span>
           <span class="text-xs text-gray-400 truncate">${esc(row.path)}</span>
         </div>
       </td>
-      <td class="px-4 py-2 text-gray-700 whitespace-nowrap">${fmtTime(row.timestamp)}</td>
-      <td class="px-4 py-2 text-right text-gray-700" data-tip="${esc(tokensTooltip(row))}">${fmtTokens(row.total_tokens)}</td>
-      <td class="px-4 py-2 text-right text-gray-700" data-tip="${esc(costTooltip(row))}">${fmtCost(row.cost)}</td>
-      <td class="px-4 py-2 text-gray-400 text-center">${row.is_streaming ? '✓' : ''}</td>
+      <td class="text-gray-700 whitespace-nowrap px-4 py-2">${fmtTime(row.timestamp)}</td>
+      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(tokensTooltip(row))}">${fmtTokens(row.total_tokens)}</td>
+      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(costTooltip(row))}">${fmtCost(row.cost)}</td>
+      <td class="text-gray-400 text-center px-4 py-2">${row.is_streaming ? '✓' : ''}</td>
       </tr>`;
   }
 
@@ -133,7 +133,7 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
 
     if (!res.ok) {
       showFilterError(await extractErrorMessage(res, 'Invalid query.'));
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400 px-4 py-10">No exchanges found.</td></tr>';
       renderPaginationControls('pagination-controls', { page: 1, totalPages: 1, from: 0, to: 0, total: 0, pageSize }, PAGE_SIZES, (page, size) => navigate(page, size, q));
       return;
     }
@@ -145,7 +145,7 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
     if (tbody) {
       tbody.innerHTML = data.rows.length
         ? data.rows.map(buildRow).join('')
-        : '<tr><td colspan="7" class="px-4 py-10 text-center text-gray-400">No exchanges found.</td></tr>';
+        : '<tr><td colspan="7" class="text-center text-gray-400 px-4 py-10">No exchanges found.</td></tr>';
     }
 
     const pagination = computePagination(requestedPage, pageSize, data.total);

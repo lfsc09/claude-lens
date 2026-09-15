@@ -40,7 +40,6 @@ const schema = `
 CREATE TABLE IF NOT EXISTS exchanges (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id            TEXT    NOT NULL,
-    session_name          TEXT,
     path                  TEXT    NOT NULL,
     timestamp             REAL    NOT NULL,
     is_streaming          INTEGER NOT NULL DEFAULT 0,
@@ -85,18 +84,19 @@ CREATE INDEX IF NOT EXISTS idx_exchanges_ledger_timestamp   ON exchanges_ledger 
 CREATE INDEX IF NOT EXISTS idx_exchanges_ledger_exchange_id ON exchanges_ledger (exchange_id);
 
 CREATE TABLE IF NOT EXISTS model_prices (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    model_prefix      TEXT    NOT NULL,
-    rule              TEXT    NOT NULL DEFAULT 'over',
-    rule_tokens       INTEGER NOT NULL DEFAULT 0,
-    input_per_m       REAL    NOT NULL,
-    output_per_m      REAL    NOT NULL,
-    cache_write_per_m REAL    NOT NULL DEFAULT 0,
-    cache_read_per_m  REAL    NOT NULL DEFAULT 0,
-    created_at        REAL    NOT NULL,
-    updated_at        REAL    NOT NULL
+    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_prefix                 TEXT    NOT NULL UNIQUE,
+    input_per_m                  REAL    NOT NULL,
+    output_per_m                 REAL    NOT NULL,
+    cache_write_per_m            REAL    NOT NULL DEFAULT 0,
+    cache_read_per_m             REAL    NOT NULL DEFAULT 0,
+    input_per_m_above_200k       REAL,
+    output_per_m_above_200k      REAL,
+    cache_write_per_m_above_200k REAL,
+    cache_read_per_m_above_200k  REAL,
+    created_at                   REAL    NOT NULL,
+    updated_at                   REAL    NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_model_prices_prefix ON model_prices (model_prefix);
 
 CREATE TABLE IF NOT EXISTS limiters (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +121,21 @@ CREATE TABLE IF NOT EXISTS limiters (
     CHECK (alert_request_cost_usd IS NULL OR alert_request_cost_usd > 0)
 );
 CREATE INDEX IF NOT EXISTS idx_limiters_session_id ON limiters (session_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    id                             INTEGER PRIMARY KEY CHECK (id = 1),
+    litellm_sync_interval_minutes  INTEGER NOT NULL DEFAULT 60,
+    litellm_last_synced_at         REAL    NOT NULL DEFAULT 0,
+    litellm_last_sync_error        TEXT    NOT NULL DEFAULT '',
+    litellm_last_attempt_at        REAL    NOT NULL DEFAULT 0,
+    updated_at                     REAL    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_names (
+    session_id TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 `
 
 // newColumns lists columns added to the schema after the tables already
@@ -146,6 +161,10 @@ var newColumns = map[string][]string{
 		"alert_sent INTEGER NOT NULL DEFAULT 0",
 		"alert_request_cost_usd REAL",
 	},
+	"settings": {
+		"litellm_last_sync_error TEXT NOT NULL DEFAULT ''",
+		"litellm_last_attempt_at REAL NOT NULL DEFAULT 0",
+	},
 }
 
 // migrateSchema adds any column listed in newColumns that isn't already
@@ -166,6 +185,27 @@ func migrateSchema(ctx context.Context, sqlDB *sql.DB) error {
 				return fmt.Errorf("add column %s.%s: %w", table, name, err)
 			}
 		}
+	}
+	return nil
+}
+
+// migrateDropExchangesSessionName drops exchanges.session_name, superseded
+// by the session_names table (session naming is now a manual rename kept
+// independent of the exchange log, not a column populated per-row). Guarded
+// by the column's presence: a no-op on a fresh DB (schema above never
+// creates it) or an already-migrated one. session_name is part of no index,
+// PK, or CHECK constraint, so this is a plain column drop, not a table
+// rebuild.
+func migrateDropExchangesSessionName(ctx context.Context, sqlDB *sql.DB) error {
+	cols, err := tableColumns(ctx, sqlDB, "exchanges")
+	if err != nil {
+		return fmt.Errorf("inspect columns of exchanges: %w", err)
+	}
+	if !cols["session_name"] {
+		return nil
+	}
+	if _, err := sqlDB.ExecContext(ctx, "ALTER TABLE exchanges DROP COLUMN session_name"); err != nil {
+		return fmt.Errorf("drop exchanges.session_name: %w", err)
 	}
 	return nil
 }
@@ -227,6 +267,85 @@ func migrateModelPricesToRules(ctx context.Context, sqlDB *sql.DB) error {
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_model_prices_prefix ON model_prices (model_prefix)`); err != nil {
 		return fmt.Errorf("create model_prices prefix index: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// migrateModelPricesToUniquePrefix collapses model_prices from the tiered,
+// multi-row-per-prefix shape back down to a single unique row per prefix,
+// now that a prefix's price config carries its own above-200k override
+// columns instead of separate rule rows. Guarded by presence of the `rule`
+// column: a no-op on a fresh DB (already created in the new shape by
+// `schema` above) or an already-migrated one. Runs after
+// migrateModelPricesToRules so it can rely on that shape existing even for
+// a very old DB.
+//
+// For each prefix, the kept row is its unconditional "over 0" rule if one
+// exists, else the row with the smallest rule_tokens; ties (including
+// duplicate "over 0" rows, which the old schema never prevented) are broken
+// by lowest id, so a prefix's pricing is never lost outright and exactly one
+// row survives per prefix. Any other tiered rule a prefix owned is
+// discarded — above-200k overrides start unset and are populated afterward
+// by a LiteLLM sync or manual admin entry.
+func migrateModelPricesToUniquePrefix(ctx context.Context, sqlDB *sql.DB) error {
+	cols, err := tableColumns(ctx, sqlDB, "model_prices")
+	if err != nil {
+		return fmt.Errorf("inspect columns of model_prices: %w", err)
+	}
+	if !cols["rule"] {
+		return nil
+	}
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE model_prices_new (
+		    id                           INTEGER PRIMARY KEY AUTOINCREMENT,
+		    model_prefix                 TEXT    NOT NULL UNIQUE,
+		    input_per_m                  REAL    NOT NULL,
+		    output_per_m                 REAL    NOT NULL,
+		    cache_write_per_m            REAL    NOT NULL DEFAULT 0,
+		    cache_read_per_m             REAL    NOT NULL DEFAULT 0,
+		    input_per_m_above_200k       REAL,
+		    output_per_m_above_200k      REAL,
+		    cache_write_per_m_above_200k REAL,
+		    cache_read_per_m_above_200k  REAL,
+		    created_at                   REAL    NOT NULL,
+		    updated_at                   REAL    NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("create model_prices_new: %w", err)
+	}
+	// A prefix's kept row is picked by ordering candidates
+	// (unconditional "over 0" rule first, then smallest rule_tokens, then
+	// lowest id) and taking the first — a single deterministic row per
+	// prefix even if a prefix owned duplicate "over 0" rows, which the old
+	// schema never prevented.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO model_prices_new
+		    (model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, created_at, updated_at)
+		SELECT model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m, created_at, updated_at
+		FROM model_prices AS p
+		WHERE p.id = (
+		    SELECT m.id FROM model_prices AS m
+		    WHERE m.model_prefix = p.model_prefix
+		    ORDER BY
+		        CASE WHEN m.rule = 'over' AND m.rule_tokens = 0 THEN 0 ELSE 1 END,
+		        m.rule_tokens,
+		        m.id
+		    LIMIT 1
+		)`); err != nil {
+		return fmt.Errorf("copy model_prices rows: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE model_prices`); err != nil {
+		return fmt.Errorf("drop old model_prices: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE model_prices_new RENAME TO model_prices`); err != nil {
+		return fmt.Errorf("rename model_prices_new: %w", err)
 	}
 
 	return tx.Commit()
@@ -312,9 +431,17 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
+	if err := migrateDropExchangesSessionName(ctx, sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("drop exchanges.session_name: %w", err)
+	}
 	if err := migrateModelPricesToRules(ctx, sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate model_prices to rules: %w", err)
+	}
+	if err := migrateModelPricesToUniquePrefix(ctx, sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("migrate model_prices to unique prefix: %w", err)
 	}
 	if err := migrateExchangesLedgerBackfill(ctx, sqlDB); err != nil {
 		sqlDB.Close()
@@ -326,6 +453,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err := db.seedDefaultPrices(ctx); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("seed default prices: %w", err)
+	}
+	if err := db.seedDefaultSettings(ctx); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("seed default settings: %w", err)
 	}
 
 	return db, nil

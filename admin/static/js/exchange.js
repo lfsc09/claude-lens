@@ -24,6 +24,12 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
   const notFoundBackLink = document.getElementById('not-found-back-link');
   if (notFoundBackLink) notFoundBackLink.addEventListener('click', goBackToExchanges);
 
+  /**
+   * Computes display-only fields (payload byte sizes, total request tokens)
+   * from the raw exchange record and attaches them to it.
+   * @param {object} exchange - The exchange record as returned by the API, or a falsy value.
+   * @returns {object} The same exchange object, with derived fields attached.
+   */
   function deriveExchange(exchange) {
     if (!exchange) return exchange;
     exchange.raw_request_bytes = estimateBytes(exchange.raw_request);
@@ -33,13 +39,45 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     return exchange;
   }
 
+  const ABOVE_200K_TOKENS = 200_000;
+  const ABOVE_200K_FIELDS = [
+    ['input_per_m_above_200k', 'Input $/M (above 200k)'],
+    ['output_per_m_above_200k', 'Output $/M (above 200k)'],
+    ['cache_write_per_m_above_200k', 'Cache write $/M (above 200k)'],
+    ['cache_read_per_m_above_200k', 'Cache read $/M (above 200k)'],
+  ];
+
+  /**
+   * Renders a row for each above-200k override present on the exchange's
+   * frozen price snapshot (absent on pre-migration snapshots, which never
+   * had tier columns). Whether the tier actually applied to this exchange
+   * is derived from its own token counts rather than stored on the
+   * snapshot, since the 200k threshold is a fixed constant.
+   * @param {object} exchange - The exchange record, including `matched_price` and `raw_request_tokens`.
+   * @returns {string} HTML for the above-200k table rows, or an empty string when no override is set.
+   */
+  function above200kRowsHtml(exchange) {
+    const price = exchange.matched_price;
+    const rows = ABOVE_200K_FIELDS.filter(([field]) => price[field] != null);
+    if (!rows.length) return '';
+    const applied = exchange.raw_request_tokens > ABOVE_200K_TOKENS;
+    return rows.map(([field, label]) => `
+      <tr class="*:p-3">
+        <td class="font-medium uppercase tracking-wide text-gray-500">${esc(label)}</td>
+        <td class="font-mono text-gray-700 break-all text-right">
+          ${fmtCost(price[field])}
+          ${applied ? '<span class="text-xs font-medium align-middle ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">applied</span>' : ''}
+        </td>
+      </tr>`).join('');
+  }
+
   function render(exchange) {
     document.getElementById('page-title').textContent = `Exchange #${exchange.id} – claude-lens Admin`;
 
     const content = document.getElementById('exchange-content');
     let html = `
       <h1 class="text-xl font-semibold">Exchange #${exchange.id}</h1>
-      <section class="grid gap-4 grid-cols-1 sm:grid-cols-2">
+      <section class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="overflow-x-auto bg-white rounded-lg border border-gray-200">
           <table class="w-full text-xs">
             <tbody class="divide-y divide-gray-100">
@@ -64,15 +102,15 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
                 <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.raw_request_tokens)}</td>
               </tr>
               <tr class="*:p-3 *:border-b-0">
-                <td class="!px-8 font-medium uppercase tracking-wide text-gray-500">Input tokens</td>
+                <td class="font-medium uppercase tracking-wide text-gray-500 !px-8">Input tokens</td>
                 <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.input_tokens)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="!px-8 font-medium uppercase tracking-wide text-gray-500">Cache creation tokens</td>
+                <td class="font-medium uppercase tracking-wide text-gray-500 !px-8">Cache creation tokens</td>
                 <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.cache_creation_tokens)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="!px-8 font-medium uppercase tracking-wide text-gray-500">Cache read tokens</td>
+                <td class="font-medium uppercase tracking-wide text-gray-500 !px-8">Cache read tokens</td>
                 <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.cache_read_tokens)}</td>
               </tr>
               <tr class="*:p-3">
@@ -89,8 +127,8 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
                 <tr class="*:p-3">
                   <td colspan="2" class="bg-gray-50">
                     <div class="flex items-center gap-1.5">
-                      <p class="font-medium uppercase tracking-wide text-gray-500">Matched price rule</p>
-                      <span class="text-xs text-gray-400" data-tip="Captured when this exchange was saved — a permanent snapshot of what was actually charged, even if the rule is edited or deleted later.">ⓘ</span>
+                      <p class="font-medium uppercase tracking-wide text-gray-500">Matched price</p>
+                      <span class="text-xs text-gray-400" data-tip="Captured when this exchange was saved — a permanent snapshot of what was actually charged, even if the price is edited or deleted later.">ⓘ</span>
                     </div>
                   </td>
                 </tr>
@@ -98,10 +136,12 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
                   <td class="font-medium uppercase tracking-wide text-gray-500">Prefix</td>
                   <td class="font-mono text-gray-700 break-all text-right">${esc(exchange.matched_price.model_prefix)}</td>
                 </tr>
+                ${exchange.matched_price.rule != null ? `
                 <tr class="*:p-3">
                   <td class="font-medium uppercase tracking-wide text-gray-500">Rule</td>
                   <td class="font-mono text-gray-700 break-all text-right">${esc(ruleText(exchange.matched_price))}</td>
                 </tr>
+                ` : ``}
                 <tr class="*:p-3">
                   <td class="font-medium uppercase tracking-wide text-gray-500">Input $/M</td>
                   <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.matched_price.input_per_m)}</td>
@@ -118,15 +158,16 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
                   <td class="font-medium uppercase tracking-wide text-gray-500">Cache read $/M</td>
                   <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.matched_price.cache_read_per_m)}</td>
                 </tr>
+                ${above200kRowsHtml(exchange)}
               </tbody>
             </table>
           </div>
         ` : ``}
       </section>
       <section class="flex flex-col gap-4">
-        <div class="w-full flex gap-0.5 rounded-lg shadow-xs *:text-sm" role="tablist">
-          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 border rounded uppercase font-medium tracking-wide px-3 py-2 ${exchange.raw_request ? 'bg-gray-800 text-white' : 'bg-gray-200 hover:bg-gray-300'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
-          <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 border rounded uppercase font-medium tracking-wide px-3 py-2 bg-gray-200 hover:bg-gray-300" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
+        <div class="flex w-full gap-0.5 rounded-lg shadow-xs *:text-sm" role="tablist">
+          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-gray-800 text-white' : 'bg-gray-200 hover:bg-gray-300'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
+          <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded bg-gray-200 hover:bg-gray-300" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
         </div>
       </section>
     `;
@@ -134,18 +175,18 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     if (exchange.raw_request) {
       html += `
         <section class="flex flex-col gap-0.5" id="request-panel" role="tabpanel" aria-labelledby="request-tab" e-content-id="request">
-          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between">
+          <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
             <div class="flex items-center gap-2">
               <h2 class="font-semibold uppercase tracking-wide">Request</h2>
               <button type="button" id="request-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Copy Raw</button>
               <button type="button" id="request-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Download Raw</button>
             </div>
-            <div class="flex flex-col gap-2 items-end">
+            <div class="flex flex-col items-end gap-2">
               <span class="text-xs text-gray-700 font-mono">${fmtInt(exchange.raw_request_tokens)} tokens</span>
               <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.raw_request_bytes)}</span>
             </div>
           </div>
-          <div class="bg-white rounded-b-lg border border-gray-200 p-4">
+          <div class="p-4 bg-white rounded-b-lg border border-gray-200">
             <andypf-json-viewer
               id="request-json-viewer"
               indent="4"
@@ -167,15 +208,15 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
 
     if (exchange.raw_response) {
       html += `
-        <section class="flex flex-col gap-0.5 hidden" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
-          <div class="bg-white rounded-t-lg border border-gray-200 p-4 flex items-center justify-between">
+        <section class="hidden flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
+          <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
             <h2 class="font-semibold uppercase tracking-wide">Response</h2>
-            <div class="flex flex-col gap-2 items-end">
+            <div class="flex flex-col items-end gap-2">
               <span class="text-xs text-gray-700 font-mono">${fmtInt(exchange.output_tokens)} tokens</span>
               <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.output_bytes)}</span>
             </div>
           </div>
-          <div class="bg-white rounded-b-lg border border-gray-200 p-4 text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed max-h-[750px] overflow-y-auto">${esc(exchange.output_text)}</div>
+          <div class="max-h-[750px] overflow-y-auto text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed p-4 bg-white rounded-b-lg border border-gray-200">${esc(exchange.output_text)}</div>
         </section>
       `;
     }

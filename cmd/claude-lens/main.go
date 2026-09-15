@@ -16,8 +16,10 @@ import (
 	"github.com/lfsc09/claude-lens/admin"
 	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/logging"
 	"github.com/lfsc09/claude-lens/internal/notify"
+	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
 	"github.com/lfsc09/claude-lens/proxy"
@@ -26,7 +28,8 @@ import (
 func main() {
 	feed := flag.Bool("feed", false, "seed a single row into a table via the running admin API, instead of starting the service")
 	table := flag.String("table", "", "table to seed with --feed (limiters, model_prices)")
-	row := flag.String("row", "", "row to insert with --feed, as a JSON object")
+	row := flag.String("row", "", "row to insert or update with --feed, as a JSON object")
+	match := flag.String("match", "", "match an existing row by column:value pairs (JSON object) for --feed; updates it instead of inserting")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -39,7 +42,7 @@ func main() {
 	defer stop()
 
 	if *feed {
-		if err := runFeed(ctx, cfg, *table, *row); err != nil {
+		if err := runFeed(ctx, cfg, *table, *row, *match); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -73,7 +76,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	adminSrv, err := admin.NewServer(db, est, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir)
+	adminSrv, err := admin.NewServer(db, est, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir, cfg.AnthropicBaseURL, cfg.AnthropicAuthToken)
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
 		os.Exit(1)
@@ -83,7 +86,7 @@ func main() {
 
 	var proxyErr, adminErr error
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		// stop() also cancels ctx (see signal.NotifyContext), so if this
@@ -101,6 +104,10 @@ func main() {
 	go func() {
 		defer wg.Done()
 		db.RunLimiterRefreshLoop(ctx, limitersFresh)
+	}()
+	go func() {
+		defer wg.Done()
+		pricesync.RunLoop(ctx, db, est, litellm.NewClient(), cfg.AnthropicBaseURL, cfg.AnthropicAuthToken)
 	}()
 
 	<-ctx.Done()

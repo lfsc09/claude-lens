@@ -146,7 +146,8 @@ claude-lens --feed --table table_name --row '{"column1":"value1","column2":"valu
 |---|---|
 | `--feed` | Enable feeding data into the database |
 | `--table` | Specify the table to insert the row into |
-| `--row` | JSON string representing the row to insert |
+| `--row` | JSON string representing the row to insert or update |
+| `--match` | JSON string of column:value pairs; if it matches exactly one existing row, `--row` updates it instead of inserting a new one |
 
 ### Examples
 
@@ -161,6 +162,31 @@ Add limiter:
 ```sh
 claude-lens --feed --table limiters --row '{"session_id": "", "limit_amount": 20, "refresh_value": 1, "refresh_unit": "days", "refresh_aligned": true}'
 ```
+
+Update price if it exists, otherwise create it (`--match` finds the row by `model_prefix`; if more than one row matches, the command fails instead of guessing):
+
+```sh
+claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet-5"}' --row '{"model_prefix": "claude-sonnet-5", "input_per_m": 3, "output_per_m": 15, "cache_write_per_m": 4, "cache_read_per_m": 0.2}'
+```
+
+`--row` must still be the full row on a match — any field it omits that the table accepts is reset to its default (e.g. an omitted `cache_read_per_m` becomes `0`, an omitted `*_above_200k` becomes unset), not left as its current value.
+
+## Slack alerts
+
+A limiter with a `slack_webhook_url` set gets notified when it crosses its alert thresholds. Every notification is a Slack [incoming webhook](https://api.slack.com/messaging/webhooks) POST with the same minimal JSON structure — a single `text` field, no blocks or attachments:
+
+```json
+{
+  "text": "<message>"
+}
+```
+
+| Trigger | Message format | Example |
+|---|---|---|
+| Limiter's accumulated cost crosses `alert_threshold_pct` of its budget | `:warning: claude-lens: <scope> limiter has spent $<current> of its $<budget> budget (<pct>% threshold reached)` | `:warning: claude-lens: global limiter has spent $16.00 of its $20.00 budget (80% threshold reached)` |
+| A single exchange's cost meets or exceeds `alert_request_cost_usd` | `:rotating_light: claude-lens: a single request cost $<cost> (<model>, <scope>) — over the $<threshold> alert threshold` | `:rotating_light: claude-lens: a single request cost $1.50 (claude-opus-5, session abc123) — over the $1.00 alert threshold` |
+
+`<scope>` is `global` for a limiter with no `session_id`, or `session <id>` otherwise. Each alert is sent at most once per threshold crossing (budget alerts reset only when the limiter's period refreshes).
 
 ## How it works
 
@@ -185,8 +211,7 @@ graph LR
 Only POST requests are intercepted (GET/PUT/DELETE pass through
 untouched). For each one, the database records:
 
-- Session ID (from `x-claude-code-session-id` or `x-session-id`) and
-  session name (`x-session-name`, if set)
+- Session ID (from `x-claude-code-session-id` or `x-session-id`)
 - The full message array sent by the client
 - The assistant's response text
 - `input_tokens`/`output_tokens`, plus `cache_creation_input_tokens`/

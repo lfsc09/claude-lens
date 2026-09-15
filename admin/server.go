@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/logging"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
@@ -33,9 +34,13 @@ type Server struct {
 // rooted at "static" — a build-time invariant, not a runtime condition —
 // so that's treated as fatal rather than something the caller can
 // meaningfully recover from at startup.
-func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir string) (*Server, error) {
+func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir, proxyBaseURL, proxyAuthToken string) (*Server, error) {
 	logger := slog.Default().With("component", "admin")
-	h := &handlers{db: db, est: est, status: st, fresh: fr, limitersFresh: limitersFresh, logger: logger, version: version, dbPath: dbPath, logPath: logging.FilePath(logDir)}
+	h := &handlers{
+		db: db, est: est, status: st, fresh: fr, limitersFresh: limitersFresh, logger: logger,
+		version: version, dbPath: dbPath, logPath: logging.FilePath(logDir),
+		litellmClient: litellm.NewClient(), proxyBaseURL: proxyBaseURL, proxyAuthToken: proxyAuthToken,
+	}
 
 	staticContent, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -75,10 +80,12 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("DELETE /api/exchanges", h.deleteExchanges)
 	mux.HandleFunc("GET /api/totals", h.totals)
 	mux.HandleFunc("GET /api/session-stats", h.sessionStats)
+	mux.HandleFunc("PATCH /api/sessions/{sessionID}/name", h.setSessionName)
 	mux.HandleFunc("GET /api/daily-costs", h.dailyCosts)
 	mux.HandleFunc("GET /api/stream", h.sseStream)
 	mux.HandleFunc("GET /api/prices", h.listPrices)
 	mux.HandleFunc("POST /api/prices", h.createPrice)
+	mux.HandleFunc("POST /api/prices/sync-litellm", h.syncPricesFromLiteLLM)
 	mux.HandleFunc("PUT /api/prices/{id}", h.updatePrice)
 	mux.HandleFunc("DELETE /api/prices/{id}", h.deletePrice)
 	mux.HandleFunc("GET /api/limiters", h.listLimiters)
@@ -87,6 +94,8 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("PATCH /api/limiters/{id}/active", h.setLimiterActive)
 	mux.HandleFunc("DELETE /api/limiters/{id}", h.deleteLimiter)
 	mux.HandleFunc("GET /api/about", h.about)
+	mux.HandleFunc("GET /api/settings", h.getSettings)
+	mux.HandleFunc("PUT /api/settings", h.updateSettings)
 
 	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger))
 	return &Server{handler: handler, logger: logger}, nil

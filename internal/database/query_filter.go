@@ -45,8 +45,9 @@ const (
 
 // filterField describes one FIELD name accepted by the query language: which
 // SQL expression(s) it reads from (more than one for "session", which
-// matches either session_id or session_name), its value kind, and which
-// operators are valid for it.
+// matches either the exchange's session_id or its session_names.name, via
+// GetExchanges/CountExchanges' LEFT JOIN session_names sn), its value kind,
+// and which operators are valid for it.
 type filterField struct {
 	kind  filterFieldKind
 	exprs []string
@@ -54,7 +55,7 @@ type filterField struct {
 
 var filterFields = map[string]filterField{
 	"id":            {kind: fieldNumber, exprs: []string{"id"}},
-	"session":       {kind: fieldText, exprs: []string{"session_id", "session_name"}},
+	"session":       {kind: fieldText, exprs: []string{"exchanges.session_id", "sn.name"}},
 	"model":         {kind: fieldText, exprs: []string{"model"}},
 	"path":          {kind: fieldText, exprs: []string{"path"}},
 	"date":          {kind: fieldDate, exprs: []string{"timestamp"}},
