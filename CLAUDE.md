@@ -81,6 +81,14 @@ This repository contains a **Go 1.26** web server delivering high-performance, l
 - Avoid arbitrary Tailwind values (`w-[357px]`) unless strictly required. Use default scale parameters.
 - Keep HTML clean by using native class aggregation or standard reusable utility classes for repeated visual components.
 
+### Dark Mode
+- This project is dark-mode-aware via `darkMode: 'class'` (a `.dark` class toggled on `<html>`) and semantic color tokens defined in `admin/static/css/theme.css`, exposed to Tailwind as `canvas`, `surface`, `surface-hover`, `surface-active`, `surface-strong`, `line`, `line-strong`, `fg`, `fg-muted`, `fg-subtle`.
+- Always color new markup with these semantic classes (`bg-canvas`, `bg-surface`, `text-fg`, `text-fg-muted`, `border-line`, etc.) instead of raw Tailwind grays/slates (`bg-white`, `text-gray-900`, `border-gray-200`). This makes the element dark-mode-correct automatically, with no `dark:` variant needed.
+- Only reach for an explicit `dark:` variant when a color is intentionally *not* one of the semantic tokens (e.g. a brand/status hue like `emerald`, a chart line color). In that case define both the light and dark shade explicitly, and preserve the same relative meaning (ordering, hue identity, contrast) across themes rather than relying on opacity tricks (e.g. `/20`) to fake a shade.
+- `<input>`, `<select>`, and `<textarea>` already get a themed background/foreground globally from `theme.css` — don't add per-element `bg-*`/`dark:bg-*` classes to individual form controls.
+- Elements meant to be interactive controls (buttons, toggles) must look distinct from plain-text nav/inline links: give them a visible `border` and `bg-surface`/`bg-surface-hover`, not just muted text color.
+- Colors painted via JS outside of Tailwind classes (inline `style`, SVG attributes like `stroke`/`fill`) are invisible to `dark:` variants and must be computed at render/paint time from the current theme (see `isDarkTheme()` in `app.js`), and recomputed on the `themechange` event dispatched on `window` so they update live without a page reload.
+
 ---
 
 ## Instructions for AI / LLM
