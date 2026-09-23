@@ -585,36 +585,85 @@ func TestDeleteExchanges(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	for _, sess := range []string{"a", "a", "b"} {
+	for _, sess := range []string{"a", "a", "b", "c"} {
 		if err := db.SaveExchange(ctx, Exchange{SessionID: sess, Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
 
-	n, err := db.DeleteExchanges(ctx, "a")
+	n, affected, err := db.DeleteExchanges(ctx, []string{"a", "b"})
 	if err != nil {
-		t.Fatalf("DeleteExchanges(a): %v", err)
+		t.Fatalf("DeleteExchanges([a,b]): %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("deleted %d rows, want 2", n)
+	if n != 3 {
+		t.Fatalf("deleted %d rows, want 3", n)
+	}
+	if !reflect.DeepEqual(affected, []string{"a", "b"}) {
+		t.Fatalf("affectedSessions = %v, want [a b]", affected)
 	}
 	remaining, err := db.GetExchanges(ctx, "", 100, 0)
 	if err != nil {
 		t.Fatalf("GetExchanges: %v", err)
 	}
-	if len(remaining) != 1 || remaining[0].SessionID != "b" {
+	if len(remaining) != 1 || remaining[0].SessionID != "c" {
 		t.Fatalf("unexpected remaining rows: %+v", remaining)
 	}
 
-	if _, err = db.DeleteExchanges(ctx, ""); err == nil {
-		t.Fatal("DeleteExchanges(\"\"): want error, got nil")
+	n, affected, err = db.DeleteExchanges(ctx, nil)
+	if err != nil {
+		t.Fatalf("DeleteExchanges(nil): %v", err)
+	}
+	if n != 1 || !reflect.DeepEqual(affected, []string{"c"}) {
+		t.Fatalf("DeleteExchanges(nil): n=%d affected=%v, want n=1 affected=[c]", n, affected)
 	}
 	remaining, err = db.GetExchanges(ctx, "", 100, 0)
 	if err != nil {
 		t.Fatalf("GetExchanges: %v", err)
 	}
-	if len(remaining) != 1 {
-		t.Fatalf("empty session_id should not delete rows: got %d remaining, want 1", len(remaining))
+	if len(remaining) != 0 {
+		t.Fatalf("empty sessionIDs should delete every row: got %d remaining, want 0", len(remaining))
+	}
+
+	if n, affected, err := db.DeleteExchanges(ctx, nil); err != nil || n != 0 || affected != nil {
+		t.Fatalf("DeleteExchanges(nil) on empty table: n=%d affected=%v err=%v, want 0 nil nil", n, affected, err)
+	}
+}
+
+// TestDeleteSessionNames verifies that DeleteSessionNames removes only the
+// requested sessions' rows and no-ops on an empty ID slice.
+func TestDeleteSessionNames(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	for _, sess := range []string{"a", "b", "c"} {
+		if err := db.SetSessionName(ctx, sess, "name-"+sess); err != nil {
+			t.Fatalf("SetSessionName(%s): %v", sess, err)
+		}
+	}
+
+	if err := db.DeleteSessionNames(ctx, nil); err != nil {
+		t.Fatalf("DeleteSessionNames(nil): %v", err)
+	}
+
+	if err := db.DeleteSessionNames(ctx, []string{"a", "c"}); err != nil {
+		t.Fatalf("DeleteSessionNames([a,c]): %v", err)
+	}
+
+	var remaining []string
+	rows, err := db.sql.QueryContext(ctx, "SELECT session_id FROM session_names ORDER BY session_id")
+	if err != nil {
+		t.Fatalf("query session_names: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		remaining = append(remaining, id)
+	}
+	if !reflect.DeepEqual(remaining, []string{"b"}) {
+		t.Fatalf("remaining session_names = %v, want [b]", remaining)
 	}
 }
 
@@ -647,8 +696,8 @@ func TestDeleteExchanges_LedgerSurvives(t *testing.T) {
 		t.Fatalf("GetTokenTotals before delete: %v", err)
 	}
 
-	if n, err := db.DeleteExchanges(ctx, "purge-me"); err != nil || n != 1 {
-		t.Fatalf("DeleteExchanges: n=%d err=%v", n, err)
+	if n, affected, err := db.DeleteExchanges(ctx, []string{"purge-me"}); err != nil || n != 1 || !reflect.DeepEqual(affected, []string{"purge-me"}) {
+		t.Fatalf("DeleteExchanges: n=%d affected=%v err=%v", n, affected, err)
 	}
 
 	remaining, err := db.GetExchanges(ctx, "", 10, 0)
@@ -822,39 +871,6 @@ func TestMigrateExchangesLedgerBackfill(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("backfill rerun duplicated rows: got %d, want 1", count)
-	}
-}
-
-func TestSessionActiveWithin(t *testing.T) {
-	db := openTestDB(t)
-	ctx := context.Background()
-	now := time.Now()
-
-	if active, err := db.SessionActiveWithin(ctx, "unknown", 30*time.Minute, now); err != nil || active {
-		t.Fatalf("unknown session: active=%v err=%v, want false, nil", active, err)
-	}
-
-	recent := Exchange{SessionID: "s", Path: "/p", Timestamp: float64(now.Add(-5 * time.Minute).Unix()), RawRequest: "{}", RawResponse: "{}"}
-	if err := db.SaveExchange(ctx, recent); err != nil {
-		t.Fatalf("SaveExchange(recent): %v", err)
-	}
-	if active, err := db.SessionActiveWithin(ctx, "s", 30*time.Minute, now); err != nil || !active {
-		t.Fatalf("recent exchange: active=%v err=%v, want true, nil", active, err)
-	}
-	if active, err := db.SessionActiveWithin(ctx, "s", 1*time.Minute, now); err != nil || active {
-		t.Fatalf("recent exchange outside narrower window: active=%v err=%v, want false, nil", active, err)
-	}
-
-	stale := Exchange{SessionID: "old", Path: "/p", Timestamp: float64(now.Add(-2 * time.Hour).Unix()), RawRequest: "{}", RawResponse: "{}"}
-	if err := db.SaveExchange(ctx, stale); err != nil {
-		t.Fatalf("SaveExchange(stale): %v", err)
-	}
-	if active, err := db.SessionActiveWithin(ctx, "old", 30*time.Minute, now); err != nil || active {
-		t.Fatalf("stale exchange: active=%v err=%v, want false, nil", active, err)
-	}
-
-	if active, err := db.SessionActiveWithin(ctx, "", 30*time.Minute, now); err != nil || active {
-		t.Fatalf("empty session_id: active=%v err=%v, want false, nil", active, err)
 	}
 }
 

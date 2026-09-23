@@ -1,4 +1,4 @@
-import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, initNavPolling } from './app.js';
+import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, initNavPolling, jsonViewerTheme } from './app.js';
 
 'use strict';
 
@@ -9,6 +9,11 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
   const fileInput = document.getElementById('dropzone-input');
   const errorEl = document.getElementById('analyze-error');
   const content = document.getElementById('analyze-content');
+
+  window.addEventListener('themechange', () => {
+    const viewer = document.getElementById('analyze-json-viewer');
+    if (viewer) viewer.setAttribute('theme', jsonViewerTheme());
+  });
 
   function showError(message) {
     errorEl.textContent = message;
@@ -73,50 +78,50 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
     content.innerHTML = `
       <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold">Loaded request</h2>
-        <button type="button" id="analyze-reset" class="text-xs uppercase font-medium tracking-wide px-3 py-1.5 rounded-lg bg-gray-200 hover:bg-gray-300">Analyze another</button>
+        <button type="button" id="analyze-reset" class="text-xs uppercase font-medium tracking-wide px-3 py-1.5 rounded-lg bg-surface-active hover:bg-surface-strong">Analyze another</button>
       </div>
-      <div class="overflow-x-auto bg-white rounded-lg border border-gray-200">
+      <div class="overflow-x-auto bg-surface rounded-lg border border-line">
         <table class="w-full text-xs">
-          <tbody class="divide-y divide-gray-100">
+          <tbody class="divide-y divide-line">
             <tr class="*:p-3">
-              <td class="font-medium uppercase tracking-wide text-gray-500">Source</td>
-              <td class="font-mono text-gray-700 break-all text-right">${esc(sourceLabel)}</td>
+              <td class="font-medium uppercase tracking-wide text-fg-muted">Source</td>
+              <td class="font-mono text-fg break-all text-right">${esc(sourceLabel)}</td>
             </tr>
             <tr class="*:p-3">
-              <td class="font-medium uppercase tracking-wide text-gray-500">Model</td>
-              <td class="font-mono text-gray-700 text-right">${esc(model)}</td>
+              <td class="font-medium uppercase tracking-wide text-fg-muted">Model</td>
+              <td class="font-mono text-fg text-right">${esc(model)}</td>
             </tr>
             <tr class="*:p-3">
-              <td class="font-medium uppercase tracking-wide text-gray-500">Was Streaming</td>
-              <td class="font-mono text-gray-700 text-right">${isStreaming ? 'Yes' : 'No'}</td>
+              <td class="font-medium uppercase tracking-wide text-fg-muted">Was Streaming</td>
+              <td class="font-mono text-fg text-right">${isStreaming ? 'Yes' : 'No'}</td>
             </tr>
             <tr class="*:p-3">
-              <td class="font-medium uppercase tracking-wide text-gray-500">
+              <td class="font-medium uppercase tracking-wide text-fg-muted">
                 <span class="inline-flex items-center gap-1.5">
                   Context size / Cost
-                  <span class="text-xs text-gray-400" data-tip="Not shown: token counts and cost are computed by Anthropic and only exist in its response, which a request payload never carries.">ⓘ</span>
+                  <span class="text-xs text-fg-subtle" data-tip="Not shown: token counts and cost are computed by Anthropic and only exist in its response, which a request payload never carries.">ⓘ</span>
                 </span>
               </td>
-              <td class="font-mono text-gray-400 text-right">—</td>
+              <td class="font-mono text-fg-subtle text-right">—</td>
             </tr>
           </tbody>
         </table>
       </div>
       <section class="flex flex-col gap-0.5">
-        <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
+        <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
           <div class="flex items-center gap-2">
             <h2 class="font-semibold uppercase tracking-wide">Request</h2>
-            <button type="button" id="analyze-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Copy Raw</button>
-            <button type="button" id="analyze-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Download Raw</button>
+            <button type="button" id="analyze-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Copy Raw</button>
+            <button type="button" id="analyze-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Download Raw</button>
           </div>
-          <span class="text-xs text-gray-500 font-mono">${fmtBytes(estimateBytes(rawText))}</span>
+          <span class="text-xs text-fg-muted font-mono">${fmtBytes(estimateBytes(rawText))}</span>
         </div>
-        <div class="p-4 bg-white rounded-b-lg border border-gray-200">
+        <div class="p-4 bg-surface rounded-b-lg border border-line">
           <andypf-json-viewer
             id="analyze-json-viewer"
             indent="4"
             expanded="2"
-            theme="google-light"
+            theme="${jsonViewerTheme()}"
             show-data-types="false"
             show-toolbar="true"
             expand-icon-type="square"
@@ -143,12 +148,12 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
   });
   dropzone.addEventListener('dragover', (e) => {
     e.preventDefault();
-    dropzone.classList.add('border-emerald-400');
+    dropzone.classList.add('border-emerald-400', 'dark:border-emerald-600');
   });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-emerald-400'));
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-emerald-400', 'dark:border-emerald-600'));
   dropzone.addEventListener('drop', (e) => {
     e.preventDefault();
-    dropzone.classList.remove('border-emerald-400');
+    dropzone.classList.remove('border-emerald-400', 'dark:border-emerald-600');
     const file = e.dataTransfer.files?.[0];
     if (file) loadFromFile(file);
   });

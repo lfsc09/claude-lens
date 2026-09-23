@@ -1,0 +1,44 @@
+/* Semantic color tokens. Light values are the app's existing Tailwind gray
+   scale; dark values follow GitHub's dark theme (Primer) palette. Consumed
+   via tailwind.config's color extension (see each page's <head>), so
+   utilities like bg-canvas or text-fg-muted resolve through these instead of
+   a raw gray-* shade. */
+
+:root {
+  color-scheme: light;
+  --color-canvas: 249 250 251;
+  --color-surface: 255 255 255;
+  --color-surface-hover: 243 244 246;
+  --color-surface-active: 229 231 235;
+  --color-surface-strong: 209 213 219;
+  --color-line: 229 231 235;
+  --color-line-strong: 209 213 219;
+  --color-fg: 31 41 55;
+  --color-fg-muted: 107 114 128;
+  --color-fg-subtle: 156 163 175;
+}
+
+:root.dark {
+  color-scheme: dark;
+  --color-canvas: 13 17 23;
+  --color-surface: 22 27 34;
+  --color-surface-hover: 33 38 45;
+  --color-surface-active: 48 54 61;
+  --color-surface-strong: 61 68 77;
+  --color-line: 33 38 45;
+  --color-line-strong: 48 54 61;
+  --color-fg: 230 237 243;
+  --color-fg-muted: 139 148 158;
+  --color-fg-subtle: 110 118 129;
+}
+
+body {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+input,
+select,
+textarea {
+  background-color: rgb(var(--color-surface));
+  color: rgb(var(--color-fg));
+}

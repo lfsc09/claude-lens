@@ -1,4 +1,4 @@
-import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling } from './app.js';
+import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON } from './app.js';
 
 'use strict';
 
@@ -11,6 +11,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling } 
   const logSizeEl = document.getElementById('about-log-size');
   const logTailEl = document.getElementById('about-log-tail');
   const logsSearchEl = document.getElementById('logs-search');
+  const clearAllDataBtn = document.getElementById('clear-all-data-btn');
 
   // Newest-first log lines from the last load, kept around so search can
   // re-render highlights without re-fetching.
@@ -23,7 +24,8 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling } 
 
   function renderTables(tables) {
     if (!tables.length) {
-      tablesBody.innerHTML = '<tr><td colspan="3" class="text-center text-gray-400 px-4 py-8">No tables found.</td></tr>';
+      tablesBody.innerHTML = '<tr><td colspan="3" class="text-center text-fg-subtle px-4 py-8">No tables found.</td></tr>';
+      clearAllDataBtn.disabled = true;
       return;
     }
 
@@ -33,6 +35,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling } 
     for (const t of tables) {
       totalRows += t.row_count;
       totalSize += t.size_bytes;
+      if (t.name === 'exchanges') clearAllDataBtn.disabled = t.row_count === 0;
       html += `
         <tr>
           <td class="font-mono px-4 py-2">${esc(t.name)}</td>
@@ -41,12 +44,67 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling } 
         </tr>`;
     }
     html += `
-      <tr class="font-medium bg-gray-50">
+      <tr class="font-medium bg-surface-hover">
         <td class="px-4 py-2">Total</td>
         <td class="text-right px-4 py-2">${fmtInt(totalRows)}</td>
         <td class="text-right px-4 py-2">${fmtBytes(totalSize)}</td>
       </tr>`;
     tablesBody.innerHTML = html;
+  }
+
+  // ── Clear All Data ───────────────────────────────────────────────────────
+  // Wipes every exchange, and optionally session_names + on-disk Claude Code
+  // files, via the bulk-delete endpoint with confirm_all set and session_ids
+  // empty.
+  const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {
+    warning: ['text-amber-700 dark:text-amber-400', 'bg-amber-50 dark:bg-amber-500/15', 'border-amber-200 dark:border-amber-800'],
+    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
+    success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
+  });
+
+  async function fetchSessionCount() {
+    const res = await fetch('/api/session-stats?limit=1');
+    if (!res.ok) return 0;
+    const data = await res.json();
+    return data.total || 0;
+  }
+
+  clearAllDataBtn.onclick = async () => {
+    const dialog = document.getElementById('clear-all-data-dialog');
+    const checkbox = document.getElementById('clear-all-also-delete-claude-session');
+    const countEl = document.getElementById('clear-all-session-count');
+    if (checkbox) checkbox.checked = false;
+    setDialogMessage(null, '');
+    if (countEl) countEl.textContent = String(await fetchSessionCount());
+    if (checkbox) {
+      checkbox.onchange = () => {
+        setDialogMessage(checkbox.checked ? 'warning' : null, checkbox.checked
+          ? 'Some of these sessions may still be open in a terminal. Deleting their files now could corrupt or lose data from those sessions.'
+          : '');
+      };
+    }
+    dialog?.showModal();
+  };
+
+  const submitClearAllBtn = document.getElementById('submit-clear-all-btn');
+  if (submitClearAllBtn) {
+    submitClearAllBtn.onclick = async () => {
+      const checkbox = document.getElementById('clear-all-also-delete-claude-session');
+      const res = await postJSON('/api/exchanges/bulk-delete', {
+        session_ids: [],
+        also_delete_claude_session: !!checkbox?.checked,
+        confirm_all: true,
+      });
+      if (!res.ok) {
+        setDialogMessage('error', await extractErrorMessage(res, res.statusText || 'Failed to clear data.'));
+        return;
+      }
+      setDialogMessage('success', 'All exchanges data cleared.');
+      setTimeout(() => {
+        document.getElementById('clear-all-data-dialog')?.close();
+        load();
+      }, 800);
+    };
   }
 
   /**

@@ -72,12 +72,13 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /favicon.ico", servePage(staticContent, "img/favicon.ico"))
 	mux.Handle("GET /img/", fileServer)
 	mux.Handle("GET /js/", fileServer)
+	mux.Handle("GET /css/", fileServer)
 
 	// JSON API
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/exchanges", h.listExchanges)
 	mux.HandleFunc("GET /api/exchanges/{id}", h.exchangeDetail)
-	mux.HandleFunc("DELETE /api/exchanges", h.deleteExchanges)
+	mux.HandleFunc("POST /api/exchanges/bulk-delete", h.bulkDeleteExchanges)
 	mux.HandleFunc("GET /api/totals", h.totals)
 	mux.HandleFunc("GET /api/session-stats", h.sessionStats)
 	mux.HandleFunc("PATCH /api/sessions/{sessionID}/name", h.setSessionName)

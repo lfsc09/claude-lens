@@ -6,7 +6,36 @@
 const txtEncoder = new TextEncoder();
 
 const NAV_LINK_ACTIVE = 'text-emerald-50 py-1 px-2 rounded-lg bg-emerald-700 shadow-md hover:shadow-emerald-700/50 transition';
-const NAV_LINK_INACTIVE = 'text-gray-600 hover:text-gray-900';
+const NAV_LINK_INACTIVE = 'text-fg-muted hover:text-fg';
+
+/**
+ * Applies the given theme to the document, persists it, and notifies
+ * listeners (e.g. the JSON viewer) so they can follow along.
+ * @param {boolean} dark - Whether dark mode should be active.
+ */
+export function applyTheme(dark) {
+  document.documentElement.classList.toggle('dark', dark);
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  localStorage.setItem('theme', dark ? 'dark' : 'light');
+  window.dispatchEvent(new CustomEvent('themechange', { detail: { dark } }));
+}
+
+/**
+ * Whether dark mode is currently active.
+ * @returns {boolean}
+ */
+export function isDarkTheme() {
+  return document.documentElement.classList.contains('dark');
+}
+
+/**
+ * Theme name for the andypf-json-viewer component, following the site's
+ * current light/dark setting.
+ * @returns {string}
+ */
+export function jsonViewerTheme() {
+  return isDarkTheme() ? 'google-dark' : 'google-light';
+}
 
 /**
  * Site-wide header/nav, shared by every admin page in place of duplicating
@@ -24,15 +53,15 @@ class SiteNav extends HTMLElement {
     const exchangesActive = active === 'exchanges' || active === 'analyze-exchange';
     const linkClass = (key) => (key === active ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE);
     const menuItemClass = (key) => (key === active
-      ? 'block text-emerald-700 font-semibold px-3 py-2 bg-emerald-50'
-      : 'block text-gray-600 hover:text-gray-900 px-3 py-2 hover:bg-gray-50');
+      ? 'block text-emerald-700 dark:text-emerald-400 font-semibold px-3 py-2 bg-emerald-50 dark:bg-emerald-500/15'
+      : 'block text-fg-muted hover:text-fg px-3 py-2 hover:bg-surface-hover');
 
     this.innerHTML = `
-      <header class="px-6 py-3 bg-white border-b border-gray-200">
+      <header class="px-6 py-3 bg-surface border-b border-line">
         <nav class="flex items-center text-sm font-medium gap-6">
           <span class="flex items-center gap-2">
             <img src="/img/logo.png" alt="" class="h-6 w-6 rounded-md">
-            <span class="text-base font-bold text-gray-900">claude-lens</span>
+            <span class="text-base font-bold text-fg">claude-lens</span>
           </span>
           <a href="/" class="${linkClass('dashboard')}">Dashboard</a>
           <div class="relative">
@@ -42,7 +71,7 @@ class SiteNav extends HTMLElement {
                 <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
-            <div id="exchanges-menu" role="menu" aria-labelledby="exchanges-menu-button" class="hidden absolute left-0 z-50 w-48 mt-2 py-1 bg-white rounded-lg border border-gray-200 shadow-lg">
+            <div id="exchanges-menu" role="menu" aria-labelledby="exchanges-menu-button" class="hidden absolute left-0 z-50 w-48 mt-2 py-1 bg-surface rounded-lg border border-line shadow-lg">
               <a href="/exchanges" role="menuitem" class="${menuItemClass('exchanges')}">All Exchanges</a>
               <a href="/exchanges/analyze" role="menuitem" class="${menuItemClass('analyze-exchange')}">Analyze Exchange</a>
             </div>
@@ -50,7 +79,17 @@ class SiteNav extends HTMLElement {
           <a href="/prices" class="${linkClass('prices')}">Prices</a>
           <a href="/limiters" class="${linkClass('limiters')}">Limiters</a>
           <a href="/about" class="${linkClass('about')}">About</a>
-          <span id="proxy-status" class="text-xs text-gray-500 ml-auto px-2 py-1 border border-gray-300 border-dashed rounded-lg">Proxy Service</span>
+          <div class="flex items-center gap-2 ml-auto">
+            <span id="proxy-status" class="text-xs text-fg-muted px-2 py-1.5 border border-line-strong border-dashed rounded-lg">Proxy Service</span>
+            <button type="button" id="theme-toggle" aria-label="Toggle dark mode" class="text-fg-muted hover:text-fg p-1.5 rounded-lg border border-line-strong bg-surface hover:bg-surface-hover transition">
+              <svg class="h-4 w-4 dark:hidden" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4.22 2.05a1 1 0 011.41 1.41l-.7.7a1 1 0 01-1.42-1.4l.7-.71zM17 9a1 1 0 110 2h-1a1 1 0 110-2h1zM4 9a1 1 0 110 2H3a1 1 0 110-2h1zm11.71 5.66a1 1 0 01-1.41 1.41l-.71-.7a1 1 0 011.41-1.42l.71.71zM6.34 5.76a1 1 0 01-1.41-1.41l.7-.71a1 1 0 111.42 1.41l-.71.71zM4.93 14.66a1 1 0 011.41 1.41l-.7.71a1 1 0 11-1.42-1.41l.71-.71zM10 5a5 5 0 100 10 5 5 0 000-10zm0 1a1 1 0 011 1v8a1 1 0 11-2 0V3a1 1 0 011-1z" />
+              </svg>
+              <svg class="hidden h-4 w-4 dark:block" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+              </svg>
+            </button>
+          </div>
         </nav>
       </header>
     `;
@@ -58,6 +97,7 @@ class SiteNav extends HTMLElement {
     this.menuButton = this.querySelector('#exchanges-menu-button');
     this.menu = this.querySelector('#exchanges-menu');
     this.chevron = this.querySelector('#exchanges-menu-chevron');
+    this.themeToggle = this.querySelector('#theme-toggle');
     this.onDocumentClick = (e) => {
       if (!this.contains(e.target)) this.closeMenu();
     };
@@ -65,6 +105,7 @@ class SiteNav extends HTMLElement {
       if (e.key === 'Escape') this.closeMenu();
     };
     this.menuButton.addEventListener('click', () => this.toggleMenu());
+    this.themeToggle.addEventListener('click', () => applyTheme(!isDarkTheme()));
     document.addEventListener('click', this.onDocumentClick);
     document.addEventListener('keydown', this.onDocumentKeydown);
   }
@@ -178,10 +219,10 @@ export function fmtCountdown(ts) {
 export function fmtActivePeriod(l) {
   if (l.active_start_hour == null) {
     return l.is_active
-      ? '<span class="text-blue-700 font-medium px-1.5 py-0.5 bg-blue-50 rounded">Always</span>'
-      : '<span class="text-gray-400 font-medium px-1.5 py-0.5 bg-gray-50 rounded">Always</span>';
+      ? '<span class="text-blue-700 dark:text-blue-400 font-medium px-1.5 py-0.5 bg-blue-50 dark:bg-blue-500/15 rounded">Always</span>'
+      : '<span class="text-fg-subtle font-medium px-1.5 py-0.5 bg-surface-hover rounded">Always</span>';
   }
-  const color = l.within_active_period && l.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-50 text-gray-400';
+  const color = l.within_active_period && l.is_active ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-surface-hover text-fg-subtle';
   return `<span class="font-medium px-1.5 py-0.5 ${color} rounded">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
 }
 
@@ -194,10 +235,10 @@ export function progressBar(l, height = 'h-1.5') {
   const pct = l.limit_amount > 0 ? Math.min(100, (l.current_cost / l.limit_amount) * 100) : 0;
   const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
   return `<div class="flex flex-col items-end w-full">
-    <div class="${height} w-full overflow-hidden bg-gray-200 rounded-full">
-      <div class="h-full ${l.within_active_period && l.is_active ? barColor : 'bg-gray-400'}" style="width:${pct}%"></div>
+    <div class="${height} w-full overflow-hidden bg-surface-active rounded-full">
+      <div class="h-full ${l.within_active_period && l.is_active ? barColor : 'bg-surface-strong'}" style="width:${pct}%"></div>
     </div>
-    <div class="text-xs text-gray-500 mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
+    <div class="text-xs text-fg-muted mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
   </div>`;
 }
 
@@ -312,19 +353,19 @@ export function updateProxyStatusBadge(statusValue) {
   switch (statusValue) {
     case 'ok':
       el.textContent = 'Proxy Service: OK';
-      el.className = 'ml-auto px-2 py-1 border border-emerald-300 border-dashed text-xs text-gray-500 rounded-lg bg-emerald-100 text-emerald-800';
+      el.className = 'px-2 py-1.5 border border-emerald-300 dark:border-emerald-700 border-dashed text-xs text-fg-muted rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300';
       break;
     case 'degraded':
       el.textContent = 'Proxy Service: Degraded';
-      el.className = 'ml-auto px-2 py-1 border border-yellow-300 border-dashed text-xs text-gray-500 rounded-lg bg-yellow-100 text-yellow-800';
+      el.className = 'px-2 py-1.5 border border-yellow-300 dark:border-yellow-700 border-dashed text-xs text-fg-muted rounded-lg bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-400';
       break;
     case 'unreachable':
       el.textContent = 'Proxy Service: Unreachable';
-      el.className = 'ml-auto px-2 py-1 border border-red-300 border-dashed text-xs text-gray-500 rounded-lg bg-red-100 text-red-800 animate-pulse';
+      el.className = 'px-2 py-1.5 border border-red-300 dark:border-red-700 border-dashed text-xs text-fg-muted rounded-lg bg-red-100 dark:bg-red-500/20 text-red-800 dark:text-red-300 animate-pulse';
       break;
     default:
       el.textContent = 'Proxy Service: Unknown';
-      el.className = 'ml-auto px-2 py-1 border border-gray-300 border-dashed text-xs text-gray-500 rounded-lg bg-gray-100 text-gray-800';
+      el.className = 'px-2 py-1.5 border border-line-strong border-dashed text-xs text-fg-muted rounded-lg bg-surface-hover text-fg';
   }
 }
 
@@ -413,13 +454,13 @@ export function renderPaginationControls(containerId, state, pageSizes, onSizeOr
   const { page, totalPages, from, to, total, pageSize } = state;
 
   const navLink = (label, targetPage, enabled) => enabled
-    ? `<a href="#" data-page="${targetPage}" class="pagination-link text-emerald-600 hover:underline">${label}</a>`
-    : `<span class="text-gray-300">${label}</span>`;
+    ? `<a href="#" data-page="${targetPage}" class="pagination-link text-emerald-600 dark:text-emerald-400 hover:underline">${label}</a>`
+    : `<span class="text-fg-subtle">${label}</span>`;
 
   container.innerHTML = `
-    <div class="flex items-center text-gray-500 gap-2">
+    <div class="flex items-center text-fg-muted gap-2">
       <label for="${containerId}-page-size-select">Rows per page</label>
-      <select id="${containerId}-page-size-select" class="text-sm px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+      <select id="${containerId}-page-size-select" class="text-sm px-2 py-1 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         ${pageSizes.map((s) => `<option value="${s}" ${s === pageSize ? 'selected' : ''}>${s}</option>`).join('')}
       </select>
       <span>${total > 0 ? `${from}–${to} of ${total}` : '0 of 0'} results</span>
@@ -427,10 +468,10 @@ export function renderPaginationControls(containerId, state, pageSizes, onSizeOr
     <div class="flex items-center gap-3">
       ${navLink('First', 1, page > 1)}
       ${navLink('Previous', page - 1, page > 1)}
-      <span class="flex items-center gap-1.5 text-gray-500">
+      <span class="flex items-center gap-1.5 text-fg-muted">
         Page
         <input id="${containerId}-page-jump-input" type="number" min="1" max="${totalPages}" value="${page}"
-          class="w-16 text-sm text-center px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          class="w-16 text-sm text-center px-2 py-1 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         of ${totalPages}
       </span>
       ${navLink('Next', page + 1, page < totalPages)}

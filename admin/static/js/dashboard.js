@@ -1,4 +1,4 @@
-import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip } from './app.js';
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON } from './app.js';
 
 'use strict';
 
@@ -75,10 +75,10 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   let limitersBySession = new Map();
 
   function limiterCard(l) {
-    return `<div class="p-4 bg-white rounded-lg border border-gray-200">
+    return `<div class="p-4 bg-surface rounded-lg border border-line">
       ${progressBar(l, 'h-2')}
       <div class="flex justify-between items-center mt-4">
-        <span class="text-xs text-gray-400">${esc(l.within_active_period && l.is_active ? fmtCountdown(l.next_refresh_at) : 'currently inactive')}</span>
+        <span class="text-xs text-fg-subtle">${esc(l.within_active_period && l.is_active ? fmtCountdown(l.next_refresh_at) : 'currently inactive')}</span>
         <span class="text-xs">${fmtActivePeriod(l)}</span>
       </div>
       </div>`;
@@ -89,7 +89,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     if (!container) return;
     container.innerHTML = globalLimiters.length
       ? globalLimiters.map(limiterCard).join('')
-      : '<p class="text-gray-400 text-sm">No global limiters configured.</p>';
+      : '<p class="text-fg-subtle text-sm">No global limiters configured.</p>';
   }
 
   const refreshLimiters = makeAbortable(async (signal) => {
@@ -116,10 +116,14 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   let editingSessionId = null;
   let editingDraft = '';
 
+  // Session IDs checked for bulk delete among the rows on the current page.
+  let selectedSessionIds = new Set();
+  const ACTIVE_SESSION_WINDOW_SECONDS = 30 * 60;
+
   function sessionLimiterCell(session) {
     const l = limitersBySession.get(session.session_id);
-    if (!l) return '<span class="text-gray-300">—</span>';
-    return `${progressBar(l)}<p class="text-xs text-gray-400 mt-1">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</p>`;
+    if (!l) return '<span class="text-fg-subtle">—</span>';
+    return `${progressBar(l)}<p class="text-xs text-fg-subtle mt-1">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</p>`;
   }
 
   function buildSessionRow(session) {
@@ -158,23 +162,27 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     const sessionQuery = 'session = ' + JSON.stringify(session.session_id);
     const isEditing = session.session_id === editingSessionId;
     const nameHtml = isEditing
-      ? `<input type="text" class="w-full max-w-56 text-sm px-1.5 py-0.5 border border-emerald-400 rounded focus:outline-none focus:ring-1 focus:ring-emerald-400 session-name-input" value="${esc(editingDraft)}" maxlength="200">`
-      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 font-medium hover:underline">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-gray-400 font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
-    return `<tr class="hover:bg-gray-50">
+      ? `<input type="text" class="w-full max-w-56 text-sm px-1.5 py-0.5 border border-emerald-400 dark:border-emerald-600 rounded focus:outline-none focus:ring-1 focus:ring-emerald-400 session-name-input" value="${esc(editingDraft)}" maxlength="200">`
+      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 dark:text-emerald-400 font-medium hover:underline">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-fg-subtle font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
+    return `<tr class="hover:bg-surface-hover">
+      <td class="px-4 py-2">
+        <label class="sr-only">Select session</label>
+        <input type="checkbox" class="session-select-checkbox" data-session-id="${esc(session.session_id)}" ${selectedSessionIds.has(session.session_id) ? 'checked' : ''}>
+      </td>
       <td class="px-4 py-2 session-name-cell" data-session-id="${esc(session.session_id)}">${nameHtml}</td>
-      <td class="text-right text-gray-700 px-4 py-2">${session.exchange_count}</td>
-      <td class="text-gray-700 px-4 py-2">${esc(session.model || '—')}</td>
-      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(tokensTooltip(tokensRow))}">
+      <td class="text-right text-fg px-4 py-2">${session.exchange_count}</td>
+      <td class="text-fg px-4 py-2">${esc(session.model || '—')}</td>
+      <td class="text-right text-fg px-4 py-2" data-tip="${esc(tokensTooltip(tokensRow))}">
         ${fmtTokens(totalTok)}
       </td>
-      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(tokensTooltip(contextRow))}">
+      <td class="text-right text-fg px-4 py-2" data-tip="${esc(tokensTooltip(contextRow))}">
         ${fmtTokens(contextSize)}
       </td>
-      <td class="text-right text-gray-700 px-4 py-2" data-tip="${esc(costTooltip(costsRow))}">
+      <td class="text-right text-fg px-4 py-2" data-tip="${esc(costTooltip(costsRow))}">
         ${costStr}
-        <p class="text-xs text-gray-400">avg ${avgCostStr}</p>
+        <p class="text-xs text-fg-subtle">avg ${avgCostStr}</p>
       </td>
-      <td class="text-gray-400 whitespace-nowrap px-4 py-2">${fmtTime(session.last_updated)}</td>
+      <td class="text-fg-subtle whitespace-nowrap px-4 py-2">${fmtTime(session.last_updated)}</td>
       <td class="w-36 whitespace-nowrap text-right px-4 py-2">${sessionLimiterCell(session)}</td>
       </tr>`;
   }
@@ -182,9 +190,14 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   function renderSessionRows() {
     const tbody = document.getElementById('session-stats-tbody');
     if (!tbody) return;
+    // Remove selections for sessions no longer present on this page.
+    const visibleIds = new Set(lastSessionRows.map((r) => r.session_id));
+    for (const id of selectedSessionIds) {
+      if (!visibleIds.has(id)) selectedSessionIds.delete(id);
+    }
     tbody.innerHTML = lastSessionRows.length
       ? lastSessionRows.map(buildSessionRow).join('')
-      : '<tr><td colspan="8" class="text-center text-gray-400 px-4 py-8">No sessions yet.</td></tr>';
+      : '<tr><td colspan="9" class="text-center text-fg-subtle px-4 py-8">No sessions yet.</td></tr>';
     if (editingSessionId !== null) {
       const input = tbody.querySelector('.session-name-input');
       if (input) {
@@ -192,6 +205,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         input.setSelectionRange(input.value.length, input.value.length);
       }
     }
+    renderSelectionUI();
   }
 
   /**
@@ -270,6 +284,105 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
       if (editingSessionId === null) return;
       stopEditingSession();
     });
+
+    sessionStatsTbody.addEventListener('change', (e) => {
+      if (!e.target.classList.contains('session-select-checkbox')) return;
+      const sessionId = e.target.dataset.sessionId;
+      if (e.target.checked) selectedSessionIds.add(sessionId);
+      else selectedSessionIds.delete(sessionId);
+      renderSelectionUI();
+    });
+  }
+
+  // ── Bulk delete ─────────────────────────────────────────────────────────
+  const sessionSelectAll = document.getElementById('session-select-all');
+  const sessionBulkActions = document.getElementById('session-bulk-actions');
+  const sessionSelectedCount = document.getElementById('session-selected-count');
+  const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+
+  /**
+   * Syncs the header select-all checkbox (checked/indeterminate) and the
+   * bulk-actions bar (visibility + count) with selectedSessionIds.
+   */
+  function renderSelectionUI() {
+    const count = selectedSessionIds.size;
+    if (sessionBulkActions) sessionBulkActions.classList.toggle('hidden', count === 0);
+    if (sessionBulkActions) sessionBulkActions.classList.toggle('flex', count > 0);
+    if (sessionSelectedCount) sessionSelectedCount.textContent = `${count} selected`;
+    if (sessionSelectAll) {
+      sessionSelectAll.checked = lastSessionRows.length > 0 && count === lastSessionRows.length;
+      sessionSelectAll.indeterminate = count > 0 && count < lastSessionRows.length;
+    }
+  }
+
+  function clearSelection() {
+    selectedSessionIds.clear();
+    renderSelectionUI();
+  }
+
+  if (sessionSelectAll) {
+    sessionSelectAll.addEventListener('change', () => {
+      if (sessionSelectAll.checked) lastSessionRows.forEach((r) => selectedSessionIds.add(r.session_id));
+      else selectedSessionIds.clear();
+      renderSessionRows();
+    });
+  }
+
+  const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message', {
+    warning: ['text-amber-700 dark:text-amber-400', 'bg-amber-50 dark:bg-amber-500/15', 'border-amber-200 dark:border-amber-800'],
+    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
+    success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
+  });
+
+  if (bulkDeleteBtn) {
+    bulkDeleteBtn.onclick = () => {
+      const dialog = document.getElementById('bulk-delete-dialog');
+      const checkbox = document.getElementById('bulk-delete-also-delete-claude-session');
+      const countEl = document.getElementById('bulk-delete-session-count');
+      if (checkbox) checkbox.checked = false;
+      setBulkDeleteMessage(null, '');
+      if (countEl) countEl.textContent = String(selectedSessionIds.size);
+
+      function updateActiveWarning() {
+        if (!checkbox?.checked) {
+          setBulkDeleteMessage(null, '');
+          return;
+        }
+        const anyActive = [...selectedSessionIds].some((id) => {
+          const row = lastSessionRows.find((r) => r.session_id === id);
+          return row && (Date.now() / 1000 - row.last_updated) < ACTIVE_SESSION_WINDOW_SECONDS;
+        });
+        setBulkDeleteMessage(anyActive ? 'warning' : null, anyActive
+          ? 'One or more of the selected sessions had Claude Code activity in the last 30 minutes and may still be open in a terminal. Deleting their files now could corrupt or lose data from those sessions.'
+          : '');
+      }
+      if (checkbox) checkbox.onchange = updateActiveWarning;
+
+      dialog?.showModal();
+    };
+  }
+
+  const submitBulkDeleteBtn = document.getElementById('submit-bulk-delete-btn');
+  if (submitBulkDeleteBtn) {
+    submitBulkDeleteBtn.onclick = async () => {
+      const checkbox = document.getElementById('bulk-delete-also-delete-claude-session');
+      const res = await postJSON('/api/exchanges/bulk-delete', {
+        session_ids: [...selectedSessionIds],
+        also_delete_claude_session: !!checkbox?.checked,
+      });
+      if (!res.ok) {
+        setBulkDeleteMessage('error', await extractErrorMessage(res, res.statusText || 'Failed to delete selected sessions.'));
+        return;
+      }
+      setBulkDeleteMessage('success', 'Selected sessions deleted.');
+      setTimeout(() => {
+        document.getElementById('bulk-delete-dialog')?.close();
+        clearSelection();
+        refreshSessionStats();
+        fetchTotals(range);
+        refreshDailyCosts();
+      }, 800);
+    };
   }
 
   function renderSessionPagination() {
@@ -278,12 +391,14 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     renderPaginationControls('session-pagination-controls', { ...pagination, total: sessionTotal, pageSize: sessionPageSize }, SESSION_PAGE_SIZES, (page, size) => {
       sessionPage = page;
       sessionPageSize = size;
+      clearSelection();
       refreshSessionStats();
     });
   }
 
   wirePaginationNav('session-pagination-controls', (page) => {
     sessionPage = page;
+    clearSelection();
     refreshSessionStats();
   });
 
@@ -424,11 +539,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     const highThreshold = percentile(sortedCosts, 0.75);
 
     const LEVELS = [
-      { bg: 'bg-gray-100 border border-gray-200', text: 'text-gray-300' },
-      { bg: 'bg-emerald-100', text: 'text-emerald-800' },
-      { bg: 'bg-emerald-300', text: 'text-emerald-900' },
-      { bg: 'bg-emerald-500', text: 'text-white' },
-      { bg: 'bg-emerald-700', text: 'text-white' },
+      { bg: 'bg-surface-hover border border-line', text: 'text-fg-subtle' },
+      { bg: 'bg-emerald-100 dark:bg-emerald-200', text: 'text-emerald-800 dark:text-emerald-900' },
+      { bg: 'bg-emerald-300 dark:bg-emerald-400', text: 'text-emerald-900 dark:text-emerald-950' },
+      { bg: 'bg-emerald-500 dark:bg-emerald-600', text: 'text-white' },
+      { bg: 'bg-emerald-700 dark:bg-emerald-800', text: 'text-white' },
     ];
 
     const today = new Date();
@@ -457,7 +572,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     }
 
     // Day label column — height matches cell h-7 + gap-1
-    const dayLabelsHtml = DAY_LABELS.map((d) => `<div class="flex items-center w-8 h-7 text-xs text-gray-400">${d}</div>`).join('');
+    const dayLabelsHtml = DAY_LABELS.map((d) => `<div class="flex items-center w-8 h-7 text-xs text-fg-subtle">${d}</div>`).join('');
 
     const monthLabelSeen = {};
 
@@ -483,11 +598,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         const txt = fmtCell(cost);
         const tip = `<div class="flex gap-2"><b>${key}:</b><span>${cost > 0 ? `$${cost.toFixed(6)}` : 'no activity'}</span></div>`;
 
-        return `<div class="flex items-center justify-center overflow-hidden w-16 h-7 text-xs font-mono cursor-default rounded-sm ${clr.bg} ${clr.text} ${isWeekend && level === 0 ? 'bg-gray-200' : ''}" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
+        return `<div class="flex items-center justify-center overflow-hidden w-16 h-7 text-xs font-mono cursor-default rounded-sm ${clr.bg} ${clr.text} ${isWeekend && level === 0 ? 'bg-surface-active' : ''}" data-tip="${esc(tip)}">${txt ? `<span class="select-none">${txt}</span>` : ''}</div>`;
       }).join('');
 
       return `<div class="flex flex-col gap-1 ${gapClass}">
-        <div class="flex items-end h-7 text-xs text-gray-500 font-medium whitespace-nowrap pb-0.5">${monthLabel}</div>
+        <div class="flex items-end h-7 text-xs text-fg-muted font-medium whitespace-nowrap pb-0.5">${monthLabel}</div>
         ${daysHtml}
         </div>`;
     }).join('');
@@ -501,7 +616,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     const legend = document.getElementById('heatmap-legend');
     if (legend) {
       if (maxCost === 0) {
-        legend.innerHTML = '<span class="text-gray-400">No spending data yet.</span>';
+        legend.innerHTML = '<span class="text-fg-subtle">No spending data yet.</span>';
       } else {
         const entries = [
           { bg: LEVELS[0].bg, label: '$0.00' },

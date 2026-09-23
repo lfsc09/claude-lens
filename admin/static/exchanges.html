@@ -6,10 +6,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Exchanges – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
+  <meta name="color-scheme" content="light dark">
+  <script src="/js/theme-init.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'rgb(var(--color-canvas) / <alpha-value>)',
+            surface: 'rgb(var(--color-surface) / <alpha-value>)',
+            'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+            'surface-active': 'rgb(var(--color-surface-active) / <alpha-value>)',
+            'surface-strong': 'rgb(var(--color-surface-strong) / <alpha-value>)',
+            line: 'rgb(var(--color-line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
+            fg: 'rgb(var(--color-fg) / <alpha-value>)',
+            'fg-muted': 'rgb(var(--color-fg-muted) / <alpha-value>)',
+            'fg-subtle': 'rgb(var(--color-fg-subtle) / <alpha-value>)',
+          },
+        },
+      },
+    };
+  </script>
 </head>
 
-<body class="min-h-screen text-gray-800 bg-gray-50">
+<body class="min-h-screen text-fg bg-canvas">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
   <site-nav active="exchanges"></site-nav>
@@ -17,7 +41,6 @@
   <main class="max-w-7xl mx-auto px-6 py-8">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-xl font-semibold">Exchanges</h1>
-      <button type="button" id="confirm-delete-btn" class="hidden whitespace-nowrap text-sm text-red-500 px-3 py-1 border border-red-500 rounded hover:text-red-700 hover:bg-red-50">Delete Session</button>
     </div>
 
     <!-- ── Search Form ───────────────────────────────────────────────────── -->
@@ -26,48 +49,48 @@
         <input type="hidden" name="size" id="search-size" value="50">
         <label for="search-input" class="sr-only">Filter exchanges</label>
         <input type="text" name="q" id="search-input" placeholder='model like sonnet AND cost > 0.1'
-          class="w-full text-sm font-mono px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          class="w-full text-sm font-mono px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         <button type="submit" class="whitespace-nowrap text-white text-sm px-3 py-1.5 bg-emerald-600 rounded hover:bg-emerald-700">
           Search
         </button>
-        <a href="/exchanges" id="search-clear" class="hidden self-center whitespace-nowrap text-sm text-gray-500 hover:underline">Clear</a>
+        <a href="/exchanges" id="search-clear" class="hidden self-center whitespace-nowrap text-sm text-fg-muted hover:underline">Clear</a>
       </div>
-      <p id="filter-error" class="hidden text-xs text-red-600 mt-1.5"></p>
+      <p id="filter-error" class="hidden text-xs text-red-600 dark:text-red-400 mt-1.5"></p>
       <div id="filter-help">
-        <p class="text-xs text-gray-400 mt-1.5">
+        <p class="text-xs text-fg-subtle mt-1.5">
           <b>Fields</b>: id, session, model, path, date, input_tokens, output_tokens, cache_tokens, total_tokens, cost, stream
         </p>
         <ul class="mt-1.5">
-          <li class="text-xs text-gray-400 mt-0.5 ms-2">Text fields take: <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">like</code></li>
-          <li class="text-xs text-gray-400 mt-0.5 ms-2">Numbers/dates take: <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&lt;</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&gt;</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">!=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&lt;=</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">&gt;=</code></li>
-          <li class="text-xs text-gray-400 mt-0.5 ms-2">Combine with: <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">AND</code> <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">OR</code> and <code class="font-mono text-xs px-1 bg-gray-100 rounded border border-gray-200">(…)</code></li>
+          <li class="text-xs text-fg-subtle mt-0.5 ms-2">Text fields take: <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">=</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">like</code></li>
+          <li class="text-xs text-fg-subtle mt-0.5 ms-2">Numbers/dates take: <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">&lt;</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">&gt;</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">=</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">!=</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">&lt;=</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">&gt;=</code></li>
+          <li class="text-xs text-fg-subtle mt-0.5 ms-2">Combine with: <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">AND</code> <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">OR</code> and <code class="font-mono text-xs px-1 bg-surface-hover rounded border border-line">(…)</code></li>
         </ul>
       </div>
     </form>
 
     <!-- ── Exchanges Charts ─────────────────────────────────────────────── -->
     <section aria-label="Exchange charts" class="grid grid-cols-1 gap-4 mb-6">
-      <div class="p-4 bg-white rounded-lg border border-gray-200">
+      <div class="p-4 bg-surface rounded-lg border border-line">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-medium text-gray-700">Cost over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
-          <div id="cost-chart-legend" class="flex flex-wrap text-xs text-gray-500 gap-3"></div>
+          <h2 class="text-sm font-medium text-fg">Cost over time <span class="text-fg-subtle font-normal">(latest 200 exchanges)</span></h2>
+          <div id="cost-chart-legend" class="flex flex-wrap text-xs text-fg-muted gap-3"></div>
         </div>
         <svg id="cost-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="Cost over time chart" class="w-full h-56"></svg>
       </div>
 
-      <div class="p-4 bg-white rounded-lg border border-gray-200">
+      <div class="p-4 bg-surface rounded-lg border border-line">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-medium text-gray-700">Tokens over time <span class="text-gray-400 font-normal">(latest 200 exchanges)</span></h2>
-          <div id="tokens-chart-legend" class="flex flex-wrap text-xs text-gray-500 gap-3"></div>
+          <h2 class="text-sm font-medium text-fg">Tokens over time <span class="text-fg-subtle font-normal">(latest 200 exchanges)</span></h2>
+          <div id="tokens-chart-legend" class="flex flex-wrap text-xs text-fg-muted gap-3"></div>
         </div>
         <svg id="tokens-chart" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="Tokens over time chart" class="w-full h-56"></svg>
       </div>
     </section>
 
     <!-- ── Exchanges Table ─────────────────────────────────────────────── -->
-    <section aria-label="Exchanges" class="overflow-x-auto bg-white rounded-lg border border-gray-200">
+    <section aria-label="Exchanges" class="overflow-x-auto bg-surface rounded-lg border border-line">
       <table class="w-full text-sm">
-        <thead class="text-left text-gray-500 bg-gray-50 border-b border-gray-200">
+        <thead class="text-left text-fg-muted bg-surface-hover border-b border-line">
           <tr>
             <th class="font-medium px-4 py-2">ID</th>
             <th class="font-medium px-4 py-2">Session</th>
@@ -78,51 +101,20 @@
             <th class="font-medium px-4 py-2">Stream</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-100" id="exchanges-tbody">
+        <tbody class="divide-y divide-line" id="exchanges-tbody">
           <tr>
-            <td colspan="7" class="text-center text-gray-400 px-4 py-10">Loading…</td>
+            <td colspan="7" class="text-center text-fg-subtle px-4 py-10">Loading…</td>
           </tr>
         </tbody>
       </table>
     </section>
 
     <!-- ── Pagination Controls ─────────────────────────────────────────── -->
-    <nav aria-label="Pagination" id="pagination-controls" class="flex flex-wrap items-center justify-between sticky bottom-0 text-sm p-4 mt-4 gap-4 bg-gray-50 shadow-md rounded"></nav>
+    <nav aria-label="Pagination" id="pagination-controls" class="flex flex-wrap items-center justify-between sticky bottom-0 text-sm p-4 mt-4 gap-4 bg-surface-hover shadow-md rounded"></nav>
   </main>
 
   <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
   <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
-
-  <!-- ── Dialog ──────────────────────────────────────────────────────────── -->
-  <dialog id="delete-confirmation-dialog" class="p-6 border border-gray-300 rounded-lg">
-    <div class="flex flex-col gap-6">
-      <div class="flex flex-col gap-8">
-        <div class="flex flex-col gap-3">
-          <div>
-            <p class="text-lg font-medium">Do you confirm the deletion of this session data?</p>
-            <small class="text-gray-500 font-mono">This only deletes the data associated with claude-lens.</small>
-          </div>
-          <small class="text-gray-500 font-mono">Session ID: <span id="delete-session-id" class="font-semibold text-emerald-600"></span></small>
-        </div>
-        <div class="flex flex-col gap-1 p-4 border-2 border-gray-200 border-dashed rounded-lg">
-          <p class="text-sm font-medium">Do you wish to also delete this session in Claude Code?</p>
-          <div class="flex items-center text-red-500 gap-2 hover:*:cursor-pointer">
-            <input
-              type="checkbox"
-              role="switch"
-              id="also-delete-claude-session"
-            />
-            <label for="also-delete-claude-session">Delete all</label>
-          </div>
-          <div id="delete-dialog-message" class="hidden text-xs px-3 py-2 rounded-md border"></div>
-        </div>
-      </div>
-      <div class="flex justify-end w-full gap-2">
-        <button commandfor="delete-confirmation-dialog" command="close" class="text-gray-700 px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
-        <button id="submit-delete-btn" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Confirm</button>
-      </div>
-    </div>
-  </dialog>
 
   <script type="module" src="/js/exchanges.js"></script>
 </body>
