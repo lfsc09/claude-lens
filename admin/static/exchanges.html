@@ -17,7 +17,6 @@
   <main class="max-w-7xl mx-auto px-6 py-8">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-xl font-semibold">Exchanges</h1>
-      <button type="button" id="confirm-delete-btn" class="hidden whitespace-nowrap text-sm text-red-500 px-3 py-1 border border-red-500 rounded hover:text-red-700 hover:bg-red-50">Delete Session</button>
     </div>
 
     <!-- ── Search Form ───────────────────────────────────────────────────── -->
@@ -92,37 +91,6 @@
 
   <!-- ── Tooltip ─────────────────────────────────────────────────────────── -->
   <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
-
-  <!-- ── Dialog ──────────────────────────────────────────────────────────── -->
-  <dialog id="delete-confirmation-dialog" class="p-6 border border-gray-300 rounded-lg">
-    <div class="flex flex-col gap-6">
-      <div class="flex flex-col gap-8">
-        <div class="flex flex-col gap-3">
-          <div>
-            <p class="text-lg font-medium">Do you confirm the deletion of this session data?</p>
-            <small class="text-gray-500 font-mono">This only deletes the data associated with claude-lens.</small>
-          </div>
-          <small class="text-gray-500 font-mono">Session ID: <span id="delete-session-id" class="font-semibold text-emerald-600"></span></small>
-        </div>
-        <div class="flex flex-col gap-1 p-4 border-2 border-gray-200 border-dashed rounded-lg">
-          <p class="text-sm font-medium">Do you wish to also delete this session in Claude Code?</p>
-          <div class="flex items-center text-red-500 gap-2 hover:*:cursor-pointer">
-            <input
-              type="checkbox"
-              role="switch"
-              id="also-delete-claude-session"
-            />
-            <label for="also-delete-claude-session">Delete all</label>
-          </div>
-          <div id="delete-dialog-message" class="hidden text-xs px-3 py-2 rounded-md border"></div>
-        </div>
-      </div>
-      <div class="flex justify-end w-full gap-2">
-        <button commandfor="delete-confirmation-dialog" command="close" class="text-gray-700 px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
-        <button id="submit-delete-btn" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Confirm</button>
-      </div>
-    </div>
-  </dialog>
 
   <script type="module" src="/js/exchanges.js"></script>
 </body>

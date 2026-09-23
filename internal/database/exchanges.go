@@ -536,45 +536,89 @@ func (db *DB) GetDailyCosts(ctx context.Context, days int) ([]DailyCost, error) 
 	return out, rows.Err()
 }
 
-// SessionActiveWithin reports whether sessionID has any exchange timestamped
-// within window of now. Used to warn before deleting on-disk Claude Code
-// session files out from under a session that might still be open in a
-// terminal — a proxied request in the last few minutes is the best signal
-// claude-lens has that a session is still live.
-func (db *DB) SessionActiveWithin(ctx context.Context, sessionID string, window time.Duration, now time.Time) (bool, error) {
-	if sessionID == "" {
-		return false, nil
+// sqlInClause returns len(ids) "?" placeholders joined by commas, plus the
+// matching args slice, for building a `WHERE col IN (...)` clause.
+func sqlInClause(ids []string) (string, []any) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
 	}
-	var last sql.NullFloat64
-	if err := db.sql.QueryRowContext(ctx, "SELECT MAX(timestamp) FROM exchanges WHERE session_id = ?", sessionID).Scan(&last); err != nil {
-		return false, err
-	}
-	if !last.Valid {
-		return false, nil
-	}
-	return last.Float64 >= float64(now.Add(-window).Unix()), nil
+	return placeholders, args
 }
 
-// DeleteExchanges deletes all exchanges for a specific session. sessionID is
-// required; it no longer supports deleting every exchange in one call.
-// Returns the number of rows deleted.
-func (db *DB) DeleteExchanges(ctx context.Context, sessionID string) (int64, error) {
-	if sessionID == "" {
-		return 0, errors.New("session_id is required")
+// DeleteExchanges deletes exchanges rows and reports which sessions had rows
+// deleted. A non-empty sessionIDs scopes the delete to those sessions; an
+// empty sessionIDs deletes every exchange. The returned session IDs let
+// callers also clean up Claude Code session files and session_names for
+// exactly the sessions actually affected.
+func (db *DB) DeleteExchanges(ctx context.Context, sessionIDs []string) (deletedRows int64, affectedSessions []string, err error) {
+	selectQuery, deleteQuery := "SELECT DISTINCT session_id FROM exchanges", "DELETE FROM exchanges"
+	var args []any
+	if len(sessionIDs) > 0 {
+		placeholders, inArgs := sqlInClause(sessionIDs)
+		selectQuery += " WHERE session_id IN (" + placeholders + ")"
+		deleteQuery += " WHERE session_id IN (" + placeholders + ")"
+		args = inArgs
 	}
-	res, err := db.sql.ExecContext(ctx, "DELETE FROM exchanges WHERE session_id = ?", sessionID)
+	selectQuery += " ORDER BY session_id"
+
+	rows, err := db.sql.QueryContext(ctx, selectQuery, args...)
 	if err != nil {
-		slog.Error("delete exchanges failed", "error", err, "session_id", sessionID)
-		return 0, err
+		return 0, nil, err
 	}
-	return res.RowsAffected()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, nil, err
+		}
+		affectedSessions = append(affectedSessions, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, nil, err
+	}
+	rows.Close()
+
+	if len(affectedSessions) == 0 {
+		return 0, nil, nil
+	}
+
+	res, err := db.sql.ExecContext(ctx, deleteQuery, args...)
+	if err != nil {
+		slog.Error("delete exchanges failed", "error", err, "session_ids", sessionIDs)
+		return 0, nil, err
+	}
+	deletedRows, err = res.RowsAffected()
+	return deletedRows, affectedSessions, err
+}
+
+// DeleteSessionNames removes session_names rows for sessionIDs. Called
+// alongside DeleteExchanges only when the caller also purges those sessions'
+// on-disk Claude Code files, since a name is otherwise independent of the
+// exchange log the same way exchanges_ledger survives DeleteExchanges.
+func (db *DB) DeleteSessionNames(ctx context.Context, sessionIDs []string) error {
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+	placeholders, args := sqlInClause(sessionIDs)
+	_, err := db.sql.ExecContext(ctx, "DELETE FROM session_names WHERE session_id IN ("+placeholders+")", args...)
+	return err
+}
+
+// SessionName returns a session's display name and whether one is set.
+func (db *DB) SessionName(ctx context.Context, sessionID string) (name string, ok bool, err error) {
+	err = db.sql.QueryRowContext(ctx, "SELECT name FROM session_names WHERE session_id = ?", sessionID).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return name, err == nil, err
 }
 
 // SetSessionName sets or clears a session's display name. An empty (after
 // trimming) name removes the mapping entirely, reverting the session to
-// showing its raw id. session_names is deliberately left untouched by
-// DeleteExchanges — a name is session identity, independent of the raw
-// exchange log, the same way exchanges_ledger survives that delete.
+// showing its raw id.
 func (db *DB) SetSessionName(ctx context.Context, sessionID, name string) error {
 	if sessionID == "" {
 		return errors.New("session_id is required")

@@ -78,26 +78,11 @@ func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 }
 
 // exchangesResponse wraps a page of exchanges with the total count matching
-// the current filter (for pagination) and, when the filter is exactly one
-// `session = "..."` condition, the extracted session id — the query
-// grammar (query_filter.go) is business logic that belongs server-side, so
-// the frontend doesn't need its own copy just to decide whether a delete
-// action is session-scoped or global.
+// the current filter, for pagination.
 type exchangesResponse struct {
-	Rows      []database.ExchangeSummary `json:"rows"`
-	Total     int                        `json:"total"`
-	SessionID string                     `json:"session_id,omitempty"`
-	// SessionActive is only meaningful alongside SessionID: it's true when
-	// that session had a proxied request within claudeSessionActiveWindow,
-	// which the UI uses to warn before deleting its on-disk Claude Code
-	// files out from under a still-open terminal.
-	SessionActive bool `json:"session_active,omitempty"`
+	Rows  []database.ExchangeSummary `json:"rows"`
+	Total int                        `json:"total"`
 }
-
-// claudeSessionActiveWindow is how recent a session's last proxied request
-// must be for the delete dialog to warn that it might still be open in a
-// terminal.
-const claudeSessionActiveWindow = 30 * time.Minute
 
 func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
@@ -121,16 +106,7 @@ func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sessionID, _ := database.ExtractExactSession(q)
-	var sessionActive bool
-	if sessionID != "" {
-		sessionActive, err = h.db.SessionActiveWithin(r.Context(), sessionID, claudeSessionActiveWindow, time.Now())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, exchangesResponse{Rows: rows, Total: total, SessionID: sessionID, SessionActive: sessionActive})
+	writeJSON(w, http.StatusOK, exchangesResponse{Rows: rows, Total: total})
 }
 
 func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
@@ -152,23 +128,59 @@ func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, row)
 }
 
-func (h *handlers) deleteExchanges(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.URL.Query().Get("session_id")
-	alsoDeleteClaudeSession := r.URL.Query().Get("also_delete_claude_session") == "true"
-	n, err := h.db.DeleteExchanges(r.Context(), sessionID)
+// bulkDeleteExchangesRequest is the payload for POST /api/exchanges/bulk-delete.
+// SessionIDs scopes the delete to specific sessions; an empty SessionIDs
+// deletes every exchange, but only when ConfirmAll is set, guarding against
+// an accidental full wipe from a malformed/empty request.
+type bulkDeleteExchangesRequest struct {
+	SessionIDs              []string `json:"session_ids"`
+	AlsoDeleteClaudeSession bool     `json:"also_delete_claude_session"`
+	ConfirmAll              bool     `json:"confirm_all"`
+}
+
+// bulkDeleteExchanges deletes exchanges for the given sessions, or every
+// exchange when session_ids is empty and confirm_all is set. When
+// also_delete_claude_session is set, it also removes each affected
+// session's on-disk Claude Code files and its session_names entry;
+// failures there are logged but never fail the request, since the
+// exchanges delete has already committed by that point.
+func (h *handlers) bulkDeleteExchanges(w http.ResponseWriter, r *http.Request) {
+	var req bulkDeleteExchangesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.SessionIDs) == 0 && !req.ConfirmAll {
+		writeError(w, http.StatusBadRequest, "confirm_all is required to delete every session")
+		return
+	}
+
+	deletedRows, affectedSessions, err := h.db.DeleteExchanges(r.Context(), req.SessionIDs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var deletedQtd int
-	// Try to delete the Claude session if requested, but don't fail the request if it fails.
-	if alsoDeleteClaudeSession && sessionID != "" {
-		if deletedQtd, err = files.TryDeleteClaudeSession(sessionID); err != nil {
-			h.logger.Error("failed to delete Claude session", "error", err, "session_id", sessionID, "deleted", deletedQtd)
+
+	var deletedFiles int
+	if req.AlsoDeleteClaudeSession {
+		for _, sessionID := range affectedSessions {
+			n, err := files.TryDeleteClaudeSession(sessionID)
+			deletedFiles += n
+			if err != nil {
+				h.logger.Error("failed to delete Claude session", "error", err, "session_id", sessionID, "deleted", n)
+			}
+		}
+		if err := h.db.DeleteSessionNames(r.Context(), affectedSessions); err != nil {
+			h.logger.Error("failed to delete session names", "error", err, "session_ids", affectedSessions)
 		}
 	}
-	h.logger.Info("delete exchanges", "deletedRows", n, "session_id", sessionID, "also_delete_claude_session", alsoDeleteClaudeSession, "deleted_files", deletedQtd)
-	writeJSON(w, http.StatusOK, map[string]int64{"deletedRows": n, "deletedFiles": int64(deletedQtd)})
+
+	h.logger.Info("bulk delete exchanges", "deletedRows", deletedRows, "sessionsAffected", len(affectedSessions), "also_delete_claude_session", req.AlsoDeleteClaudeSession, "deleted_files", deletedFiles)
+	writeJSON(w, http.StatusOK, map[string]int64{
+		"deletedRows":      deletedRows,
+		"deletedFiles":     int64(deletedFiles),
+		"sessionsAffected": int64(len(affectedSessions)),
+	})
 }
 
 // totals accepts either ?session_id= or ?range= (never both in practice —
