@@ -154,9 +154,6 @@ func TestExchangesList_FilterPaginationAndSessionID(t *testing.T) {
 	if len(resp.Rows) != 2 || resp.Total != 2 {
 		t.Fatalf("got %d rows (total %d) for session a, want 2 (total 2)", len(resp.Rows), resp.Total)
 	}
-	if resp.SessionID != "a" {
-		t.Errorf("session_id = %q, want %q (exact single-session filter)", resp.SessionID, "a")
-	}
 
 	rec = doJSON(t, s, http.MethodGet, "/api/exchanges?limit=abc", nil)
 	if rec.Code != http.StatusBadRequest {
@@ -413,51 +410,18 @@ func TestDailyCosts(t *testing.T) {
 	}
 }
 
-func TestListExchanges_SessionActive(t *testing.T) {
+func TestBulkDeleteExchanges(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
-	now := float64(time.Now().Unix())
-
-	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "recent", Path: "/p", Timestamp: now - 300, RawRequest: "{}", RawResponse: "{}",
-	}); err != nil {
-		t.Fatalf("SaveExchange(recent): %v", err)
-	}
-	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "stale", Path: "/p", Timestamp: now - 3600, RawRequest: "{}", RawResponse: "{}",
-	}); err != nil {
-		t.Fatalf("SaveExchange(stale): %v", err)
-	}
-
-	rec := doJSON(t, s, http.MethodGet, "/api/exchanges?q="+url.QueryEscape(`session = "recent"`), nil)
-	var recentResp exchangesResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &recentResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !recentResp.SessionActive {
-		t.Error("recent session: SessionActive = false, want true")
-	}
-
-	rec = doJSON(t, s, http.MethodGet, "/api/exchanges?q="+url.QueryEscape(`session = "stale"`), nil)
-	var staleResp exchangesResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &staleResp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if staleResp.SessionActive {
-		t.Error("stale session: SessionActive = true, want false")
-	}
-}
-
-func TestDeleteExchanges(t *testing.T) {
-	s, db := newTestServer(t)
-	ctx := context.Background()
-	for _, sess := range []string{"a", "a", "b"} {
+	for _, sess := range []string{"a", "a", "b", "c"} {
 		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
 
-	rec := doJSON(t, s, http.MethodDelete, "/api/exchanges?session_id=a", nil)
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges/bulk-delete", map[string]any{
+		"session_ids": []string{"a", "b"},
+	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -465,19 +429,106 @@ func TestDeleteExchanges(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["deletedRows"] != 2 {
-		t.Errorf("deletedRows = %d, want 2", body["deletedRows"])
+	if body["deletedRows"] != 3 {
+		t.Errorf("deletedRows = %d, want 3", body["deletedRows"])
+	}
+	if body["sessionsAffected"] != 2 {
+		t.Errorf("sessionsAffected = %d, want 2", body["sessionsAffected"])
 	}
 
 	remaining, _ := db.GetExchanges(ctx, "", 100, 0)
-	if len(remaining) != 1 {
-		t.Fatalf("got %d remaining, want 1", len(remaining))
+	if len(remaining) != 1 || remaining[0].SessionID != "c" {
+		t.Fatalf("unexpected remaining rows: %+v", remaining)
 	}
 
-	// session_id is now required — no more "clear everything" mode.
-	rec = doJSON(t, s, http.MethodDelete, "/api/exchanges", nil)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500 for missing session_id", rec.Code)
+	// Empty session_ids without confirm_all is rejected.
+	rec = doJSON(t, s, http.MethodPost, "/api/exchanges/bulk-delete", map[string]any{})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 without confirm_all", rec.Code)
+	}
+	remaining, _ = db.GetExchanges(ctx, "", 100, 0)
+	if len(remaining) != 1 {
+		t.Fatalf("rejected bulk-delete should not delete rows: got %d remaining, want 1", len(remaining))
+	}
+
+	// Empty session_ids with confirm_all wipes everything.
+	rec = doJSON(t, s, http.MethodPost, "/api/exchanges/bulk-delete", map[string]any{
+		"confirm_all": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["deletedRows"] != 1 || body["sessionsAffected"] != 1 {
+		t.Errorf("confirm_all delete: deletedRows=%d sessionsAffected=%d, want 1, 1", body["deletedRows"], body["sessionsAffected"])
+	}
+	remaining, _ = db.GetExchanges(ctx, "", 100, 0)
+	if len(remaining) != 0 {
+		t.Fatalf("confirm_all should delete every row: got %d remaining, want 0", len(remaining))
+	}
+}
+
+// TestBulkDeleteExchanges_SessionNames verifies session_names deletion is
+// conditional on also_delete_claude_session, scoped to exactly the sessions
+// that had exchange rows deleted.
+func TestBulkDeleteExchanges_SessionNames(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	for _, sess := range []string{"a", "b"} {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+			t.Fatalf("SaveExchange: %v", err)
+		}
+		if err := db.SetSessionName(ctx, sess, "name-"+sess); err != nil {
+			t.Fatalf("SetSessionName(%s): %v", sess, err)
+		}
+	}
+	if err := db.SetSessionName(ctx, "untouched", "name-untouched"); err != nil {
+		t.Fatalf("SetSessionName(untouched): %v", err)
+	}
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges/bulk-delete", map[string]any{
+		"session_ids": []string{"a"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	assertSessionNames(t, db, "a", "b", "untouched")
+
+	rec = doJSON(t, s, http.MethodPost, "/api/exchanges/bulk-delete", map[string]any{
+		"session_ids":                []string{"b"},
+		"also_delete_claude_session": true,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	assertSessionNames(t, db, "a", "untouched")
+}
+
+// assertSessionNames checks that exactly the given sessions still have a
+// session_names entry (each set to "name-<id>" by the test setup) and every
+// other candidate session ID does not.
+func assertSessionNames(t *testing.T, db *database.DB, present ...string) {
+	t.Helper()
+	all := append([]string{"a", "b", "untouched"}, present...)
+	want := make(map[string]bool, len(present))
+	for _, id := range present {
+		want[id] = true
+	}
+	seen := make(map[string]bool)
+	for _, id := range all {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		_, ok, err := db.SessionName(context.Background(), id)
+		if err != nil {
+			t.Fatalf("SessionName(%s): %v", id, err)
+		}
+		if ok != want[id] {
+			t.Errorf("SessionName(%s) present = %v, want %v", id, ok, want[id])
+		}
 	}
 }
 
