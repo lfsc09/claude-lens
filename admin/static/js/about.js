@@ -24,7 +24,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
 
   function renderTables(tables) {
     if (!tables.length) {
-      tablesBody.innerHTML = '<tr><td colspan="3" class="text-center text-gray-400 px-4 py-8">No tables found.</td></tr>';
+      tablesBody.innerHTML = '<tr><td colspan="3" class="text-center text-fg-subtle px-4 py-8">No tables found.</td></tr>';
       clearAllDataBtn.disabled = true;
       return;
     }
@@ -44,7 +44,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
         </tr>`;
     }
     html += `
-      <tr class="font-medium bg-gray-50">
+      <tr class="font-medium bg-surface-hover">
         <td class="px-4 py-2">Total</td>
         <td class="text-right px-4 py-2">${fmtInt(totalRows)}</td>
         <td class="text-right px-4 py-2">${fmtBytes(totalSize)}</td>
@@ -57,9 +57,9 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   // files, via the bulk-delete endpoint with confirm_all set and session_ids
   // empty.
   const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {
-    warning: ['text-amber-700', 'bg-amber-50', 'border-amber-200'],
-    error: ['text-red-700', 'bg-red-50', 'border-red-200'],
-    success: ['text-emerald-700', 'bg-emerald-50', 'border-emerald-200'],
+    warning: ['text-amber-700 dark:text-amber-400', 'bg-amber-50 dark:bg-amber-500/15', 'border-amber-200 dark:border-amber-800'],
+    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
+    success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
   });
 
   async function fetchSessionCount() {

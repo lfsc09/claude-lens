@@ -1,10 +1,15 @@
-import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, ruleText } from './app.js';
+import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, jsonViewerTheme, ruleText } from './app.js';
 
 'use strict';
 
 (() => {
   const exchangeId = window.location.pathname.split('/').filter(Boolean).pop();
   let derivedExchange = null;
+
+  window.addEventListener('themechange', () => {
+    const viewer = document.getElementById('request-json-viewer');
+    if (viewer) viewer.setAttribute('theme', jsonViewerTheme());
+  });
 
   /**
    * Goes back to the previous page if the referrer is same-origin, otherwise
@@ -63,10 +68,10 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     const applied = exchange.raw_request_tokens > ABOVE_200K_TOKENS;
     return rows.map(([field, label]) => `
       <tr class="*:p-3">
-        <td class="font-medium uppercase tracking-wide text-gray-500">${esc(label)}</td>
-        <td class="font-mono text-gray-700 break-all text-right">
+        <td class="font-medium uppercase tracking-wide text-fg-muted">${esc(label)}</td>
+        <td class="font-mono text-fg break-all text-right">
           ${fmtCost(price[field])}
-          ${applied ? '<span class="text-xs font-medium align-middle ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">applied</span>' : ''}
+          ${applied ? '<span class="text-xs font-medium align-middle ml-1.5 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 rounded">applied</span>' : ''}
         </td>
       </tr>`).join('');
   }
@@ -78,85 +83,85 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     let html = `
       <h1 class="text-xl font-semibold">Exchange #${exchange.id}</h1>
       <section class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="overflow-x-auto bg-white rounded-lg border border-gray-200">
+        <div class="overflow-x-auto bg-surface rounded-lg border border-line">
           <table class="w-full text-xs">
-            <tbody class="divide-y divide-gray-100">
+            <tbody class="divide-y divide-line">
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500">Session ID</td>
-                <td class="font-mono text-gray-700 break-all text-right">${esc(exchange.session_id)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted">Session ID</td>
+                <td class="font-mono text-fg break-all text-right">${esc(exchange.session_id)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500">Model</td>
-                <td class="font-mono text-gray-700 text-right">${esc(exchange.model || '—')}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted">Model</td>
+                <td class="font-mono text-fg text-right">${esc(exchange.model || '—')}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500">Was Streaming</td>
-                <td class="font-mono text-gray-700 break-all text-right">${exchange.is_streaming ? 'Yes' : 'No'}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted">Was Streaming</td>
+                <td class="font-mono text-fg break-all text-right">${exchange.is_streaming ? 'Yes' : 'No'}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500">Total Cost</td>
-                <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.cost)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted">Total Cost</td>
+                <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.cost)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500">Context size</td>
-                <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.raw_request_tokens)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted">Context size</td>
+                <td class="font-mono text-fg break-all text-right">${fmtInt(exchange.raw_request_tokens)}</td>
               </tr>
               <tr class="*:p-3 *:border-b-0">
-                <td class="font-medium uppercase tracking-wide text-gray-500 !px-8">Input tokens</td>
-                <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.input_tokens)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted !px-8">Input tokens</td>
+                <td class="font-mono text-fg break-all text-right">${fmtInt(exchange.input_tokens)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500 !px-8">Cache creation tokens</td>
-                <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.cache_creation_tokens)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted !px-8">Cache creation tokens</td>
+                <td class="font-mono text-fg break-all text-right">${fmtInt(exchange.cache_creation_tokens)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500 !px-8">Cache read tokens</td>
-                <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.cache_read_tokens)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted !px-8">Cache read tokens</td>
+                <td class="font-mono text-fg break-all text-right">${fmtInt(exchange.cache_read_tokens)}</td>
               </tr>
               <tr class="*:p-3">
-                <td class="font-medium uppercase tracking-wide text-gray-500">Output tokens</td>
-                <td class="font-mono text-gray-700 break-all text-right">${fmtInt(exchange.output_tokens)}</td>
+                <td class="font-medium uppercase tracking-wide text-fg-muted">Output tokens</td>
+                <td class="font-mono text-fg break-all text-right">${fmtInt(exchange.output_tokens)}</td>
               </tr>
             </tbody>
           </table>
         </div>
         ${exchange.matched_price ? `
-          <div class="overflow-x-auto bg-white rounded-lg border border-gray-200">
+          <div class="overflow-x-auto bg-surface rounded-lg border border-line">
             <table class="w-full text-xs">
-              <tbody class="divide-y divide-gray-100">
+              <tbody class="divide-y divide-line">
                 <tr class="*:p-3">
-                  <td colspan="2" class="bg-gray-50">
+                  <td colspan="2" class="bg-surface-hover">
                     <div class="flex items-center gap-1.5">
-                      <p class="font-medium uppercase tracking-wide text-gray-500">Matched price</p>
-                      <span class="text-xs text-gray-400" data-tip="Captured when this exchange was saved — a permanent snapshot of what was actually charged, even if the price is edited or deleted later.">ⓘ</span>
+                      <p class="font-medium uppercase tracking-wide text-fg-muted">Matched price</p>
+                      <span class="text-xs text-fg-subtle" data-tip="Captured when this exchange was saved — a permanent snapshot of what was actually charged, even if the price is edited or deleted later.">ⓘ</span>
                     </div>
                   </td>
                 </tr>
                 <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-gray-500">Prefix</td>
-                  <td class="font-mono text-gray-700 break-all text-right">${esc(exchange.matched_price.model_prefix)}</td>
+                  <td class="font-medium uppercase tracking-wide text-fg-muted">Prefix</td>
+                  <td class="font-mono text-fg break-all text-right">${esc(exchange.matched_price.model_prefix)}</td>
                 </tr>
                 ${exchange.matched_price.rule != null ? `
                 <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-gray-500">Rule</td>
-                  <td class="font-mono text-gray-700 break-all text-right">${esc(ruleText(exchange.matched_price))}</td>
+                  <td class="font-medium uppercase tracking-wide text-fg-muted">Rule</td>
+                  <td class="font-mono text-fg break-all text-right">${esc(ruleText(exchange.matched_price))}</td>
                 </tr>
                 ` : ``}
                 <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-gray-500">Input $/M</td>
-                  <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.matched_price.input_per_m)}</td>
+                  <td class="font-medium uppercase tracking-wide text-fg-muted">Input $/M</td>
+                  <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.matched_price.input_per_m)}</td>
                 </tr>
                 <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-gray-500">Output $/M</td>
-                  <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.matched_price.output_per_m)}</td>
+                  <td class="font-medium uppercase tracking-wide text-fg-muted">Output $/M</td>
+                  <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.matched_price.output_per_m)}</td>
                 </tr>
                 <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-gray-500">Cache write $/M</td>
-                  <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.matched_price.cache_write_per_m)}</td>
+                  <td class="font-medium uppercase tracking-wide text-fg-muted">Cache write $/M</td>
+                  <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.matched_price.cache_write_per_m)}</td>
                 </tr>
                 <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-gray-500">Cache read $/M</td>
-                  <td class="font-mono text-gray-700 break-all text-right">${fmtCost(exchange.matched_price.cache_read_per_m)}</td>
+                  <td class="font-medium uppercase tracking-wide text-fg-muted">Cache read $/M</td>
+                  <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.matched_price.cache_read_per_m)}</td>
                 </tr>
                 ${above200kRowsHtml(exchange)}
               </tbody>
@@ -166,8 +171,8 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
       </section>
       <section class="flex flex-col gap-4">
         <div class="flex w-full gap-0.5 rounded-lg shadow-xs *:text-sm" role="tablist">
-          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-gray-800 text-white' : 'bg-gray-200 hover:bg-gray-300'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
-          <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded bg-gray-200 hover:bg-gray-300" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
+          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-gray-800 text-white' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
+          <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded bg-surface-active hover:bg-surface-strong" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
         </div>
       </section>
     `;
@@ -175,23 +180,23 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     if (exchange.raw_request) {
       html += `
         <section class="flex flex-col gap-0.5" id="request-panel" role="tabpanel" aria-labelledby="request-tab" e-content-id="request">
-          <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
+          <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
             <div class="flex items-center gap-2">
               <h2 class="font-semibold uppercase tracking-wide">Request</h2>
-              <button type="button" id="request-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Copy Raw</button>
-              <button type="button" id="request-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-gray-200 hover:bg-gray-300">Download Raw</button>
+              <button type="button" id="request-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Copy Raw</button>
+              <button type="button" id="request-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Download Raw</button>
             </div>
             <div class="flex flex-col items-end gap-2">
-              <span class="text-xs text-gray-700 font-mono">${fmtInt(exchange.raw_request_tokens)} tokens</span>
-              <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.raw_request_bytes)}</span>
+              <span class="text-xs text-fg font-mono">${fmtInt(exchange.raw_request_tokens)} tokens</span>
+              <span class="text-xs text-fg-muted font-mono">${fmtBytes(exchange.raw_request_bytes)}</span>
             </div>
           </div>
-          <div class="p-4 bg-white rounded-b-lg border border-gray-200">
+          <div class="p-4 bg-surface rounded-b-lg border border-line">
             <andypf-json-viewer
               id="request-json-viewer"
               indent="4"
               expanded="2"
-              theme="google-light"
+              theme="${jsonViewerTheme()}"
               show-data-types="false"
               show-toolbar="true"
               expand-icon-type="square"
@@ -209,14 +214,14 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     if (exchange.raw_response) {
       html += `
         <section class="hidden flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
-          <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
+          <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
             <h2 class="font-semibold uppercase tracking-wide">Response</h2>
             <div class="flex flex-col items-end gap-2">
-              <span class="text-xs text-gray-700 font-mono">${fmtInt(exchange.output_tokens)} tokens</span>
-              <span class="text-xs text-gray-500 font-mono">${fmtBytes(exchange.output_bytes)}</span>
+              <span class="text-xs text-fg font-mono">${fmtInt(exchange.output_tokens)} tokens</span>
+              <span class="text-xs text-fg-muted font-mono">${fmtBytes(exchange.output_bytes)}</span>
             </div>
           </div>
-          <div class="max-h-[750px] overflow-y-auto text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed p-4 bg-white rounded-b-lg border border-gray-200">${esc(exchange.output_text)}</div>
+          <div class="max-h-[750px] overflow-y-auto text-xs text-fg font-mono whitespace-pre-wrap leading-relaxed p-4 bg-surface rounded-b-lg border border-line">${esc(exchange.output_text)}</div>
         </section>
       `;
     }
@@ -264,8 +269,8 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
       tab.setAttribute('aria-selected', active);
       tab.classList.toggle('bg-gray-800', active);
       tab.classList.toggle('text-white', active);
-      tab.classList.toggle('bg-gray-200', !active);
-      tab.classList.toggle('hover:bg-gray-300', !active);
+      tab.classList.toggle('bg-surface-active', !active);
+      tab.classList.toggle('hover:bg-surface-strong', !active);
     }
     const eContents = document.querySelectorAll('[e-content-id]');
     for (const eContent of eContents) {

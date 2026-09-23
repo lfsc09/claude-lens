@@ -6,10 +6,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Limiters – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    (() => {
+      const stored = localStorage.getItem('theme');
+      const dark = stored ? stored === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('dark', dark);
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'rgb(var(--color-canvas) / <alpha-value>)',
+            surface: 'rgb(var(--color-surface) / <alpha-value>)',
+            'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+            'surface-active': 'rgb(var(--color-surface-active) / <alpha-value>)',
+            'surface-strong': 'rgb(var(--color-surface-strong) / <alpha-value>)',
+            line: 'rgb(var(--color-line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
+            fg: 'rgb(var(--color-fg) / <alpha-value>)',
+            'fg-muted': 'rgb(var(--color-fg-muted) / <alpha-value>)',
+            'fg-subtle': 'rgb(var(--color-fg-subtle) / <alpha-value>)',
+          },
+        },
+      },
+    };
+  </script>
 </head>
 
-<body class="min-h-screen text-gray-800 bg-gray-50">
+<body class="min-h-screen text-fg bg-canvas">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
   <site-nav active="limiters"></site-nav>
@@ -19,10 +50,10 @@
     <div class="flex items-start justify-between gap-4 mb-6">
       <div>
         <h1 class="text-xl font-semibold">Cost limiters</h1>
-        <p class="max-w-2xl text-sm text-gray-500 mt-1">
+        <p class="max-w-2xl text-sm text-fg-muted mt-1">
           Blocks proxied requests once a limiter's spend reaches its budget, until the next refresh.
         </p>
-        <p class="max-w-2xl text-sm text-gray-500 mt-2 px-3 py-2 border-2 border-gray-300 border-dashed rounded-md">
+        <p class="max-w-2xl text-sm text-fg-muted mt-2 px-3 py-2 border-2 border-line-strong border-dashed rounded-md">
           <b>Since cost is
           only known after a response comes back, the request that pushes spend <u>over the limit</u> still goes through</b> —
           it's every request after it that gets blocked.
@@ -35,9 +66,9 @@
     </div>
 
     <!-- ── Limiters Table ─────────────────────────────────────────────── -->
-    <section aria-label="Cost limiters" class="overflow-x-auto bg-white rounded-lg border border-gray-200">
+    <section aria-label="Cost limiters" class="overflow-x-auto bg-surface rounded-lg border border-line">
       <table class="w-full text-sm">
-        <thead class="text-left text-gray-500 bg-gray-50 border-b border-gray-200">
+        <thead class="text-left text-fg-muted bg-surface-hover border-b border-line">
           <tr>
             <th class="font-medium px-4 py-2">Scope</th>
             <th class="font-medium px-4 py-2">Limit</th>
@@ -49,37 +80,37 @@
             <th class="font-medium px-4 py-2"></th>
           </tr>
         </thead>
-        <tbody id="limiters-tbody" class="divide-y divide-gray-100">
+        <tbody id="limiters-tbody" class="divide-y divide-line">
           <tr>
-            <td colspan="8" class="text-center text-gray-400 px-4 py-8">Loading…</td>
+            <td colspan="8" class="text-center text-fg-subtle px-4 py-8">Loading…</td>
           </tr>
         </tbody>
       </table>
     </section>
 
     <!-- ── How limiters apply ──────────────────────────────────────────── -->
-    <section aria-label="How limiters apply" class="text-sm text-gray-600 p-5 mt-6 space-y-2 bg-white rounded-lg border border-gray-200">
-      <p class="font-medium uppercase tracking-wide text-xs text-gray-500">How limiters apply</p>
-      <p class="text-gray-500 text-xs">A request is blocked as soon as any limiter that applies to it is over budget:</p>
-      <ul class="list-inside list-disc text-gray-500 text-xs space-y-1">
+    <section aria-label="How limiters apply" class="text-sm text-fg-muted p-5 mt-6 space-y-2 bg-surface rounded-lg border border-line">
+      <p class="font-medium uppercase tracking-wide text-xs text-fg-muted">How limiters apply</p>
+      <p class="text-fg-muted text-xs">A request is blocked as soon as any limiter that applies to it is over budget:</p>
+      <ul class="list-inside list-disc text-fg-muted text-xs space-y-1">
         <li><strong>Global</strong> limiters (blank scope) apply to every session; <strong>session-specific</strong> limiters only apply to the one session they identify. Both kinds can be in force for the same request at once — any one of them being over budget is enough to block.</li>
       </ul>
-      <p class="text-gray-500 text-xs">Two independent switches decide whether a limiter is currently enforced — both must hold for it to count:</p>
-      <ul class="list-inside list-disc text-gray-500 text-xs space-y-1">
+      <p class="text-fg-muted text-xs">Two independent switches decide whether a limiter is currently enforced — both must hold for it to count:</p>
+      <ul class="list-inside list-disc text-fg-muted text-xs space-y-1">
         <li>The <strong>Status</strong> toggle is a manual on/off switch that stays exactly where you leave it.</li>
         <li>The <strong>active period</strong> is a recurring hour-of-day window (server time, wraps past midnight when "From" is later than "To") — outside it, the limiter neither blocks requests nor accrues spend, even while switched on. "Always active" covers all 24 hours.</li>
       </ul>
-      <p class="text-gray-500 text-xs">Refresh resets a limiter's spend back to zero and opens a new tracking window:</p>
-      <ul class="list-inside list-disc text-gray-500 text-xs space-y-1">
+      <p class="text-fg-muted text-xs">Refresh resets a limiter's spend back to zero and opens a new tracking window:</p>
+      <ul class="list-inside list-disc text-fg-muted text-xs space-y-1">
         <li>By default it's a fixed interval counted from whenever the limiter last refreshed (or was created) — e.g. every 60 minutes on the dot from that moment, regardless of the wall clock.</li>
         <li><strong>Aligned</strong> instead snaps to the next calendar boundary — top of the hour, midnight, Monday, or the 1st of the month — so every reset lands in sync with the clock rather than with creation time. Only offered for the handful of durations with an unambiguous boundary (60 minutes, 1 or 24 hours, 1 or 7 days, 1 month).</li>
       </ul>
     </section>
 
     <!-- ── Editing limiters ───────────────────────────────────────────── -->
-    <section aria-label="Editing limiters" class="text-sm text-gray-600 p-5 mt-6 space-y-2 bg-white rounded-lg border border-gray-200">
-      <p class="font-medium uppercase tracking-wide text-xs text-gray-500 mt-2">Editing limiters</p>
-      <p class="text-gray-500 text-xs">
+    <section aria-label="Editing limiters" class="text-sm text-fg-muted p-5 mt-6 space-y-2 bg-surface rounded-lg border border-line">
+      <p class="font-medium uppercase tracking-wide text-xs text-fg-muted mt-2">Editing limiters</p>
+      <p class="text-fg-muted text-xs">
         Saving an edit only resets current spend to $0 and restarts the refresh window when the refresh
         schedule itself changes — <strong>Refresh every</strong>, <strong>Unit</strong>, or <strong>Aligned</strong>.
       </p>
@@ -90,33 +121,33 @@
   <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <!-- ── Add/Edit Limiter Dialog ────────────────────────────────────────── -->
-  <dialog id="limiter-dialog" class="w-full max-w-md p-6 border border-gray-300 rounded-lg">
+  <dialog id="limiter-dialog" class="w-full max-w-md p-6 border border-line-strong rounded-lg">
     <form id="limiter-form" class="flex flex-col gap-5">
       <div>
         <p id="limiter-dialog-title" class="text-lg font-medium">Add a limiter</p>
-        <small class="text-gray-500">Leave scope blank to apply globally, across every session.</small>
+        <small class="text-fg-muted">Leave scope blank to apply globally, across every session.</small>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div class="col-span-2">
-          <label for="limiter-session-id" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Session ID (blank = global)</label>
+          <label for="limiter-session-id" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Session ID (blank = global)</label>
           <input type="text" id="limiter-session-id" name="session_id" placeholder="Global"
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         </div>
         <div class="col-span-2">
-          <label for="limiter-limit-amount" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Limit ($)</label>
+          <label for="limiter-limit-amount" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Limit ($)</label>
           <input type="number" step="0.01" min="0.01" id="limiter-limit-amount" name="limit_amount" required placeholder="10.00"
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         </div>
-        <div class="col-span-2 my-2 border-b border-gray-200"></div>
+        <div class="col-span-2 my-2 border-b border-line"></div>
         <div>
-          <label for="limiter-refresh-value" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Refresh every</label>
+          <label for="limiter-refresh-value" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Refresh every</label>
           <input type="number" step="1" min="1" id="limiter-refresh-value" name="refresh_value" required value="60"
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
         </div>
         <div>
-          <label for="limiter-refresh-unit" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Unit</label>
+          <label for="limiter-refresh-unit" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Unit</label>
           <select id="limiter-refresh-unit" name="refresh_unit" required
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
             <option value="minutes" selected>Minutes</option>
             <option value="hours">Hours</option>
             <option value="days">Days</option>
@@ -125,49 +156,49 @@
         </div>
         <div class="col-span-2 flex items-start gap-2">
           <input type="checkbox" id="limiter-refresh-aligned" name="refresh_aligned" class="mt-0.5">
-          <label for="limiter-refresh-aligned" class="text-xs text-gray-600">
+          <label for="limiter-refresh-aligned" class="text-xs text-fg-muted">
             Align to calendar boundary (top of the hour / midnight / Monday / 1st of month)
-            <br><small id="limiter-refresh-aligned-hint" class="text-gray-400">Only available for 60 min, 1 hour, 24 hours, 1 day, 7 days, or 1 month.</small>
+            <br><small id="limiter-refresh-aligned-hint" class="text-fg-subtle">Only available for 60 min, 1 hour, 24 hours, 1 day, 7 days, or 1 month.</small>
           </label>
         </div>
-        <div class="col-span-2 my-2 border-b border-gray-200"></div>
+        <div class="col-span-2 my-2 border-b border-line"></div>
         <div class="col-span-2 flex items-center gap-2">
           <input type="checkbox" id="limiter-always-active" name="always_active" checked>
-          <label for="limiter-always-active" class="text-xs text-gray-600 uppercase tracking-wide">Always active</label>
+          <label for="limiter-always-active" class="text-xs text-fg-muted uppercase tracking-wide">Always active</label>
         </div>
         <div>
-          <label for="limiter-active-start-hour" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">From hour</label>
+          <label for="limiter-active-start-hour" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">From hour</label>
           <select id="limiter-active-start-hour" name="active_start_hour" disabled
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-gray-100 disabled:text-gray-400"></select>
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-surface-hover disabled:text-fg-subtle"></select>
         </div>
         <div>
-          <label for="limiter-active-end-hour" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">To hour (inclusive)</label>
+          <label for="limiter-active-end-hour" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">To hour (inclusive)</label>
           <select id="limiter-active-end-hour" name="active_end_hour" disabled
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-gray-100 disabled:text-gray-400"></select>
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-surface-hover disabled:text-fg-subtle"></select>
         </div>
-        <div class="col-span-2 my-2 border-b border-gray-200"></div>
+        <div class="col-span-2 my-2 border-b border-line"></div>
         <div class="col-span-2">
-          <label for="limiter-alert-threshold-pct" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Slack alert at % of budget (blank = off)</label>
+          <label for="limiter-alert-threshold-pct" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Slack alert at % of budget (blank = off)</label>
           <input type="number" step="1" min="1" max="100" id="limiter-alert-threshold-pct" name="alert_threshold_pct" placeholder="80"
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small class="text-gray-400">Fires once per refresh window, the first time spend crosses the threshold.</small>
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <small class="text-fg-subtle">Fires once per refresh window, the first time spend crosses the threshold.</small>
         </div>
         <div class="col-span-2">
-          <label for="limiter-alert-request-cost-usd" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Slack alert on a single request over $ (blank = off)</label>
+          <label for="limiter-alert-request-cost-usd" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Slack alert on a single request over $ (blank = off)</label>
           <input type="number" step="0.01" min="0.01" id="limiter-alert-request-cost-usd" name="alert_request_cost_usd" placeholder="5.00"
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small class="text-gray-400">Fires every time a single exchange governed by this limiter costs at least this much.</small>
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <small class="text-fg-subtle">Fires every time a single exchange governed by this limiter costs at least this much.</small>
         </div>
         <div class="col-span-2">
-          <label for="limiter-slack-webhook-url" class="block text-xs text-gray-500 uppercase tracking-wide mb-1">Slack webhook URL</label>
+          <label for="limiter-slack-webhook-url" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Slack webhook URL</label>
           <input type="url" id="limiter-slack-webhook-url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/…"
-            class="w-full text-sm px-3 py-1.5 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small class="text-gray-400">Required when either alert above is set — each limiter posts to its own webhook, so different limiters can alert into different Slack channels.</small>
+            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <small class="text-fg-subtle">Required when either alert above is set — each limiter posts to its own webhook, so different limiters can alert into different Slack channels.</small>
         </div>
       </div>
       <div id="limiter-dialog-message" class="hidden text-xs px-3 py-2 rounded-md border"></div>
       <div class="flex justify-end w-full gap-2">
-        <button type="button" commandfor="limiter-dialog" command="close" class="text-gray-700 px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
+        <button type="button" commandfor="limiter-dialog" command="close" class="text-fg px-3 py-1.5 border border-line-strong rounded-md hover:bg-surface-hover">Cancel</button>
         <button type="submit" id="limiter-dialog-submit" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Add</button>
       </div>
     </form>

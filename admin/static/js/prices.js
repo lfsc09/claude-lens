@@ -23,36 +23,36 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
   function above200kSectionHtml(p) {
     const rows = TIER_FIELDS
       .filter(([field]) => p[field] != null)
-      .map(([field, label]) => `<div class="flex justify-between"><span class="text-gray-500">${label} $/M</span><span class="font-mono text-gray-700">${fmtCost(p[field])}</span></div>`)
+      .map(([field, label]) => `<div class="flex justify-between"><span class="text-fg-muted">${label} $/M</span><span class="font-mono text-fg">${fmtCost(p[field])}</span></div>`)
       .join('');
     if (!rows) return '';
-    return `<div class="pt-3 border-t border-gray-100">
-      <p class="text-xs font-medium uppercase tracking-wide text-amber-600 mb-1.5">Above 200k tokens</p>
+    return `<div class="pt-3 border-t border-line">
+      <p class="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-1.5">Above 200k tokens</p>
       <div class="grid grid-cols-2 text-sm gap-y-1.5 gap-x-4">${rows}</div>
     </div>`;
   }
 
   function buildCard(p) {
-    return `<article class="flex flex-col gap-3 p-4 bg-white rounded-lg border border-gray-200" data-id="${p.id}">
+    return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border border-line" data-id="${p.id}">
       <div class="flex items-start justify-between gap-2">
         <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
         <div class="shrink-0 flex items-center gap-2">
-          <button type="button" command="show-modal" commandfor="price-dialog" class="edit-btn text-sm text-gray-400 hover:text-gray-700">Edit</button>
-          <button type="button" class="delete-btn text-sm text-gray-400 hover:text-red-600">Delete</button>
+          <button type="button" command="show-modal" commandfor="price-dialog" class="edit-btn text-sm text-fg-subtle hover:text-fg">Edit</button>
+          <button type="button" class="delete-btn text-sm text-fg-subtle hover:text-red-600 dark:hover:text-red-400">Delete</button>
         </div>
       </div>
-      <div class="pt-3 border-t border-gray-100">
+      <div class="pt-3 border-t border-line">
         <div class="grid grid-cols-2 text-sm gap-y-1.5 gap-x-4">
-          <div class="flex justify-between"><span class="text-gray-500">Input $/M</span><span class="font-mono text-gray-700">${fmtCost(p.input_per_m)}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">Output $/M</span><span class="font-mono text-gray-700">${fmtCost(p.output_per_m)}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">Cache write $/M</span><span class="font-mono text-gray-700">${fmtCost(p.cache_write_per_m)}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">Cache read $/M</span><span class="font-mono text-gray-700">${fmtCost(p.cache_read_per_m)}</span></div>
+          <div class="flex justify-between"><span class="text-fg-muted">Input $/M</span><span class="font-mono text-fg">${fmtCost(p.input_per_m)}</span></div>
+          <div class="flex justify-between"><span class="text-fg-muted">Output $/M</span><span class="font-mono text-fg">${fmtCost(p.output_per_m)}</span></div>
+          <div class="flex justify-between"><span class="text-fg-muted">Cache write $/M</span><span class="font-mono text-fg">${fmtCost(p.cache_write_per_m)}</span></div>
+          <div class="flex justify-between"><span class="text-fg-muted">Cache read $/M</span><span class="font-mono text-fg">${fmtCost(p.cache_read_per_m)}</span></div>
         </div>
       </div>
       ${above200kSectionHtml(p)}
       <div class="flex-1 flex items-end">
-        <div class="flex justify-end w-full pt-3 border-t border-gray-100">
-          <p class="text-xs text-gray-400">Updated ${fmtTime(p.updated_at)}</p>
+        <div class="flex justify-end w-full pt-3 border-t border-line">
+          <p class="text-xs text-fg-subtle">Updated ${fmtTime(p.updated_at)}</p>
         </div>
       </div>
     </article>`;
@@ -70,7 +70,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
 
     pricesById.clear();
     if (!prices.length) {
-      grid.innerHTML = '<p class="col-span-full text-center text-gray-400 py-8">No model prices configured.</p>';
+      grid.innerHTML = '<p class="col-span-full text-center text-fg-subtle py-8">No model prices configured.</p>';
       return;
     }
 
@@ -93,7 +93,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
   const setDialogMessage = makeDialogMessage('price-dialog-message', {
-    error: ['text-red-700', 'bg-red-50', 'border-red-200'],
+    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
   });
 
   function startEdit(p) {
@@ -175,7 +175,8 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     if (!syncMessageEl) return;
     syncMessageEl.textContent = text || '';
     syncMessageEl.classList.toggle('text-red-600', !!isError);
-    syncMessageEl.classList.toggle('text-gray-500', !isError);
+    syncMessageEl.classList.toggle('dark:text-red-400', !!isError);
+    syncMessageEl.classList.toggle('text-fg-muted', !isError);
   }
 
   // ── Auto-sync interval (persisted in the DB, not an env var, so it
