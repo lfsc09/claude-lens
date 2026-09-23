@@ -171,7 +171,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
       </section>
       <section class="flex flex-col gap-4">
         <div class="flex w-full gap-0.5 rounded-lg shadow-xs *:text-sm" role="tablist">
-          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-gray-800 text-white' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
+          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-fg text-canvas' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
           <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded bg-surface-active hover:bg-surface-strong" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
         </div>
       </section>
@@ -267,8 +267,8 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     for (const tab of tabs) {
       const active = tab.getAttribute('trigger-content-e') === triggeredId;
       tab.setAttribute('aria-selected', active);
-      tab.classList.toggle('bg-gray-800', active);
-      tab.classList.toggle('text-white', active);
+      tab.classList.toggle('bg-fg', active);
+      tab.classList.toggle('text-canvas', active);
       tab.classList.toggle('bg-surface-active', !active);
       tab.classList.toggle('hover:bg-surface-strong', !active);
     }

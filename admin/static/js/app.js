@@ -236,7 +236,7 @@ export function progressBar(l, height = 'h-1.5') {
   const barColor = pct >= 100 ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
   return `<div class="flex flex-col items-end w-full">
     <div class="${height} w-full overflow-hidden bg-surface-active rounded-full">
-      <div class="h-full ${l.within_active_period && l.is_active ? barColor : 'bg-gray-400'}" style="width:${pct}%"></div>
+      <div class="h-full ${l.within_active_period && l.is_active ? barColor : 'bg-surface-strong'}" style="width:${pct}%"></div>
     </div>
     <div class="text-xs text-fg-muted mt-1">${fmtCost(l.current_cost)} of ${fmtCost(l.limit_amount)}</div>
   </div>`;

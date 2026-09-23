@@ -7,14 +7,7 @@
   <title id="page-title">Exchange – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
   <meta name="color-scheme" content="light dark">
-  <script>
-    (() => {
-      const stored = localStorage.getItem('theme');
-      const dark = stored ? stored === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.classList.toggle('dark', dark);
-      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-    })();
-  </script>
+  <script src="/js/theme-init.js"></script>
   <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -56,7 +49,7 @@
     </div>
 
     <div id="not-found-content" class="hidden text-center py-24">
-      <p class="text-5xl font-bold text-gray-200 dark:text-gray-700 mb-4">404</p>
+      <p class="text-5xl font-bold text-surface-active mb-4">404</p>
       <p class="text-fg-muted mb-6" id="not-found-message">Exchange not found.</p>
       <a href="/exchanges" id="not-found-back-link" class="text-sm text-emerald-600 dark:text-emerald-400 hover:underline">← Back to exchanges</a>
     </div>

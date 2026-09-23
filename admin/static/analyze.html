@@ -7,14 +7,7 @@
   <title>Analyze Exchange – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
   <meta name="color-scheme" content="light dark">
-  <script>
-    (() => {
-      const stored = localStorage.getItem('theme');
-      const dark = stored ? stored === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.classList.toggle('dark', dark);
-      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-    })();
-  </script>
+  <script src="/js/theme-init.js"></script>
   <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
