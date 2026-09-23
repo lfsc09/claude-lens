@@ -53,12 +53,9 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   }
 
   // ── Clear All Data ───────────────────────────────────────────────────────
-  // Wipes every exchange (and, optionally, session_names + on-disk Claude
-  // Code files), via the same bulk-delete endpoint the Dashboard's
-  // per-session bulk delete uses, with confirm_all set and session_ids
-  // empty. The active-session warning is unconditional here (unlike the
-  // Dashboard's, which is computed per selection) since clearing everything
-  // may affect a session that's still open in a terminal.
+  // Wipes every exchange, and optionally session_names + on-disk Claude Code
+  // files, via the bulk-delete endpoint with confirm_all set and session_ids
+  // empty.
   const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {
     warning: ['text-amber-700', 'bg-amber-50', 'border-amber-200'],
     error: ['text-red-700', 'bg-red-50', 'border-red-200'],

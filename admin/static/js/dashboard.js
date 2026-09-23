@@ -116,11 +116,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   let editingSessionId = null;
   let editingDraft = '';
 
-  // selectedSessionIds backs the bulk-delete checkboxes, scoped to whatever
-  // rows are visible on the current page — cleared on every pagination
-  // change (see wirePaginationNav/renderSessionPagination below) since a
-  // selection spanning pages would need per-page bookkeeping this table
-  // doesn't otherwise have.
+  // Session IDs checked for bulk delete among the rows on the current page.
   let selectedSessionIds = new Set();
   const ACTIVE_SESSION_WINDOW_SECONDS = 30 * 60;
 
@@ -194,9 +190,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   function renderSessionRows() {
     const tbody = document.getElementById('session-stats-tbody');
     if (!tbody) return;
-    // Prune selections for sessions no longer present on this page (e.g. an
-    // SSE delta bumped them off the front of page 1) instead of letting the
-    // count silently drift from what's checkable.
+    // Remove selections for sessions no longer present on this page.
     const visibleIds = new Set(lastSessionRows.map((r) => r.session_id));
     for (const id of selectedSessionIds) {
       if (!visibleIds.has(id)) selectedSessionIds.delete(id);

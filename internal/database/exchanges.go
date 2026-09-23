@@ -561,6 +561,7 @@ func (db *DB) DeleteExchanges(ctx context.Context, sessionIDs []string) (deleted
 		deleteQuery += " WHERE session_id IN (" + placeholders + ")"
 		args = inArgs
 	}
+	selectQuery += " ORDER BY session_id"
 
 	rows, err := db.sql.QueryContext(ctx, selectQuery, args...)
 	if err != nil {
