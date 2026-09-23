@@ -6,28 +6,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title id="page-title">Exchange – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
+  <meta name="color-scheme" content="light dark">
+  <script src="/js/theme-init.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'rgb(var(--color-canvas) / <alpha-value>)',
+            surface: 'rgb(var(--color-surface) / <alpha-value>)',
+            'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+            'surface-active': 'rgb(var(--color-surface-active) / <alpha-value>)',
+            'surface-strong': 'rgb(var(--color-surface-strong) / <alpha-value>)',
+            line: 'rgb(var(--color-line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
+            fg: 'rgb(var(--color-fg) / <alpha-value>)',
+            'fg-muted': 'rgb(var(--color-fg-muted) / <alpha-value>)',
+            'fg-subtle': 'rgb(var(--color-fg-subtle) / <alpha-value>)',
+          },
+        },
+      },
+    };
+  </script>
   <script type="module" src="https://cdn.jsdelivr.net/npm/@andypf/json-viewer@2.8.0/dist/esm/index.min.js"></script>
 </head>
 
-<body class="min-h-screen text-gray-800 bg-gray-50">
+<body class="min-h-screen text-fg bg-canvas">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
   <site-nav active="exchanges"></site-nav>
 
   <main class="max-w-7xl mx-auto px-6 py-8">
     <div class="mb-5">
-      <a href="/exchanges" id="back-link" class="text-sm text-emerald-600 hover:underline">← Exchanges</a>
+      <a href="/exchanges" id="back-link" class="text-sm text-emerald-600 dark:text-emerald-400 hover:underline">← Exchanges</a>
     </div>
 
     <div class="flex flex-col gap-6" id="exchange-content">
-      <p class="text-center text-gray-400 py-24">Loading…</p>
+      <p class="text-center text-fg-subtle py-24">Loading…</p>
     </div>
 
     <div id="not-found-content" class="hidden text-center py-24">
-      <p class="text-5xl font-bold text-gray-200 mb-4">404</p>
-      <p class="text-gray-500 mb-6" id="not-found-message">Exchange not found.</p>
-      <a href="/exchanges" id="not-found-back-link" class="text-sm text-emerald-600 hover:underline">← Back to exchanges</a>
+      <p class="text-5xl font-bold text-surface-active mb-4">404</p>
+      <p class="text-fg-muted mb-6" id="not-found-message">Exchange not found.</p>
+      <a href="/exchanges" id="not-found-back-link" class="text-sm text-emerald-600 dark:text-emerald-400 hover:underline">← Back to exchanges</a>
     </div>
   </main>
 

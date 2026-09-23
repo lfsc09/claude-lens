@@ -6,10 +6,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
+  <meta name="color-scheme" content="light dark">
+  <script src="/js/theme-init.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'rgb(var(--color-canvas) / <alpha-value>)',
+            surface: 'rgb(var(--color-surface) / <alpha-value>)',
+            'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+            'surface-active': 'rgb(var(--color-surface-active) / <alpha-value>)',
+            'surface-strong': 'rgb(var(--color-surface-strong) / <alpha-value>)',
+            line: 'rgb(var(--color-line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
+            fg: 'rgb(var(--color-fg) / <alpha-value>)',
+            'fg-muted': 'rgb(var(--color-fg-muted) / <alpha-value>)',
+            'fg-subtle': 'rgb(var(--color-fg-subtle) / <alpha-value>)',
+          },
+        },
+      },
+    };
+  </script>
 </head>
 
-<body class="min-h-screen text-gray-800 bg-gray-50">
+<body class="min-h-screen text-fg bg-canvas">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
   <site-nav active="dashboard"></site-nav>
@@ -18,21 +42,21 @@
     <h1 class="text-xl font-semibold mb-6">Dashboard</h1>
 
     <!-- ── Filters ─────────────────────────────────────────────────────── -->
-    <section aria-label="Date filters" class="flex justify-between items-center flex-wrap w-full mb-4 pb-4 gap-4 border-b border-gray-200">
+    <section aria-label="Date filters" class="flex justify-between items-center flex-wrap w-full mb-4 pb-4 gap-4 border-b border-line">
       <div class="flex gap-2">
-        <div class="flex items-center justify-center gap-2 px-3 py-2 border border-gray-950/10 rounded-lg">
-          <span class="text-xs font-medium text-gray-500">From:</span>
-          <span class="text-sm font-mono text-gray-900" id="date-from-value">—</span>
+        <div class="flex items-center justify-center gap-2 px-3 py-2 border border-line rounded-lg">
+          <span class="text-xs font-medium text-fg-muted">From:</span>
+          <span class="text-sm font-mono text-fg" id="date-from-value">—</span>
         </div>
-        <div class="flex items-center justify-center gap-2 px-3 py-2 border border-gray-950/10 rounded-lg">
-          <span class="text-xs font-medium text-gray-500">To:</span>
-          <span class="text-sm font-mono text-gray-900" id="date-to-value">—</span>
+        <div class="flex items-center justify-center gap-2 px-3 py-2 border border-line rounded-lg">
+          <span class="text-xs font-medium text-fg-muted">To:</span>
+          <span class="text-sm font-mono text-fg" id="date-to-value">—</span>
         </div>
       </div>
       <div class="flex gap-2">
         <div class="flex flex-col gap-1">
           <label for="predefined-date-filter" class="sr-only">Date range</label>
-          <select id="predefined-date-filter" class="text-sm font-mono px-3 py-2 rounded-lg appearance-none border border-gray-950/10">
+          <select id="predefined-date-filter" class="text-sm font-mono px-3 py-2 rounded-lg appearance-none border border-line">
             <option value="today">Today</option>
             <option value="this-week">This week</option>
             <option value="this-month">This month</option>
@@ -47,25 +71,25 @@
 
     <!-- ── Stats cards ─────────────────────────────────────────────────── -->
     <section aria-label="Totals" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
-      <div class="p-4 bg-white rounded-lg border border-gray-200">
-        <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Input tokens</p>
+      <div class="p-4 bg-surface rounded-lg border border-line">
+        <p class="text-xs text-fg-muted uppercase tracking-wide mb-1">Input tokens</p>
         <p class="text-2xl font-bold" id="total-input-tokens">—</p>
-        <p class="text-sm text-gray-500 mt-1" id="total-input-cost">—</p>
+        <p class="text-sm text-fg-muted mt-1" id="total-input-cost">—</p>
       </div>
-      <div class="p-4 bg-white rounded-lg border border-gray-200">
-        <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Output tokens</p>
+      <div class="p-4 bg-surface rounded-lg border border-line">
+        <p class="text-xs text-fg-muted uppercase tracking-wide mb-1">Output tokens</p>
         <p class="text-2xl font-bold" id="total-output-tokens">—</p>
-        <p class="text-sm text-gray-500 mt-1" id="total-output-cost">—</p>
+        <p class="text-sm text-fg-muted mt-1" id="total-output-cost">—</p>
       </div>
-      <div class="p-4 bg-white rounded-lg border border-gray-200">
-        <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Cache tokens</p>
+      <div class="p-4 bg-surface rounded-lg border border-line">
+        <p class="text-xs text-fg-muted uppercase tracking-wide mb-1">Cache tokens</p>
         <p class="text-2xl font-bold" id="total-cache-tokens">—</p>
-        <p class="text-sm text-gray-500 mt-1" id="total-cache-cost">—</p>
+        <p class="text-sm text-fg-muted mt-1" id="total-cache-cost">—</p>
       </div>
-      <div class="p-4 bg-white rounded-lg border border-gray-200">
-        <p class="text-xs text-gray-500 uppercase tracking-wide mb-1">Total tokens</p>
+      <div class="p-4 bg-surface rounded-lg border border-line">
+        <p class="text-xs text-fg-muted uppercase tracking-wide mb-1">Total tokens</p>
         <p class="text-2xl font-bold" id="total-tokens">—</p>
-        <p class="text-sm text-gray-500 mt-1" id="total-cost">—</p>
+        <p class="text-sm text-fg-muted mt-1" id="total-cost">—</p>
       </div>
     </section>
 
@@ -73,50 +97,50 @@
     <h2 class="text-base font-semibold mb-3">Global limiters</h2>
     <section aria-label="Global limiters" class="mb-10">
       <div id="global-limiters" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <p class="text-gray-400 text-sm">Loading…</p>
+        <p class="text-fg-subtle text-sm">Loading…</p>
       </div>
     </section>
 
     <!-- ── Daily cost heatmap ──────────────────────────────────────────── -->
     <h2 class="text-base font-semibold mb-3">Daily spending — last 2 months</h2>
-    <section aria-label="Daily spending" class="p-5 mb-10 bg-white rounded-lg border border-gray-200">
+    <section aria-label="Daily spending" class="p-5 mb-10 bg-surface rounded-lg border border-line">
       <div id="cost-heatmap" class="overflow-x-auto pb-1"></div>
-      <div id="heatmap-legend" class="flex items-center justify-end flex-wrap text-xs text-gray-500 mt-6 gap-4"></div>
+      <div id="heatmap-legend" class="flex items-center justify-end flex-wrap text-xs text-fg-muted mt-6 gap-4"></div>
     </section>
 
     <!-- ── Per-session table ───────────────────────────────────────────── -->
     <div class="flex items-center justify-between mb-3">
       <h2 class="text-base font-semibold">By session</h2>
       <div id="session-bulk-actions" class="hidden items-center gap-3">
-        <span id="session-selected-count" class="text-sm text-gray-500"></span>
-        <button type="button" id="bulk-delete-btn" class="whitespace-nowrap text-sm text-red-500 px-3 py-1 border border-red-500 rounded hover:text-red-700 hover:bg-red-50">Delete Selected</button>
+        <span id="session-selected-count" class="text-sm text-fg-muted"></span>
+        <button type="button" id="bulk-delete-btn" class="whitespace-nowrap text-sm text-red-500 dark:text-red-400 px-3 py-1 border border-red-500 rounded hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15">Delete Selected</button>
       </div>
     </div>
-    <section aria-label="By session" class="overflow-x-auto mb-10 bg-white rounded-lg border border-gray-200">
+    <section aria-label="By session" class="overflow-x-auto mb-10 bg-surface rounded-lg border border-line">
       <table class="w-full text-sm">
-        <thead class="text-left text-gray-500 bg-gray-50 border-b border-gray-200">
+        <thead class="text-left text-fg-muted bg-surface-hover border-b border-line">
           <tr>
             <th class="font-medium px-4 py-2">
               <label class="sr-only" for="session-select-all">Select all sessions on this page</label>
               <input type="checkbox" id="session-select-all">
             </th>
-            <th class="font-medium px-4 py-2">Session <span class="text-xs text-gray-400" data-tip="Name your sessions with 'Ctrl + click' or 'Cmd + click'.">ⓘ</span></th>
+            <th class="font-medium px-4 py-2">Session <span class="text-xs text-fg-subtle" data-tip="Name your sessions with 'Ctrl + click' or 'Cmd + click'.">ⓘ</span></th>
             <th class="font-medium text-right px-4 py-2">Exchanges</th>
             <th class="font-medium px-4 py-2">Model</th>
-            <th class="font-medium text-right px-4 py-2">Tokens Processed <span class="text-xs text-gray-400" data-tip="Sum of tokens billed across every exchange in this session. Each exchange resends the full conversation so far, so this grows faster than the conversation's actual content — see Context Size for that.">ⓘ</span></th>
+            <th class="font-medium text-right px-4 py-2">Tokens Processed <span class="text-xs text-fg-subtle" data-tip="Sum of tokens billed across every exchange in this session. Each exchange resends the full conversation so far, so this grows faster than the conversation's actual content — see Context Size for that.">ⓘ</span></th>
             <th class="font-medium text-right px-4 py-2">Context Size</th>
             <th class="font-medium text-right px-4 py-2">Costs</th>
             <th class="font-medium px-4 py-2">Last activity</th>
             <th class="font-medium text-right px-4 py-2">Limiter</th>
           </tr>
         </thead>
-        <tbody id="session-stats-tbody" class="divide-y divide-gray-100">
+        <tbody id="session-stats-tbody" class="divide-y divide-line">
           <tr>
-            <td colspan="9" class="text-center text-gray-400 px-4 py-8">Loading…</td>
+            <td colspan="9" class="text-center text-fg-subtle px-4 py-8">Loading…</td>
           </tr>
         </tbody>
       </table>
-      <nav aria-label="Session pagination" id="session-pagination-controls" class="flex flex-wrap items-center justify-between text-sm p-4 gap-4 border-t border-gray-200"></nav>
+      <nav aria-label="Session pagination" id="session-pagination-controls" class="flex flex-wrap items-center justify-between text-sm p-4 gap-4 border-t border-line"></nav>
     </section>
   </main>
 
@@ -124,19 +148,19 @@
   <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <!-- ── Dialog ──────────────────────────────────────────────────────────── -->
-  <dialog id="bulk-delete-dialog" class="p-6 border border-gray-300 rounded-lg">
+  <dialog id="bulk-delete-dialog" class="p-6 border border-line-strong rounded-lg">
     <div class="flex flex-col gap-6">
       <div class="flex flex-col gap-8">
         <div class="flex flex-col gap-3">
           <div>
             <p class="text-lg font-medium">Do you confirm the deletion of the selected sessions' data?</p>
-            <small class="text-gray-500 font-mono">This only deletes the data associated with claude-lens.</small>
+            <small class="text-fg-muted font-mono">This only deletes the data associated with claude-lens.</small>
           </div>
-          <small class="text-gray-500 font-mono">Sessions selected: <span id="bulk-delete-session-count" class="font-semibold text-emerald-600"></span></small>
+          <small class="text-fg-muted font-mono">Sessions selected: <span id="bulk-delete-session-count" class="font-semibold text-emerald-600 dark:text-emerald-400"></span></small>
         </div>
-        <div class="flex flex-col gap-1 p-4 border-2 border-gray-200 border-dashed rounded-lg">
+        <div class="flex flex-col gap-1 p-4 border-2 border-line border-dashed rounded-lg">
           <p class="text-sm font-medium">Do you wish to also delete these sessions in Claude Code?</p>
-          <div class="flex items-center text-red-500 gap-2 hover:*:cursor-pointer">
+          <div class="flex items-center text-red-500 dark:text-red-400 gap-2 hover:*:cursor-pointer">
             <input
               type="checkbox"
               role="switch"
@@ -148,7 +172,7 @@
         </div>
       </div>
       <div class="flex justify-end w-full gap-2">
-        <button type="button" commandfor="bulk-delete-dialog" command="close" class="text-gray-700 px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
+        <button type="button" commandfor="bulk-delete-dialog" command="close" class="text-fg px-3 py-1.5 border border-line-strong rounded-md hover:bg-surface-hover">Cancel</button>
         <button type="button" id="submit-bulk-delete-btn" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Confirm</button>
       </div>
     </div>

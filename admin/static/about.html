@@ -6,10 +6,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>About – claude-lens Admin</title>
   <link rel="icon" href="/favicon.ico">
+  <meta name="color-scheme" content="light dark">
+  <script src="/js/theme-init.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'rgb(var(--color-canvas) / <alpha-value>)',
+            surface: 'rgb(var(--color-surface) / <alpha-value>)',
+            'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+            'surface-active': 'rgb(var(--color-surface-active) / <alpha-value>)',
+            'surface-strong': 'rgb(var(--color-surface-strong) / <alpha-value>)',
+            line: 'rgb(var(--color-line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
+            fg: 'rgb(var(--color-fg) / <alpha-value>)',
+            'fg-muted': 'rgb(var(--color-fg-muted) / <alpha-value>)',
+            'fg-subtle': 'rgb(var(--color-fg-subtle) / <alpha-value>)',
+          },
+        },
+      },
+    };
+  </script>
 </head>
 
-<body class="min-h-screen text-gray-800 bg-gray-50">
+<body class="min-h-screen text-fg bg-canvas">
 
   <!-- ── Navigation ──────────────────────────────────────────────────── -->
   <site-nav active="about"></site-nav>
@@ -19,40 +43,40 @@
     <div class="flex items-start justify-between gap-4 mb-6">
       <div>
         <h1 class="text-xl font-semibold">About</h1>
-        <p class="max-w-2xl text-sm text-gray-500 mt-1">
+        <p class="max-w-2xl text-sm text-fg-muted mt-1">
           A snapshot taken when this page loaded — reload to refresh.
         </p>
       </div>
-      <span class="shrink-0 text-xs font-mono text-gray-500 px-3 py-1.5 border border-gray-300 border-dashed rounded-lg">
+      <span class="shrink-0 text-xs font-mono text-fg-muted px-3 py-1.5 border border-line-strong border-dashed rounded-lg">
         Version <span id="about-version">—</span>
       </span>
     </div>
 
-    <div id="about-error" class="hidden text-sm text-red-700 px-4 py-3 mb-6 border border-red-200 rounded-lg bg-red-50"></div>
+    <div id="about-error" class="hidden text-sm text-red-700 dark:text-red-400 px-4 py-3 mb-6 border border-red-200 dark:border-red-800 rounded-lg bg-red-50 dark:bg-red-500/15"></div>
 
     <!-- ── Database ────────────────────────────────────────────────────── -->
     <section aria-label="Database" class="flex flex-col gap-0.5 mb-8">
-      <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
+      <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
         <div class="flex items-center gap-2">
           <h2 class="font-semibold uppercase tracking-wide">Database</h2>
         </div>
         <div class="flex items-center gap-4">
-          <span id="about-db-path" class="text-xs text-gray-500 font-mono text-right" data-tip="Path to the database file in your system">-</span>
-          <button type="button" id="clear-all-data-btn" disabled class="whitespace-nowrap text-sm text-red-500 px-3 py-1 border border-red-500 rounded hover:text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:pointer-events-none">Clear Exchanges</button>
+          <span id="about-db-path" class="text-xs text-fg-muted font-mono text-right" data-tip="Path to the database file in your system">-</span>
+          <button type="button" id="clear-all-data-btn" disabled class="whitespace-nowrap text-sm text-red-500 dark:text-red-400 px-3 py-1 border border-red-500 rounded hover:text-red-700 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/15 disabled:opacity-40 disabled:pointer-events-none">Clear Exchanges</button>
         </div>
       </div>
-      <div class="max-h-96 overflow-y-auto overflow-x-auto bg-white rounded-b-lg border border-gray-200">
+      <div class="max-h-96 overflow-y-auto overflow-x-auto bg-surface rounded-b-lg border border-line">
         <table class="w-full text-sm">
-          <thead class="text-left text-gray-500 bg-gray-50 border-b border-gray-200">
+          <thead class="text-left text-fg-muted bg-surface-hover border-b border-line">
             <tr>
               <th class="font-medium px-4 py-2">Table</th>
               <th class="font-medium text-right px-4 py-2">Rows</th>
               <th class="font-medium text-right px-4 py-2">Size</th>
             </tr>
           </thead>
-          <tbody id="about-tables-tbody" class="divide-y divide-gray-100">
+          <tbody id="about-tables-tbody" class="divide-y divide-line">
             <tr>
-              <td colspan="3" class="text-center text-gray-400 px-4 py-8">Loading…</td>
+              <td colspan="3" class="text-center text-fg-subtle px-4 py-8">Loading…</td>
             </tr>
           </tbody>
         </table>
@@ -61,21 +85,21 @@
 
     <!-- ── Logs ────────────────────────────────────────────────────────── -->
     <section class="flex flex-col gap-0.5" aria-label="Logs">
-      <div class="flex items-center justify-between p-4 bg-white rounded-t-lg border border-gray-200">
+      <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
         <div class="flex flex-col">
           <h2 class="font-semibold uppercase tracking-wide">Logs</h2>
-          <small class="text-xs text-gray-500 font-mono">Last 50 entries, most recent on top</small>
+          <small class="text-xs text-fg-muted font-mono">Last 50 entries, most recent on top</small>
         </div>
         <div class="flex flex-col items-end gap-2">
-          <span id="about-log-path" class="font-mono text-xs text-gray-500 text-right" data-tip="Path to the log file in your system">-</span>
-          <span id="about-log-size" class="font-mono text-xs text-gray-500 text-right">-</span>
+          <span id="about-log-path" class="font-mono text-xs text-fg-muted text-right" data-tip="Path to the log file in your system">-</span>
+          <span id="about-log-size" class="font-mono text-xs text-fg-muted text-right">-</span>
         </div>
       </div>
       <div class="flex flex-col gap-0.5">
-        <div class="p-4 bg-white border border-gray-200">
-          <input type="search" id="logs-search" placeholder="Search…" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500">
+        <div class="p-4 bg-surface border border-line">
+          <input type="search" id="logs-search" placeholder="Search…" class="w-full px-3 py-2 border border-line-strong rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500">
         </div>
-        <div id="about-log-tail" class="max-h-96 overflow-y-auto text-xs text-gray-700 font-mono whitespace-pre-wrap leading-relaxed p-4 bg-white rounded-b-lg border border-gray-200"></div>
+        <div id="about-log-tail" class="max-h-96 overflow-y-auto text-xs text-fg font-mono whitespace-pre-wrap leading-relaxed p-4 bg-surface rounded-b-lg border border-line"></div>
       </div>
     </section>
   </main>
@@ -84,19 +108,19 @@
   <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
 
   <!-- ── Dialog ──────────────────────────────────────────────────────────── -->
-  <dialog id="clear-all-data-dialog" class="p-6 border border-gray-300 rounded-lg">
+  <dialog id="clear-all-data-dialog" class="p-6 border border-line-strong rounded-lg">
     <div class="flex flex-col gap-6">
       <div class="flex flex-col gap-8">
         <div class="flex flex-col gap-3">
           <div>
             <p class="text-lg font-medium">Do you confirm clearing all exchanges data?</p>
-            <small class="text-gray-500 font-mono">This only deletes the data associated with claude-lens.</small>
+            <small class="text-fg-muted font-mono">This only deletes the data associated with claude-lens.</small>
           </div>
-          <small class="text-gray-500 font-mono">Sessions affected: <span id="clear-all-session-count" class="font-semibold text-emerald-600"></span></small>
+          <small class="text-fg-muted font-mono">Sessions affected: <span id="clear-all-session-count" class="font-semibold text-emerald-600 dark:text-emerald-400"></span></small>
         </div>
-        <div class="flex flex-col gap-1 p-4 border-2 border-gray-200 border-dashed rounded-lg">
+        <div class="flex flex-col gap-1 p-4 border-2 border-line border-dashed rounded-lg">
           <p class="text-sm font-medium">Do you wish to also delete these sessions in Claude Code?</p>
-          <div class="flex items-center text-red-500 gap-2 hover:*:cursor-pointer">
+          <div class="flex items-center text-red-500 dark:text-red-400 gap-2 hover:*:cursor-pointer">
             <input
               type="checkbox"
               role="switch"
@@ -108,7 +132,7 @@
         </div>
       </div>
       <div class="flex justify-end w-full gap-2">
-        <button type="button" commandfor="clear-all-data-dialog" command="close" class="text-gray-700 px-3 py-1.5 border border-gray-300 rounded-md hover:bg-gray-100">Cancel</button>
+        <button type="button" commandfor="clear-all-data-dialog" command="close" class="text-fg px-3 py-1.5 border border-line-strong rounded-md hover:bg-surface-hover">Cancel</button>
         <button type="button" id="submit-clear-all-btn" class="text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700">Confirm</button>
       </div>
     </div>
