@@ -5,8 +5,6 @@ LABEL="com.user.claude-lens"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 CONFIG_DIR="$HOME/Library/Application Support/claude-lens"
 ENV_FILE="${CONFIG_DIR}/claude-lens.env"
-DOWNLOAD_URL="https://github.com/lfsc09/claude-lens/releases/latest/download/claude-lens-darwin-amd64"
-CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
 
 SCRIPT_NAME="install_macos.sh"
 _COLOR_YELLOW=$'\033[33m'
@@ -26,6 +24,19 @@ log() {
     error) printf '%s: %s%s%s\n' "$SCRIPT_NAME" "$_COLOR_RED" "$message" "$_COLOR_RESET" >&2 ;;
   esac
 }
+
+# ── Resolve download URL for this Mac's CPU architecture ────────────────
+case "$(uname -m)" in
+  arm64) BINARY_ARCH="arm64" ;;
+  x86_64) BINARY_ARCH="amd64" ;;
+  *)
+    log error "Unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+esac
+log info "Detected CPU architecture $(uname -m) - will download the ${BINARY_ARCH} build."
+DOWNLOAD_URL="https://github.com/lfsc09/claude-lens/releases/latest/download/claude-lens-darwin-${BINARY_ARCH}"
+CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
 
 sha256_of() {
   if command -v shasum >/dev/null 2>&1; then
@@ -167,25 +178,70 @@ INSTALL_DIR="$CLENS_INSTALL_DIR"
 CLENS_DATA_DIR="${CLENS_DATA_DIR:-${INSTALL_DIR}/data}"
 CLENS_LOG_DIR="${CLENS_LOG_DIR:-${INSTALL_DIR}/logs}"
 
-# ── Verify ANTHROPIC_BASE_URL, the var Claude Code itself reads ────────
-# claude-lens never sees this variable - Claude Code does, directly from
-# the OS environment - so it has to be set independently of everything
-# below. We only check it points at this install's proxy port.
+# ── Configure ANTHROPIC_BASE_URL via Claude Code's settings.json ───────
+# claude-lens never sees this variable - Claude Code does, by reading the
+# `env` block of its own ~/.claude/settings.json. We only touch that file,
+# for the port this install's proxy listens on.
 proxy_port="${CLENS_PROXY_ADDR##*:}"
 expected_anthropic_url="http://localhost:${proxy_port}"
 
-if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
-  if [ "$ANTHROPIC_BASE_URL" != "$expected_anthropic_url" ]; then
-    log error "ANTHROPIC_BASE_URL is set to '${ANTHROPIC_BASE_URL}', but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
-    log error "Fix this manually before continuing - either:"
-    log error "  export ANTHROPIC_BASE_URL=${expected_anthropic_url}"
-    log error "or re-run this installer with --proxy-addr matching your existing ANTHROPIC_BASE_URL port."
+claude_dir="${HOME}/.claude"
+settings_file="${claude_dir}/settings.json"
+
+settings_json_snippet=$(cat <<JSON
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "${expected_anthropic_url}"
+  }
+}
+JSON
+)
+
+if [ ! -d "$claude_dir" ]; then
+  log error "'${claude_dir}' not found - Claude Code doesn't appear to be installed for this user, or its config lives elsewhere."
+  log error "Set ANTHROPIC_BASE_URL yourself in whichever settings.json Claude Code reads, by adding:"
+  log error "$settings_json_snippet"
+  exit 1
+fi
+
+if [ ! -f "$settings_file" ]; then
+  log info "Creating ${settings_file}..."
+  cat <<EOF > "$settings_file"
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "${expected_anthropic_url}"
+  }
+}
+EOF
+  log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+else
+  if ! command -v jq >/dev/null 2>&1; then
+    log error "'${settings_file}' already exists and jq is required to safely read/update it, but jq is not installed."
+    log error "Install jq (brew install jq) and re-run this installer, or add this yourself:"
+    log error "$settings_json_snippet"
     exit 1
   fi
-  log info "ANTHROPIC_BASE_URL already points at ${expected_anthropic_url} - good."
-else
-  log warn "ANTHROPIC_BASE_URL is not set. Claude Code will not route through claude-lens until you set it and persist it in your shell profile:"
-  log warn "  export ANTHROPIC_BASE_URL=${expected_anthropic_url}"
+
+  if ! current_url="$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$settings_file" 2>/dev/null)"; then
+    log error "'${settings_file}' exists but isn't valid JSON. Fix it manually, then re-run this installer. It should include:"
+    log error "$settings_json_snippet"
+    exit 1
+  fi
+  if [ -z "$current_url" ]; then
+    orig_mode="$(stat -f '%Lp' "$settings_file")"
+    tmp_settings="$(mktemp)"
+    trap 'rm -f "$tmp_settings"' EXIT
+    jq --arg url "$expected_anthropic_url" '.env.ANTHROPIC_BASE_URL = $url' "$settings_file" > "$tmp_settings"
+    chmod "$orig_mode" "$tmp_settings"
+    mv "$tmp_settings" "$settings_file"
+    log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+  elif [ "$current_url" != "$expected_anthropic_url" ]; then
+    log error "ANTHROPIC_BASE_URL is already set to '${current_url}' in ${settings_file}, but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
+    log error "Edit it manually to match, or re-run this installer with --proxy-addr matching the existing value."
+    exit 1
+  else
+    log info "ANTHROPIC_BASE_URL already set to ${expected_anthropic_url} in ${settings_file} - good."
+  fi
 fi
 
 check_install_dir_writable
