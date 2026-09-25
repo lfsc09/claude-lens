@@ -165,34 +165,83 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# ── Verify ANTHROPIC_BASE_URL, the var Claude Code itself reads ────────
-# claude-lens never sees this variable - Claude Code does, directly from
-# the OS environment - so it has to be set independently of everything
-# below. We only check it points at this install's proxy port.
+# ── Configure ANTHROPIC_BASE_URL via Claude Code's settings.json ───────
+# claude-lens never sees this variable - Claude Code does, by reading the
+# `env` block of its own ~/.claude/settings.json. We only touch that file,
+# for the port this install's proxy listens on.
 proxy_port="${CLENS_PROXY_ADDR##*:}"
 expected_anthropic_url="http://localhost:${proxy_port}"
 
-# sudo resets the environment by default, so this script never inherits
-# ANTHROPIC_BASE_URL from the invoking user's shell (e.g. via
-# `curl ... | sudo bash`). Fall back to reading it straight from that
-# user's own login shell, which is unaffected by anything sudo stripped.
-if [ -z "${ANTHROPIC_BASE_URL:-}" ] && [ -n "${SUDO_USER:-}" ]; then
-  invoking_shell="$(getent passwd "$SUDO_USER" | cut -d: -f7)"
-  ANTHROPIC_BASE_URL="$(sudo -u "$SUDO_USER" -H "${invoking_shell:-/bin/bash}" -lc 'printf %s "$ANTHROPIC_BASE_URL"' 2>/dev/null || true)"
+# sudo resets HOME to root's, so resolve the invoking user's real home to
+# find their ~/.claude, not root's.
+target_home="$HOME"
+if [ -n "${SUDO_USER:-}" ]; then
+  sudo_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  target_home="${sudo_home:-$target_home}"
+fi
+claude_dir="${target_home}/.claude"
+settings_file="${claude_dir}/settings.json"
+
+settings_json_snippet=$(cat <<JSON
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "${expected_anthropic_url}"
+  }
+}
+JSON
+)
+
+if [ ! -d "$claude_dir" ]; then
+  log error "'${claude_dir}' not found - Claude Code doesn't appear to be installed for this user, or its config lives elsewhere."
+  log error "Set ANTHROPIC_BASE_URL yourself in whichever settings.json Claude Code reads, by adding:"
+  log error "$settings_json_snippet"
+  exit 1
 fi
 
-if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
-  if [ "$ANTHROPIC_BASE_URL" != "$expected_anthropic_url" ]; then
-    log error "ANTHROPIC_BASE_URL is set to '${ANTHROPIC_BASE_URL}', but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
-    log error "Fix this manually before continuing - either:"
-    log error "  export ANTHROPIC_BASE_URL=${expected_anthropic_url}"
-    log error "or re-run this installer with --proxy-addr matching your existing ANTHROPIC_BASE_URL port."
+if [ ! -f "$settings_file" ]; then
+  log info "Creating ${settings_file}..."
+  cat <<EOF > "$settings_file"
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "${expected_anthropic_url}"
+  }
+}
+EOF
+  if [ -n "${SUDO_USER:-}" ]; then
+    sudo_group="$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")"
+    chown "${SUDO_USER}:${sudo_group}" "$settings_file"
+  fi
+  log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+else
+  if ! command -v jq >/dev/null 2>&1; then
+    log error "'${settings_file}' already exists and jq is required to safely read/update it, but jq is not installed."
+    log error "Install jq (sudo apt-get install -y jq) and re-run this installer, or add this yourself:"
+    log error "$settings_json_snippet"
     exit 1
   fi
-  log info "ANTHROPIC_BASE_URL already points at ${expected_anthropic_url} - good."
-else
-  log warn "ANTHROPIC_BASE_URL is not set. Claude Code will not route through claude-lens until you set it and persist it in your shell profile:"
-  log warn "  export ANTHROPIC_BASE_URL=${expected_anthropic_url}"
+
+  if ! current_url="$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$settings_file" 2>/dev/null)"; then
+    log error "'${settings_file}' exists but isn't valid JSON. Fix it manually, then re-run this installer. It should include:"
+    log error "$settings_json_snippet"
+    exit 1
+  fi
+  if [ -z "$current_url" ]; then
+    orig_mode="$(stat -c '%a' "$settings_file")"
+    orig_owner="$(stat -c '%U:%G' "$settings_file")"
+    tmp_settings="$(mktemp)"
+    trap 'rm -f "$tmp_settings"' EXIT
+    jq --arg url "$expected_anthropic_url" '.env.ANTHROPIC_BASE_URL = $url' "$settings_file" > "$tmp_settings"
+    chmod "$orig_mode" "$tmp_settings"
+    chown "$orig_owner" "$tmp_settings" 2>/dev/null || true
+    mv "$tmp_settings" "$settings_file"
+    log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+  elif [ "$current_url" != "$expected_anthropic_url" ]; then
+    log error "ANTHROPIC_BASE_URL is already set to '${current_url}' in ${settings_file}, but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
+    log error "Edit it manually to match, or re-run this installer with --proxy-addr matching the existing value."
+    exit 1
+  else
+    log info "ANTHROPIC_BASE_URL already set to ${expected_anthropic_url} in ${settings_file} - good."
+  fi
 fi
 
 # ── Stop and disable if already running/installed ───────────────────────

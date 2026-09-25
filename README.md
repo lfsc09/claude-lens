@@ -10,7 +10,9 @@ It will add very little latency to your requests (since requests are buffered an
 
 ### Env configuration
 
-To route Claude Code traffic through `claude-lens`, set the `ANTHROPIC_BASE_URL` environment variable in your OS to `http://localhost:7801`.
+If you use the [install script](#install-script), this is done for you — it writes `ANTHROPIC_BASE_URL` into `~/.claude/settings.json`.
+
+For a [manual install](#manual-install), set it yourself: either the same way (`~/.claude/settings.json`'s `env` block), or by exporting it in your shell:
 
 ```sh
 export ANTHROPIC_BASE_URL=http://localhost:7801
