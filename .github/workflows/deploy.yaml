@@ -44,6 +44,9 @@ jobs:
           GOOS=darwin GOARCH=amd64 go build \
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
             -o dist/claude-lens-darwin-amd64 ./cmd/claude-lens
+          GOOS=darwin GOARCH=arm64 go build \
+            -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
+            -o dist/claude-lens-darwin-arm64 ./cmd/claude-lens
           GOOS=windows GOARCH=amd64 go build \
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
             -o dist/claude-lens-windows-amd64.exe ./cmd/claude-lens
@@ -51,7 +54,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
-          for f in claude-lens-linux-amd64 claude-lens-darwin-amd64 claude-lens-windows-amd64.exe; do
+          for f in claude-lens-linux-amd64 claude-lens-darwin-amd64 claude-lens-darwin-arm64 claude-lens-windows-amd64.exe; do
             sha256sum "$f" > "${f}.sha256"
           done
 
@@ -72,6 +75,8 @@ jobs:
             dist/claude-lens-linux-amd64.sha256
             dist/claude-lens-darwin-amd64
             dist/claude-lens-darwin-amd64.sha256
+            dist/claude-lens-darwin-arm64
+            dist/claude-lens-darwin-arm64.sha256
             dist/claude-lens-windows-amd64.exe
             dist/claude-lens-windows-amd64.exe.sha256
         env:

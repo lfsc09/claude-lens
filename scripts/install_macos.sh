@@ -5,8 +5,6 @@ LABEL="com.user.claude-lens"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
 CONFIG_DIR="$HOME/Library/Application Support/claude-lens"
 ENV_FILE="${CONFIG_DIR}/claude-lens.env"
-DOWNLOAD_URL="https://github.com/lfsc09/claude-lens/releases/latest/download/claude-lens-darwin-amd64"
-CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
 
 SCRIPT_NAME="install_macos.sh"
 _COLOR_YELLOW=$'\033[33m'
@@ -26,6 +24,19 @@ log() {
     error) printf '%s: %s%s%s\n' "$SCRIPT_NAME" "$_COLOR_RED" "$message" "$_COLOR_RESET" >&2 ;;
   esac
 }
+
+# ── Resolve download URL for this Mac's CPU architecture ────────────────
+case "$(uname -m)" in
+  arm64) BINARY_ARCH="arm64" ;;
+  x86_64) BINARY_ARCH="amd64" ;;
+  *)
+    log error "Unsupported architecture: $(uname -m)"
+    exit 1
+    ;;
+esac
+log info "Detected CPU architecture $(uname -m) - will download the ${BINARY_ARCH} build."
+DOWNLOAD_URL="https://github.com/lfsc09/claude-lens/releases/latest/download/claude-lens-darwin-${BINARY_ARCH}"
+CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
 
 sha256_of() {
   if command -v shasum >/dev/null 2>&1; then
