@@ -1,4 +1,4 @@
-import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, makeDialogMessage, pad, postJSON, progressBar, putJSON, fmtSessionId, fmtActivePeriod } from './app.js';
+import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, makeDialogMessage, pad, postJSON, progressBar, putJSON, fmtSessionId, fmtActivePeriod, withPending } from './app.js';
 
 'use strict';
 
@@ -219,13 +219,15 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
       alert_request_cost_usd: alertRequestCostUsd ? parseFloat(alertRequestCostUsd) : null,
     };
 
-    const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);
-    if (!res.ok) {
-      setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update limiter.' : 'Failed to add limiter.'));
-      return;
-    }
-    dialog.close();
-    loadLimiters();
+    await withPending(submitBtn, async () => {
+      const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);
+      if (!res.ok) {
+        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update limiter.' : 'Failed to add limiter.'));
+        return;
+      }
+      dialog.close();
+      loadLimiters();
+    });
   });
 
   updateAlignedAvailability();

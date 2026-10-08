@@ -1,4 +1,4 @@
-import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON } from './app.js';
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON, withPending } from './app.js';
 
 'use strict';
 
@@ -347,7 +347,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
 
   const submitBulkDeleteBtn = document.getElementById('submit-bulk-delete-btn');
   if (submitBulkDeleteBtn) {
-    submitBulkDeleteBtn.onclick = async () => {
+    submitBulkDeleteBtn.onclick = () => withPending(submitBulkDeleteBtn, async () => {
       const checkbox = document.getElementById('bulk-delete-also-delete-claude-session');
       const res = await postJSON('/api/exchanges/bulk-delete', {
         session_ids: [...selectedSessionIds],
@@ -365,7 +365,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         fetchTotals(range);
         refreshDailyCosts();
       }, 800);
-    };
+    });
   }
 
   function renderSessionPagination() {

@@ -1,4 +1,4 @@
-import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON } from './app.js';
+import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON, withPending } from './app.js';
 
 'use strict';
 
@@ -80,7 +80,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
 
   const submitClearAllBtn = document.getElementById('submit-clear-all-btn');
   if (submitClearAllBtn) {
-    submitClearAllBtn.onclick = async () => {
+    submitClearAllBtn.onclick = () => withPending(submitClearAllBtn, async () => {
       const checkbox = document.getElementById('clear-all-also-delete-claude-session');
       const res = await postJSON('/api/exchanges/bulk-delete', {
         session_ids: [],
@@ -96,7 +96,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
         document.getElementById('clear-all-data-dialog')?.close();
         load();
       }, 800);
-    };
+    });
   }
 
   /**

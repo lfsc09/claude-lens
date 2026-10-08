@@ -1,4 +1,4 @@
-import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogMessage, postJSON, putJSON } from './app.js';
+import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogMessage, postJSON, putJSON, withPending } from './app.js';
 
 'use strict';
 
@@ -140,13 +140,15 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
       payload[field] = raw ? parseFloat(raw) : null;
     });
 
-    const res = editingId ? await putJSON(`/api/prices/${editingId}`, payload) : await postJSON('/api/prices', payload);
-    if (!res.ok) {
-      setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update price.' : 'Failed to add price.'));
-      return;
-    }
-    dialog.close();
-    loadPrices();
+    await withPending(submitBtn, async () => {
+      const res = editingId ? await putJSON(`/api/prices/${editingId}`, payload) : await postJSON('/api/prices', payload);
+      if (!res.ok) {
+        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update price.' : 'Failed to add price.'));
+        return;
+      }
+      dialog.close();
+      loadPrices();
+    });
   });
 
   // ── Sync from LiteLLM ─────────────────────────────────────────────────
@@ -231,23 +233,24 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
   });
 
   syncBtn?.addEventListener('click', async () => {
-    syncBtn.disabled = true;
     setSyncMessage('Syncing…', false);
     // Only a 502 (see admin.syncPricesFromLiteLLM) means "this upstream
     // isn't a LiteLLM proxy" — any other failure (e.g. a DB error) isn't a
     // capability signal, so the button stays usable for an immediate retry.
     let keepDisabled = false;
     try {
-      const res = await postJSON('/api/prices/sync-litellm', {});
-      if (!res.ok) {
-        setSyncMessage(await extractErrorMessage(res, 'Sync failed.'), true);
-        keepDisabled = res.status === 502;
-        return;
-      }
-      const data = await res.json();
-      lastSyncedAt = Math.floor(Date.now() / 1000);
-      syncMessageWithLastSynced(`Synced ${data.models.length} model(s): ${data.created} created, ${data.updated} updated.`, false);
-      loadPrices();
+      await withPending(syncBtn, async () => {
+        const res = await postJSON('/api/prices/sync-litellm', {});
+        if (!res.ok) {
+          setSyncMessage(await extractErrorMessage(res, 'Sync failed.'), true);
+          keepDisabled = res.status === 502;
+          return;
+        }
+        const data = await res.json();
+        lastSyncedAt = Math.floor(Date.now() / 1000);
+        syncMessageWithLastSynced(`Synced ${data.models.length} model(s): ${data.created} created, ${data.updated} updated.`, false);
+        loadPrices();
+      });
     } finally {
       syncBtn.disabled = keepDisabled;
     }
