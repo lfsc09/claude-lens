@@ -30,6 +30,9 @@ func main() {
 	table := flag.String("table", "", "table to seed with --feed (limiters, model_prices)")
 	row := flag.String("row", "", "row to insert or update with --feed, as a JSON object")
 	match := flag.String("match", "", "match an existing row by column:value pairs (JSON object) for --feed; updates it instead of inserting")
+	dummy := flag.Bool("dummy", false, "create dummy exchanges via the running admin API, instead of starting the service")
+	count := flag.Int("count", 100, "number of exchanges to create with --dummy")
+	sessions := flag.Int("sessions", 5, "number of distinct sessions to spread --dummy exchanges over")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -40,6 +43,19 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if *feed && *dummy {
+		fmt.Fprintln(os.Stderr, "error: --feed and --dummy cannot be combined")
+		os.Exit(1)
+	}
+
+	if *dummy {
+		if err := runDummy(ctx, cfg, *count, *sessions); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	if *feed {
 		if err := runFeed(ctx, cfg, *table, *row, *match); err != nil {

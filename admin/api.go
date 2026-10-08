@@ -128,6 +128,55 @@ func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, row)
 }
 
+// createExchangeRequest is the payload for POST /api/exchanges.
+type createExchangeRequest struct {
+	SessionID           string   `json:"session_id"`
+	Path                string   `json:"path"`
+	Timestamp           float64  `json:"timestamp"`
+	IsStreaming         bool     `json:"is_streaming"`
+	InputMessages       *string  `json:"input_messages"`
+	RawRequest          string   `json:"raw_request"`
+	RawResponse         string   `json:"raw_response"`
+	OutputText          *string  `json:"output_text"`
+	InputTokens         *int     `json:"input_tokens"`
+	OutputTokens        *int     `json:"output_tokens"`
+	CacheCreationTokens *int     `json:"cache_creation_tokens"`
+	CacheReadTokens     *int     `json:"cache_read_tokens"`
+	Model               *string  `json:"model"`
+	InputCost           *float64 `json:"input_cost"`
+	OutputCost          *float64 `json:"output_cost"`
+	CacheCreationCost   *float64 `json:"cache_creation_cost"`
+	CacheReadCost       *float64 `json:"cache_read_cost"`
+	MatchedPrice        *string  `json:"matched_price"`
+}
+
+// createExchange stores one exchange and its exchanges_ledger row exactly as
+// the proxy would, defaulting timestamp to now. It exists so development
+// data can be generated through the running service.
+func (h *handlers) createExchange(w http.ResponseWriter, r *http.Request) {
+	var req createExchangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Path == "" {
+		writeError(w, http.StatusBadRequest, "session_id and path are required")
+		return
+	}
+	if req.MatchedPrice != nil && !json.Valid([]byte(*req.MatchedPrice)) {
+		writeError(w, http.StatusBadRequest, "matched_price must be a JSON object")
+		return
+	}
+	if req.Timestamp == 0 {
+		req.Timestamp = float64(time.Now().UnixNano()) / 1e9
+	}
+
+	err := h.db.SaveExchange(r.Context(), database.Exchange(req))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.fresh.Bump()
+	h.limitersFresh.Bump()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // bulkDeleteExchangesRequest is the payload for POST /api/exchanges/bulk-delete.
 // SessionIDs scopes the delete to specific sessions; an empty SessionIDs
 // deletes every exchange, but only when ConfirmAll is set, guarding against

@@ -779,3 +779,73 @@ func TestStaticFrontend_UnknownPathIs404(t *testing.T) {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
+
+func TestCreateExchange_StoresExchangeAndLedger(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
+		"session_id": "sess-1", "path": "/v1/messages",
+		"input_tokens": 100, "output_tokens": 50,
+		"input_cost": 0.25, "output_cost": 0.25,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges", nil)
+	var list struct {
+		Total int `json:"total"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &list)
+	if list.Total != 1 {
+		t.Errorf("exchanges total = %d, want 1", list.Total)
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/totals", nil)
+	var totals database.Totals
+	json.Unmarshal(rec.Body.Bytes(), &totals)
+	if totals.TotalCost == nil || *totals.TotalCost != 0.5 {
+		t.Errorf("ledger-backed total cost = %v, want 0.5", totals.TotalCost)
+	}
+}
+
+func TestCreateExchange_MissingSessionIsBadRequest(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{"path": "/v1/messages"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestCreateExchange_MatchedPriceMustBeJSON(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
+		"session_id": "sess-1", "path": "/v1/messages", "matched_price": "claude-sonnet-5-5",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("non-JSON matched_price: status = %d, want 400", rec.Code)
+	}
+
+	rec = doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
+		"session_id": "sess-1", "path": "/v1/messages", "matched_price": `{"model_prefix":"claude-sonnet-5-5","input_per_m":3}`,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("JSON matched_price: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges/1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var detail struct {
+		MatchedPrice struct {
+			Prefix string `json:"model_prefix"`
+		} `json:"matched_price"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &detail)
+	if detail.MatchedPrice.Prefix != "claude-sonnet-5-5" {
+		t.Errorf("matched_price.model_prefix = %q", detail.MatchedPrice.Prefix)
+	}
+}

@@ -173,6 +173,22 @@ claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet
 
 `--row` must still be the full row on a match — any field it omits that the table accepts is reset to its default (e.g. an omitted `cache_read_per_m` becomes `0`, an omitted `*_above_200k` becomes unset), not left as its current value.
 
+## Dummy data
+
+You can generate dummy exchanges (each with its `exchanges_ledger` row) for development, through the running service:
+
+```sh
+claude-lens --dummy --count 200 --sessions 6
+```
+
+| CLI flag | Description |
+|---|---|
+| `--dummy` | Create dummy exchanges instead of starting the service |
+| `--count` | Number of exchanges to create (default `100`) |
+| `--sessions` | Number of distinct sessions to spread them over (default `5`) |
+
+Timestamps are spread over the last 30 days. `--dummy` cannot be combined with `--feed`.
+
 ## Slack alerts
 
 A limiter with a `slack_webhook_url` set gets notified when it crosses its alert thresholds. Every notification is a Slack [incoming webhook](https://api.slack.com/messaging/webhooks) POST with the same minimal JSON structure — a single `text` field, no blocks or attachments:
@@ -281,6 +297,12 @@ If you don't want hot reload, you can run it directly with `go run`:
 
 ```sh
 go run -tags dev ./cmd/claude-lens
+```
+
+Generate dummy exchanges while the project is running (see [Dummy data](#dummy-data)). Add `-tags dev` if your `.env` sets a custom `CLENS_ADMIN_ADDR`.
+
+```sh
+go run ./cmd/claude-lens --dummy --count 120 --sessions 6
 ```
 
 Run tests.
