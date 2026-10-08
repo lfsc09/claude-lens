@@ -58,7 +58,6 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   // empty.
   const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {
     error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-    success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
   });
 
   async function fetchSessionCount() {
@@ -91,11 +90,8 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
         setDialogMessage('error', await extractErrorMessage(res, res.statusText || 'Failed to clear data.'));
         return;
       }
-      setDialogMessage('success', 'All exchanges data cleared.');
-      setTimeout(() => {
-        document.getElementById('clear-all-data-dialog')?.close();
-        load();
-      }, 800);
+      document.getElementById('clear-all-data-dialog')?.close();
+      load();
     });
   }
 

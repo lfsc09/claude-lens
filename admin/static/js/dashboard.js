@@ -330,7 +330,6 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
 
   const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message', {
     error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-    success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
   });
 
   if (bulkDeleteBtn) {
@@ -357,14 +356,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         setBulkDeleteMessage('error', await extractErrorMessage(res, res.statusText || 'Failed to delete selected sessions.'));
         return;
       }
-      setBulkDeleteMessage('success', 'Selected sessions deleted.');
-      setTimeout(() => {
-        document.getElementById('bulk-delete-dialog')?.close();
-        clearSelection();
-        refreshSessionStats();
-        fetchTotals(range);
-        refreshDailyCosts();
-      }, 800);
+      document.getElementById('bulk-delete-dialog')?.close();
+      clearSelection();
+      refreshSessionStats();
+      fetchTotals(range);
+      refreshDailyCosts();
     });
   }
 
