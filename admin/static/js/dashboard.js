@@ -419,24 +419,31 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   // delta, so a fresh call of either kind cancels a still in-flight call of
   // the other instead of letting a slower, superseded response win.
   const refreshSessionStatsTask = makeAbortable(async (signal, sinceID) => {
-    const searchParams = new URLSearchParams();
     if (sinceID != null) {
-      searchParams.set('since_id', sinceID);
-    } else {
-      searchParams.set('limit', sessionPageSize);
-      searchParams.set('offset', (sessionPage - 1) * sessionPageSize);
-    }
-    const res = await fetch('/api/session-stats?' + searchParams.toString(), { signal });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (sinceID != null) {
+      const res = await fetch(`/api/session-stats?since_id=${sinceID}`, { signal });
+      if (!res.ok) return;
+      const data = await res.json();
       applySessionDelta(data.rows, data.total);
-    } else {
-      lastSessionRows = data.rows;
-      sessionTotal = data.total;
-      renderSessionRows();
-      renderSessionPagination();
+      return;
     }
+    let data;
+    do {
+      const searchParams = new URLSearchParams({
+        limit: sessionPageSize,
+        offset: (sessionPage - 1) * sessionPageSize,
+      });
+      const res = await fetch('/api/session-stats?' + searchParams.toString(), { signal });
+      if (!res.ok) return;
+      data = await res.json();
+      if (data.rows.length === 0 && data.total > 0 && sessionPage > 1) {
+        sessionPage = Math.ceil(data.total / sessionPageSize);
+        data = null;
+      }
+    } while (!data);
+    lastSessionRows = data.rows;
+    sessionTotal = data.total;
+    renderSessionRows();
+    renderSessionPagination();
   });
   const refreshSessionStats = () => refreshSessionStatsTask();
   const refreshSessionStatsSince = (sinceID) => refreshSessionStatsTask(sinceID);
