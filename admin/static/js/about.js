@@ -57,7 +57,6 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   // files, via the bulk-delete endpoint with confirm_all set and session_ids
   // empty.
   const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {
-    warning: ['text-amber-700 dark:text-amber-400', 'bg-amber-50 dark:bg-amber-500/15', 'border-amber-200 dark:border-amber-800'],
     error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
     success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
   });
@@ -76,13 +75,6 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
     if (checkbox) checkbox.checked = false;
     setDialogMessage(null, '');
     if (countEl) countEl.textContent = String(await fetchSessionCount());
-    if (checkbox) {
-      checkbox.onchange = () => {
-        setDialogMessage(checkbox.checked ? 'warning' : null, checkbox.checked
-          ? 'Some of these sessions may still be open in a terminal. Deleting their files now could corrupt or lose data from those sessions.'
-          : '');
-      };
-    }
     dialog?.showModal();
   };
 

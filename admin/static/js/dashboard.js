@@ -118,7 +118,6 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
 
   // Session IDs checked for bulk delete among the rows on the current page.
   let selectedSessionIds = new Set();
-  const ACTIVE_SESSION_WINDOW_SECONDS = 30 * 60;
 
   function sessionLimiterCell(session) {
     const l = limitersBySession.get(session.session_id);
@@ -330,7 +329,6 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   }
 
   const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message', {
-    warning: ['text-amber-700 dark:text-amber-400', 'bg-amber-50 dark:bg-amber-500/15', 'border-amber-200 dark:border-amber-800'],
     error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
     success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
   });
@@ -343,22 +341,6 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
       if (checkbox) checkbox.checked = false;
       setBulkDeleteMessage(null, '');
       if (countEl) countEl.textContent = String(selectedSessionIds.size);
-
-      function updateActiveWarning() {
-        if (!checkbox?.checked) {
-          setBulkDeleteMessage(null, '');
-          return;
-        }
-        const anyActive = [...selectedSessionIds].some((id) => {
-          const row = lastSessionRows.find((r) => r.session_id === id);
-          return row && (Date.now() / 1000 - row.last_updated) < ACTIVE_SESSION_WINDOW_SECONDS;
-        });
-        setBulkDeleteMessage(anyActive ? 'warning' : null, anyActive
-          ? 'One or more of the selected sessions had Claude Code activity in the last 30 minutes and may still be open in a terminal. Deleting their files now could corrupt or lose data from those sessions.'
-          : '');
-      }
-      if (checkbox) checkbox.onchange = updateActiveWarning;
-
       dialog?.showModal();
     };
   }
