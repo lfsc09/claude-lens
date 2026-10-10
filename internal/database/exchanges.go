@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -167,7 +168,7 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 func (db *DB) insertExchange(ctx context.Context, e Exchange, cost *float64) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -175,7 +176,7 @@ func (db *DB) insertExchange(ctx context.Context, e Exchange, cost *float64) err
 		`INSERT OR IGNORE INTO sessions (session_id, name, updated_at) VALUES (?, ?, ?)`,
 		e.SessionID, e.SessionID, e.CreatedAt,
 	); err != nil {
-		return err
+		return fmt.Errorf("insert session: %w", err)
 	}
 
 	res, err := tx.ExecContext(ctx,
@@ -189,26 +190,29 @@ func (db *DB) insertExchange(ctx context.Context, e Exchange, cost *float64) err
 		cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost, e.MatchedPrice,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("insert exchange: %w", err)
 	}
 	exchangeID, err := res.LastInsertId()
 	if err != nil {
-		return err
+		return fmt.Errorf("exchange id: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO exchange_data (exchange_id, raw_request, raw_response) VALUES (?, ?, ?)`,
 		exchangeID, e.RawRequest, e.RawResponse,
 	); err != nil {
-		return err
+		return fmt.Errorf("insert exchange data: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // sumCosts adds together whichever of the given cost components are
 // non-nil, returning ok == false only when none of them are set (so a row
-// with no priced components at all still stores a NULL cost, matching the
-// pre-existing input+output behavior, instead of a misleading 0).
+// with no priced components at all stores a NULL cost instead of a
+// misleading 0).
 func sumCosts(costs ...*float64) (sum float64, ok bool) {
 	for _, c := range costs {
 		if c != nil {

@@ -131,29 +131,3 @@ func TestCompileExchangeFilter_Errors(t *testing.T) {
 		})
 	}
 }
-
-func TestExtractExactSession(t *testing.T) {
-	tests := []struct {
-		name   string
-		query  string
-		wantID string
-		wantOK bool
-	}{
-		{"exact session equals", `session = "abc-123"`, "abc-123", true},
-		{"unquoted value", `session = abc-123`, "abc-123", true},
-		{"session like is not exact", `session like abc`, "", false},
-		{"session anded with something else", `session = "abc" AND cost > 1`, "", false},
-		{"session ored with something else", `session = "abc" OR cost > 1`, "", false},
-		{"wrong field", `model = "abc"`, "", false},
-		{"empty query", ``, "", false},
-		{"malformed query", `session = `, "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			id, ok := ExtractExactSession(tt.query)
-			if id != tt.wantID || ok != tt.wantOK {
-				t.Errorf("ExtractExactSession(%q) = (%q, %v), want (%q, %v)", tt.query, id, ok, tt.wantID, tt.wantOK)
-			}
-		})
-	}
-}

@@ -1,6 +1,9 @@
 package parsing
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestExtractResponseFields_NonStreaming(t *testing.T) {
 	tests := []struct {
@@ -113,4 +116,23 @@ func derefOrNil(s *string) string {
 		return "<nil>"
 	}
 	return *s
+}
+
+func TestExtractUsage_MatchesExtractResponseFields(t *testing.T) {
+	const jsonBody = `{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":7,"output_tokens":3,"cache_creation_input_tokens":2,"cache_read_input_tokens":1}}`
+	for name, tt := range map[string]struct {
+		body      string
+		streaming bool
+	}{
+		"non-streaming": {jsonBody, false},
+		"streaming":     {fullSSEFixture, true},
+		"malformed":     {`{`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, want := ExtractResponseFields([]byte(tt.body), tt.streaming)
+			if got := ExtractUsage([]byte(tt.body), tt.streaming); !reflect.DeepEqual(got, want) {
+				t.Errorf("ExtractUsage = %+v, want %+v", got, want)
+			}
+		})
+	}
 }

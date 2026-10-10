@@ -187,7 +187,7 @@ claude-lens --dummy --count 200 --sessions 6
 | `--count` | Number of exchanges to create (default `100`) |
 | `--sessions` | Number of distinct sessions to spread them over (default `5`) |
 
-Timestamps are spread over the last 30 days. `--dummy` cannot be combined with `--feed`.
+Creation times are spread over the last 30 days. `--dummy` cannot be combined with `--feed`.
 
 ## Slack alerts
 

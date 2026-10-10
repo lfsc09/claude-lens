@@ -42,8 +42,7 @@ type Settings struct {
 }
 
 // seedDefaultSettings inserts the single settings row on a fresh database.
-// A no-op on any database that already has one (including one migrated up
-// from before this table existed — see the ON CONFLICT clause).
+// A no-op when the row already exists (see the ON CONFLICT clause).
 func (db *DB) seedDefaultSettings(ctx context.Context) error {
 	now := float64(time.Now().Unix())
 	_, err := db.sql.ExecContext(ctx,

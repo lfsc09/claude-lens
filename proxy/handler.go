@@ -32,7 +32,7 @@ type exchangeMeta struct {
 	intercept   bool
 	sessionID   string
 	path        string
-	timestamp   float64
+	createdAt   float64
 	rawRequest  string
 	isStreaming bool
 	model       *string
@@ -185,7 +185,7 @@ func (h *Handler) director(r *http.Request) {
 	if r.Method == http.MethodPost {
 		meta.intercept = true
 		meta.sessionID = sessionIDFromRequest(r)
-		meta.timestamp = float64(time.Now().UnixNano()) / 1e9
+		meta.createdAt = float64(time.Now().UnixNano()) / 1e9
 
 		body, err := io.ReadAll(r.Body)
 		r.Body.Close()
@@ -240,7 +240,7 @@ func (h *Handler) waitForSaves(timeout time.Duration) {
 func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
-	_, usage := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
+	usage := parsing.ExtractUsage(rawResponse, meta.isStreaming)
 
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
 	var matchedPrice *string
@@ -276,7 +276,7 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	err := h.db.SaveExchange(ctx, database.Exchange{
 		SessionID:           meta.sessionID,
 		Path:                meta.path,
-		CreatedAt:           meta.timestamp,
+		CreatedAt:           meta.createdAt,
 		IsStreaming:         meta.isStreaming,
 		RawRequest:          meta.rawRequest,
 		RawResponse:         strings.ToValidUTF8(string(rawResponse), "�"),

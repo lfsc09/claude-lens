@@ -54,8 +54,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
 
   /**
    * Renders a row for each above-200k override present on the exchange's
-   * frozen price snapshot (absent on pre-migration snapshots, which never
-   * had tier columns). Whether the tier actually applied to this exchange
+   * frozen price snapshot (only those the price config set). Whether the tier actually applied to this exchange
    * is derived from its own token counts rather than stored on the
    * snapshot, since the 200k threshold is a fixed constant.
    * @param {object} exchange - The exchange record, including `matched_price` and `raw_request_tokens`.

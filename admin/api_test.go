@@ -470,10 +470,10 @@ func TestBulkDeleteExchanges(t *testing.T) {
 	}
 }
 
-// TestBulkDeleteExchanges_SessionNames verifies sessions deletion is
+// TestBulkDeleteExchanges_Sessions verifies sessions deletion is
 // conditional on also_delete_claude_session, scoped to exactly the sessions
 // that had exchange rows deleted.
-func TestBulkDeleteExchanges_SessionNames(t *testing.T) {
+func TestBulkDeleteExchanges_Sessions(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for _, sess := range []string{"a", "b"} {

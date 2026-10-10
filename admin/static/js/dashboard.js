@@ -132,7 +132,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
    * @returns {string} The custom name, or an empty string.
    */
   function customSessionName(session) {
-    return session && session.session_name !== session.session_id ? session.session_name : '';
+    return session?.session_name === session?.session_id ? '' : session.session_name;
   }
 
   function buildSessionRow(session) {
