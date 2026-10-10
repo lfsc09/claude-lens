@@ -59,9 +59,6 @@ Safe to re-run at any time to update the binary and/or reconfigure the
 service. Any option you omit keeps whatever was set on a previous run
 (or the default shown, on a first install).
 
-  --proxy-base-url URL      Upstream API URL (default: https://api.anthropic.com)
-  --proxy-auth-token TOKEN  Authorization value forwarded upstream
-  --proxy-custom-header "H: v"  Extra header forwarded upstream (repeatable)
   --proxy-addr PORT         Proxy listen port (default: 7801)
   --admin-addr PORT         Admin listen port (default: 7802)
   --install-dir PATH        Base directory for the binary (default: /usr/local/bin)
@@ -76,15 +73,12 @@ USAGE
 }
 
 # ── Defaults ──────────────────────────────────────────────────────────
-CLENS_PROXY_BASE_URL="https://api.anthropic.com"
-CLENS_PROXY_AUTH_TOKEN=""
 CLENS_PROXY_ADDR="7801"
 CLENS_ADMIN_ADDR="7802"
 CLENS_INSTALL_DIR=""
 CLENS_DATA_DIR=""
 CLENS_LOG_DIR=""
 CLENS_AS_SERVICE="false"
-_CLENS_CUSTOM_HEADERS_ESCAPED=""
 
 # ── Carry forward settings from a previous install, if any ─────────────
 if [ -f "$ENV_FILE" ]; then
@@ -93,15 +87,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # ── Parse flags (override persisted values/defaults) ────────────────────
-PROXY_CUSTOM_HEADERS_ARR=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --proxy-base-url) CLENS_PROXY_BASE_URL="$2"; shift 2 ;;
-    --proxy-base-url=*) CLENS_PROXY_BASE_URL="${1#*=}"; shift ;;
-    --proxy-auth-token) CLENS_PROXY_AUTH_TOKEN="$2"; shift 2 ;;
-    --proxy-auth-token=*) CLENS_PROXY_AUTH_TOKEN="${1#*=}"; shift ;;
-    --proxy-custom-header) PROXY_CUSTOM_HEADERS_ARR+=("$2"); shift 2 ;;
-    --proxy-custom-header=*) PROXY_CUSTOM_HEADERS_ARR+=("${1#*=}"); shift ;;
     --proxy-addr) CLENS_PROXY_ADDR="$2"; shift 2 ;;
     --proxy-addr=*) CLENS_PROXY_ADDR="${1#*=}"; shift ;;
     --admin-addr) CLENS_ADMIN_ADDR="$2"; shift 2 ;;
@@ -122,24 +109,6 @@ done
 # the ":port" form CLENS_PROXY_ADDR/CLENS_ADMIN_ADDR carry at runtime.
 CLENS_PROXY_ADDR=":$(normalize_port --proxy-addr "$CLENS_PROXY_ADDR")"
 CLENS_ADMIN_ADDR=":$(normalize_port --admin-addr "$CLENS_ADMIN_ADDR")"
-
-# Only replace the persisted custom headers if --proxy-custom-header was passed
-# at least once this run. Stored pre-escaped (literal "\n" between
-# entries) so it round-trips through `source` unambiguously and can be
-# dropped straight into the unit file's Environment= line, whose own
-# quoting rules (unlike EnvironmentFile's) reliably turn \n into a real
-# newline regardless of systemd version.
-if [ ${#PROXY_CUSTOM_HEADERS_ARR[@]} -gt 0 ]; then
-  headers_escaped=""
-  for h in "${PROXY_CUSTOM_HEADERS_ARR[@]}"; do
-    if [ -z "$headers_escaped" ]; then
-      headers_escaped="$h"
-    else
-      headers_escaped="${headers_escaped}\\n${h}"
-    fi
-  done
-  _CLENS_CUSTOM_HEADERS_ESCAPED="$headers_escaped"
-fi
 
 # ── Resolve install/data/log directories ─────────────────────────────────
 # --install-dir only changes the fallback for --data-dir/--log-dir when
@@ -300,25 +269,17 @@ fi
 
 log info "Writing ${ENV_FILE}..."
 cat <<EOF > "$ENV_FILE"
-CLENS_PROXY_BASE_URL="${CLENS_PROXY_BASE_URL}"
-CLENS_PROXY_AUTH_TOKEN="${CLENS_PROXY_AUTH_TOKEN}"
 CLENS_PROXY_ADDR="${CLENS_PROXY_ADDR}"
 CLENS_ADMIN_ADDR="${CLENS_ADMIN_ADDR}"
 CLENS_INSTALL_DIR="${CLENS_INSTALL_DIR}"
 CLENS_DATA_DIR="${CLENS_DATA_DIR}"
 CLENS_LOG_DIR="${CLENS_LOG_DIR}"
 CLENS_AS_SERVICE="${CLENS_AS_SERVICE}"
-_CLENS_CUSTOM_HEADERS_ESCAPED="${_CLENS_CUSTOM_HEADERS_ESCAPED}"
 EOF
 chmod 600 "$ENV_FILE"
 chown root:root "$ENV_FILE"
 
 if [ "$CLENS_AS_SERVICE" = "true" ]; then
-  headers_env_line=""
-  if [ -n "$_CLENS_CUSTOM_HEADERS_ESCAPED" ]; then
-    headers_env_line="Environment=\"CLENS_PROXY_CUSTOM_HEADERS=${_CLENS_CUSTOM_HEADERS_ESCAPED}\""
-  fi
-
   log info "Creating systemd service unit..."
   cat <<EOF > "$SERVICE_FILE"
 [Unit]
@@ -329,7 +290,6 @@ After=network.target
 Type=simple
 ExecStart=${INSTALL_DIR}/${SERVICE_NAME}
 EnvironmentFile=-${ENV_FILE}
-${headers_env_line}
 WorkingDirectory=${CLENS_DATA_DIR}
 Restart=always
 RestartSec=5
@@ -347,7 +307,7 @@ EOF
 
   log info "${SERVICE_NAME} installed/updated and started as a systemd service!"
   log info "Proxy listening on ${CLENS_PROXY_ADDR}, admin UI on ${CLENS_ADMIN_ADDR}."
-  log info "Config saved to ${ENV_FILE} - editing the simple values there and running 'systemctl restart ${SERVICE_NAME}' applies them (custom headers need a re-run of this installer)."
+  log info "Config saved to ${ENV_FILE} - editing the simple values there and running 'systemctl restart ${SERVICE_NAME}' applies them."
 else
   log info "${SERVICE_NAME} binary installed/updated at ${INSTALL_DIR}/${SERVICE_NAME}."
   log info "Config saved to ${ENV_FILE}."

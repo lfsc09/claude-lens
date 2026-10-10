@@ -31,23 +31,9 @@ type Limiter struct {
 	CreatedAt       float64 `json:"created_at"`
 	UpdatedAt       float64 `json:"updated_at"`
 
-	// SlackWebhookURL is where this limiter's alerts (both AlertThresholdPct
-	// and AlertRequestCostUSD) are posted. Required for either alert to fire
-	// — there is no process-wide fallback (see DB.SetNotifications).
-	SlackWebhookURL string `json:"slack_webhook_url"`
-	// AlertThresholdPct, if set, fires a one-shot Slack alert (see AlertSent)
-	// the first time CurrentCost reaches this percentage of LimitAmount
-	// within the current refresh window. Nil disables the alert.
-	AlertThresholdPct *int `json:"alert_threshold_pct"`
-	// AlertSent marks that the AlertThresholdPct alert already fired for the
-	// current refresh window, so accrueLimiterCost doesn't resend it on
-	// every subsequent request. Reset to false whenever the window refreshes.
-	AlertSent bool `json:"alert_sent"`
-	// AlertRequestCostUSD, if set, fires a Slack alert every time a single
-	// exchange governed by this limiter costs at least this much. Unlike
-	// AlertThresholdPct this has no "already sent" gating — it's a per-
-	// request spike alert, not a window state. Nil disables it.
-	AlertRequestCostUSD *float64 `json:"alert_request_cost_usd"`
+	// Notifications are the alert destinations this limiter reports to,
+	// each with its own alert rules. Empty means the limiter never alerts.
+	Notifications []LimiterNotification `json:"notifications"`
 
 	// WithinActivePeriod reports whether ActiveStartHour/ActiveEndHour
 	// currently covers the server's local time. Not persisted — callers that
@@ -56,9 +42,25 @@ type Limiter struct {
 	WithinActivePeriod bool `json:"within_active_period"`
 }
 
+// LimiterNotification links a limiter to a notification integration with the
+// alert rules that apply to that destination.
+type LimiterNotification struct {
+	NotificationID int64 `json:"notification_id"`
+	// ThresholdPct, if set, fires a one-shot alert (see AlertSent) the first
+	// time the limiter's CurrentCost reaches this percentage of LimitAmount
+	// within the current refresh window. Nil disables the alert.
+	ThresholdPct *int `json:"threshold_pct"`
+	// RequestCostUSD, if set, fires an alert every time a single exchange
+	// governed by the limiter costs at least this much. Unlike ThresholdPct
+	// it has no "already sent" gating. Nil disables it.
+	RequestCostUSD *float64 `json:"request_cost_usd"`
+	// AlertSent marks that the ThresholdPct alert already fired for the
+	// current refresh window. Reset whenever the window refreshes.
+	AlertSent bool `json:"alert_sent"`
+}
+
 const limiterColumns = `id, session_id, limit_amount, current_cost, refresh_value, refresh_unit, refresh_aligned,
-	next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at,
-	slack_webhook_url, alert_threshold_pct, alert_sent, alert_request_cost_usd`
+	next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at`
 
 // alignedRefreshCombos are the (refresh_unit, refresh_value) pairs with an
 // unambiguous calendar boundary — the only ones RefreshAligned may be set
@@ -83,13 +85,12 @@ func SupportsAlignedRefresh(unit string, value int) bool {
 
 func scanLimiter(row interface{ Scan(dest ...any) error }) (Limiter, error) {
 	var l Limiter
-	var aligned, active, alertSent int
+	var aligned, active int
 	err := row.Scan(&l.ID, &l.SessionID, &l.LimitAmount, &l.CurrentCost, &l.RefreshValue, &l.RefreshUnit, &aligned,
-		&l.NextRefreshAt, &l.ActiveStartHour, &l.ActiveEndHour, &active, &l.CreatedAt, &l.UpdatedAt,
-		&l.SlackWebhookURL, &l.AlertThresholdPct, &alertSent, &l.AlertRequestCostUSD)
+		&l.NextRefreshAt, &l.ActiveStartHour, &l.ActiveEndHour, &active, &l.CreatedAt, &l.UpdatedAt)
 	l.RefreshAligned = aligned != 0
 	l.IsActive = active != 0
-	l.AlertSent = alertSent != 0
+	l.Notifications = []LimiterNotification{}
 	return l, err
 }
 
@@ -110,7 +111,43 @@ func (db *DB) ListLimiters(ctx context.Context) ([]Limiter, error) {
 		}
 		limiters = append(limiters, l)
 	}
-	return limiters, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return limiters, db.attachNotifications(ctx, limiters)
+}
+
+// attachNotifications fills each limiter's Notifications from
+// limiter_notifications in a single query.
+func (db *DB) attachNotifications(ctx context.Context, limiters []Limiter) error {
+	if len(limiters) == 0 {
+		return nil
+	}
+	rows, err := db.sql.QueryContext(ctx,
+		`SELECT limiter_id, notification_id, threshold_pct, request_cost_usd, alert_sent FROM limiter_notifications ORDER BY notification_id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	byID := make(map[int64]*Limiter, len(limiters))
+	for i := range limiters {
+		byID[limiters[i].ID] = &limiters[i]
+	}
+	for rows.Next() {
+		var limiterID int64
+		var n LimiterNotification
+		var sent int
+		if err := rows.Scan(&limiterID, &n.NotificationID, &n.ThresholdPct, &n.RequestCostUSD, &sent); err != nil {
+			return err
+		}
+		n.AlertSent = sent != 0
+		if l, ok := byID[limiterID]; ok {
+			l.Notifications = append(l.Notifications, n)
+		}
+	}
+	return rows.Err()
 }
 
 // GetLimiter returns the limiter with the given id, or nil if it doesn't
@@ -124,40 +161,82 @@ func (db *DB) GetLimiter(ctx context.Context, id int64) (*Limiter, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &l, nil
+	single := []Limiter{l}
+	if err := db.attachNotifications(ctx, single); err != nil {
+		return nil, err
+	}
+	return &single[0], nil
 }
 
-// CreateLimiter inserts a new limiter and returns its id.
+// CreateLimiter inserts a new limiter with its notification links and
+// returns its id.
 func (db *DB) CreateLimiter(ctx context.Context, l Limiter) (int64, error) {
-	res, err := db.sql.ExecContext(ctx,
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO limiters (session_id, limit_amount, current_cost, refresh_value, refresh_unit, refresh_aligned,
-			next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at,
-			slack_webhook_url, alert_threshold_pct, alert_sent, alert_request_cost_usd)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		l.SessionID, l.LimitAmount, l.CurrentCost, l.RefreshValue, l.RefreshUnit, boolToInt(l.RefreshAligned),
 		l.NextRefreshAt, l.ActiveStartHour, l.ActiveEndHour, boolToInt(l.IsActive), l.CreatedAt, l.UpdatedAt,
-		l.SlackWebhookURL, l.AlertThresholdPct, boolToInt(l.AlertSent), l.AlertRequestCostUSD,
 	)
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := replaceLimiterNotifications(ctx, tx, id, l.Notifications); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
 }
 
-// UpdateLimiter replaces a limiter's rule fields in place. IsActive is left
-// untouched — that's SetLimiterActive's job, kept separate so toggling
-// never resets progress the way a full edit does.
+// UpdateLimiter replaces a limiter's rule fields and notification links in
+// place. IsActive is left untouched — that's SetLimiterActive's job, kept
+// separate so toggling never resets progress the way a full edit does.
 func (db *DB) UpdateLimiter(ctx context.Context, l Limiter) error {
-	_, err := db.sql.ExecContext(ctx,
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE limiters SET session_id = ?, limit_amount = ?, current_cost = ?, refresh_value = ?, refresh_unit = ?,
-			refresh_aligned = ?, next_refresh_at = ?, active_start_hour = ?, active_end_hour = ?, updated_at = ?,
-			slack_webhook_url = ?, alert_threshold_pct = ?, alert_sent = ?, alert_request_cost_usd = ?
+			refresh_aligned = ?, next_refresh_at = ?, active_start_hour = ?, active_end_hour = ?, updated_at = ?
 		 WHERE id = ?`,
 		l.SessionID, l.LimitAmount, l.CurrentCost, l.RefreshValue, l.RefreshUnit, boolToInt(l.RefreshAligned),
-		l.NextRefreshAt, l.ActiveStartHour, l.ActiveEndHour, l.UpdatedAt,
-		l.SlackWebhookURL, l.AlertThresholdPct, boolToInt(l.AlertSent), l.AlertRequestCostUSD, l.ID,
-	)
-	return err
+		l.NextRefreshAt, l.ActiveStartHour, l.ActiveEndHour, l.UpdatedAt, l.ID,
+	); err != nil {
+		return err
+	}
+	if err := replaceLimiterNotifications(ctx, tx, l.ID, l.Notifications); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceLimiterNotifications overwrites limiterID's links with links.
+func replaceLimiterNotifications(ctx context.Context, tx *sql.Tx, limiterID int64, links []LimiterNotification) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM limiter_notifications WHERE limiter_id = ?`, limiterID); err != nil {
+		return err
+	}
+	for _, n := range links {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO limiter_notifications (limiter_id, notification_id, threshold_pct, request_cost_usd, alert_sent)
+			 VALUES (?, ?, ?, ?, ?)`,
+			limiterID, n.NotificationID, n.ThresholdPct, n.RequestCostUSD, boolToInt(n.AlertSent),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SetLimiterActive toggles a limiter's master switch without touching its
@@ -292,25 +371,39 @@ func ComputeNextRefresh(now time.Time, unit string, value int, aligned bool) tim
 	}
 }
 
-// refreshIfDue zeroes CurrentCost, resets AlertSent, and recomputes
-// NextRefreshAt when now has reached it, returning whether it fired. The
-// caller is responsible for persisting the change.
+// refreshIfDue zeroes CurrentCost and recomputes NextRefreshAt when now has
+// reached it, returning whether it fired. The caller is responsible for
+// persisting the change (see applyDueRefresh).
 func refreshIfDue(l *Limiter, now time.Time) bool {
 	if float64(now.Unix()) < l.NextRefreshAt {
 		return false
 	}
 	l.CurrentCost = 0
-	l.AlertSent = false
 	l.NextRefreshAt = float64(ComputeNextRefresh(now, l.RefreshUnit, l.RefreshValue, l.RefreshAligned).Unix())
 	return true
 }
 
-// persistLimiterProgress writes back a limiter's current_cost,
-// next_refresh_at, and alert_sent after refreshIfDue and/or an accrual.
+// applyDueRefresh runs refreshIfDue on l and, when it fired, persists the
+// new window and re-arms the limiter's one-shot threshold alerts.
+func (db *DB) applyDueRefresh(ctx context.Context, l *Limiter, now time.Time) error {
+	if !refreshIfDue(l, now) {
+		return nil
+	}
+	if err := db.persistLimiterProgress(ctx, *l, float64(now.Unix())); err != nil {
+		return fmt.Errorf("refresh limiter %d: %w", l.ID, err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `UPDATE limiter_notifications SET alert_sent = 0 WHERE limiter_id = ?`, l.ID); err != nil {
+		return fmt.Errorf("re-arm limiter %d alerts: %w", l.ID, err)
+	}
+	return nil
+}
+
+// persistLimiterProgress writes back a limiter's current_cost and
+// next_refresh_at after refreshIfDue and/or an accrual.
 func (db *DB) persistLimiterProgress(ctx context.Context, l Limiter, updatedAt float64) error {
 	_, err := db.sql.ExecContext(ctx,
-		`UPDATE limiters SET current_cost = ?, next_refresh_at = ?, alert_sent = ?, updated_at = ? WHERE id = ?`,
-		l.CurrentCost, l.NextRefreshAt, boolToInt(l.AlertSent), updatedAt, l.ID,
+		`UPDATE limiters SET current_cost = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?`,
+		l.CurrentCost, l.NextRefreshAt, updatedAt, l.ID,
 	)
 	return err
 }
@@ -363,11 +456,8 @@ func (db *DB) RefreshDueLimiters(ctx context.Context) (int, error) {
 	rows.Close()
 
 	for i := range due {
-		l := &due[i]
-		if refreshIfDue(l, now) {
-			if err := db.persistLimiterProgress(ctx, *l, float64(now.Unix())); err != nil {
-				return i, fmt.Errorf("refresh limiter %d: %w", l.ID, err)
-			}
+		if err := db.applyDueRefresh(ctx, &due[i], now); err != nil {
+			return i, err
 		}
 	}
 	return len(due), nil
@@ -420,11 +510,8 @@ func (db *DB) refreshApplicableLimiters(ctx context.Context, sessionID string) (
 
 	now := time.Now()
 	for i := range limiters {
-		l := &limiters[i]
-		if refreshIfDue(l, now) {
-			if err := db.persistLimiterProgress(ctx, *l, float64(now.Unix())); err != nil {
-				return nil, fmt.Errorf("refresh limiter %d: %w", l.ID, err)
-			}
+		if err := db.applyDueRefresh(ctx, &limiters[i], now); err != nil {
+			return nil, err
 		}
 	}
 	return limiters, nil
@@ -452,12 +539,45 @@ func (db *DB) CheckLimiters(ctx context.Context, sessionID string) (bool, *Limit
 	return false, nil, nil
 }
 
+// alertTarget is one active notification link of a limiter, joined with its
+// destination.
+type alertTarget struct {
+	LimiterNotification
+	WebhookURL string
+}
+
+// alertTargets returns limiterID's links whose notification integration is
+// active.
+func (db *DB) alertTargets(ctx context.Context, limiterID int64) ([]alertTarget, error) {
+	rows, err := db.sql.QueryContext(ctx,
+		`SELECT ln.notification_id, ln.threshold_pct, ln.request_cost_usd, ln.alert_sent, n.webhook_url
+		 FROM limiter_notifications ln
+		 JOIN notification_integrations n ON n.id = ln.notification_id
+		 WHERE ln.limiter_id = ? AND n.active = 1`, limiterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var targets []alertTarget
+	for rows.Next() {
+		var t alertTarget
+		var sent int
+		if err := rows.Scan(&t.NotificationID, &t.ThresholdPct, &t.RequestCostUSD, &sent, &t.WebhookURL); err != nil {
+			return nil, err
+		}
+		t.AlertSent = sent != 0
+		targets = append(targets, t)
+	}
+	return targets, rows.Err()
+}
+
 // accrueLimiterCost adds cost to every applicable, active, currently-in-
-// window limiter's running total, and fires whichever Slack alerts (best-
-// effort, asynchronous — see sendBudgetAlert/sendRequestSpikeAlert) this
-// accrual newly triggers: a budget-threshold alert the moment
-// AlertThresholdPct is crossed, and a request-spike alert whenever this
-// single exchange's cost meets AlertRequestCostUSD. A limiter that is
+// window limiter's running total, and fires whichever alerts (best-effort,
+// asynchronous — see sendAlert) this accrual newly triggers for each of the
+// limiter's active notification links: a budget-threshold alert the moment
+// its ThresholdPct is crossed, and a request-spike alert whenever this
+// single exchange's cost meets its RequestCostUSD. A limiter that is
 // inactive or outside its active period right now simply doesn't track this
 // request, or alert on it, at all.
 //
@@ -482,76 +602,69 @@ func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost floa
 
 		previousCost := l.CurrentCost
 		l.CurrentCost += cost
-
-		if l.AlertThresholdPct != nil && !l.AlertSent && l.LimitAmount > 0 {
-			threshold := l.LimitAmount * float64(*l.AlertThresholdPct) / 100
-			if l.CurrentCost >= threshold && previousCost < threshold {
-				l.AlertSent = true
-				db.sendBudgetAlert(*l, *l.AlertThresholdPct)
-			}
-		}
-
-		if l.AlertRequestCostUSD != nil && cost >= *l.AlertRequestCostUSD {
-			db.sendRequestSpikeAlert(*l, cost, model)
-		}
-
 		if err := db.persistLimiterProgress(ctx, *l, float64(now.Unix())); err != nil {
 			return fmt.Errorf("accrue limiter %d: %w", l.ID, err)
+		}
+		if db.notifier == nil {
+			continue
+		}
+
+		targets, err := db.alertTargets(ctx, l.ID)
+		if err != nil {
+			return fmt.Errorf("load limiter %d alert targets: %w", l.ID, err)
+		}
+		for _, t := range targets {
+			if t.ThresholdPct != nil && !t.AlertSent && l.LimitAmount > 0 {
+				threshold := l.LimitAmount * float64(*t.ThresholdPct) / 100
+				if l.CurrentCost >= threshold && previousCost < threshold {
+					if _, err := db.sql.ExecContext(ctx,
+						`UPDATE limiter_notifications SET alert_sent = 1 WHERE limiter_id = ? AND notification_id = ?`,
+						l.ID, t.NotificationID); err != nil {
+						return fmt.Errorf("mark limiter %d alert sent: %w", l.ID, err)
+					}
+					db.sendAlert(t.WebhookURL, budgetAlertText(*l, *t.ThresholdPct), *l)
+				}
+			}
+			if t.RequestCostUSD != nil && cost >= *t.RequestCostUSD {
+				db.sendAlert(t.WebhookURL, requestSpikeAlertText(*l, cost, *t.RequestCostUSD, model), *l)
+			}
 		}
 	}
 	return nil
 }
 
-// sendBudgetAlert dispatches a Slack notification for l having crossed pct
-// of its budget, to l's own SlackWebhookURL. Fire-and-forget in its own
-// goroutine with a background context: delivery failures are logged, never
-// propagated, so a slow or unreachable Slack endpoint can't delay the
-// proxied request or the exchange save that triggered this accrual.
-func (db *DB) sendBudgetAlert(l Limiter, pct int) {
-	db.sendAlert(l.SlackWebhookURL, budgetAlertText(l, pct), l)
-}
-
-// sendRequestSpikeAlert dispatches a Slack notification for a single
-// exchange, governed by l, whose cost met l's AlertRequestCostUSD. Same
-// fire-and-forget delivery as sendBudgetAlert.
-func (db *DB) sendRequestSpikeAlert(l Limiter, cost float64, model *string) {
-	db.sendAlert(l.SlackWebhookURL, requestSpikeAlertText(l, cost, model), l)
-}
-
-// sendAlert posts text to webhookURL in its own goroutine, logging (never
-// propagating) delivery failures. A no-op when notifications aren't wired up
-// or the limiter has no webhook configured.
+// sendAlert posts text to webhookURL in its own goroutine with a background
+// context: delivery failures are logged, never propagated, so a slow or
+// unreachable endpoint can't delay the proxied request or the exchange save
+// that triggered this accrual.
 func (db *DB) sendAlert(webhookURL, text string, l Limiter) {
-	if db.notifier == nil || webhookURL == "" {
-		return
-	}
 	go func() {
 		if err := db.notifier.Send(context.Background(), webhookURL, text); err != nil {
-			slog.Error("slack alert failed", "error", err, "limiter_id", l.ID, "session_id", l.SessionID)
+			slog.Error("alert delivery failed", "error", err, "limiter_id", l.ID, "session_id", l.SessionID)
 		}
 	}()
 }
 
-// budgetAlertText formats the Slack message body for a limiter crossing its
-// alert threshold.
+// budgetAlertText formats the message body for a limiter crossing its alert
+// threshold.
 func budgetAlertText(l Limiter, pct int) string {
 	return fmt.Sprintf(":warning: claude-lens: %s limiter has spent $%.2f of its $%.2f budget (%d%% threshold reached)",
 		limiterScope(l), l.CurrentCost, l.LimitAmount, pct)
 }
 
-// requestSpikeAlertText formats the Slack message body for a single exchange
-// costing at least l's AlertRequestCostUSD.
-func requestSpikeAlertText(l Limiter, cost float64, model *string) string {
+// requestSpikeAlertText formats the message body for a single exchange
+// costing at least threshold.
+func requestSpikeAlertText(l Limiter, cost, threshold float64, model *string) string {
 	m := "unknown model"
 	if model != nil {
 		m = *model
 	}
 	return fmt.Sprintf(":rotating_light: claude-lens: a single request cost $%.2f (%s, %s) — over the $%.2f alert threshold",
-		cost, m, limiterScope(l), *l.AlertRequestCostUSD)
+		cost, m, limiterScope(l), threshold)
 }
 
 // limiterScope renders l's session_id as "global" or "session <id>" for
-// Slack alert text.
+// alert text.
 func limiterScope(l Limiter) string {
 	if l.SessionID == "" {
 		return "global"

@@ -16,7 +16,7 @@ import (
 type DB struct {
 	sql *sql.DB
 
-	// notifier drives Slack alert delivery from accrueLimiterCost. Unset
+	// notifier drives alert delivery from accrueLimiterCost. Unset
 	// (nil) until SetNotifications is called, in which case alert dispatch
 	// is silently skipped.
 	notifier *notify.Client
@@ -28,7 +28,7 @@ type DB struct {
 	alertMu sync.Mutex
 }
 
-// SetNotifications wires up Slack delivery for limiter alerts (both the
+// SetNotifications wires up delivery for limiter alerts (both the
 // budget-threshold and per-request-cost kinds). Safe to skip calling
 // entirely — accrueLimiterCost just won't send alerts.
 func (db *DB) SetNotifications(client *notify.Client) {
@@ -99,23 +99,51 @@ CREATE TABLE IF NOT EXISTS limiters (
     is_active              INTEGER NOT NULL DEFAULT 1,
     created_at             REAL    NOT NULL,
     updated_at             REAL    NOT NULL,
-    slack_webhook_url      TEXT    NOT NULL DEFAULT '',
-    alert_threshold_pct    INTEGER,
-    alert_sent             INTEGER NOT NULL DEFAULT 0,
-    alert_request_cost_usd REAL,
-    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL)),
-    CHECK (alert_threshold_pct IS NULL OR (alert_threshold_pct BETWEEN 1 AND 100)),
-    CHECK (alert_request_cost_usd IS NULL OR alert_request_cost_usd > 0)
+    CHECK ((active_start_hour IS NULL) = (active_end_hour IS NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_limiters_session_id ON limiters (session_id);
 
 CREATE TABLE IF NOT EXISTS settings (
-    id                            INTEGER PRIMARY KEY CHECK (id = 1),
-    litellm_sync_interval_minutes INTEGER NOT NULL DEFAULT 60,
-    litellm_last_synced_at        REAL    NOT NULL DEFAULT 0,
-    litellm_last_sync_error       TEXT    NOT NULL DEFAULT '',
-    litellm_last_attempt_at       REAL    NOT NULL DEFAULT 0,
-    updated_at                    REAL    NOT NULL
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS proxy_integrations (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type                        TEXT    NOT NULL UNIQUE CHECK (type IN ('litellm','bifrost')),
+    name                        TEXT    NOT NULL,
+    base_url                    TEXT    NOT NULL DEFAULT '',
+    auth_token                  TEXT    NOT NULL DEFAULT '',
+    custom_headers              TEXT    NOT NULL DEFAULT '{}',
+    active                      INTEGER NOT NULL DEFAULT 0,
+    price_sync_interval_minutes INTEGER NOT NULL DEFAULT 60 CHECK (price_sync_interval_minutes >= 0),
+    price_synced_at             REAL    NOT NULL DEFAULT 0,
+    price_sync_attempted_at     REAL    NOT NULL DEFAULT 0,
+    price_sync_error            TEXT    NOT NULL DEFAULT '',
+    updated_at                  REAL    NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_integrations_single_active ON proxy_integrations (active) WHERE active = 1;
+
+CREATE TABLE IF NOT EXISTS notification_integrations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type        TEXT    NOT NULL CHECK (type IN ('slack')),
+    name        TEXT    NOT NULL,
+    webhook_url TEXT    NOT NULL UNIQUE,
+    active      INTEGER NOT NULL DEFAULT 1,
+    created_at  REAL    NOT NULL,
+    updated_at  REAL    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS limiter_notifications (
+    limiter_id       INTEGER NOT NULL REFERENCES limiters(id) ON DELETE CASCADE,
+    notification_id  INTEGER NOT NULL REFERENCES notification_integrations(id) ON DELETE CASCADE,
+    threshold_pct    INTEGER,
+    request_cost_usd REAL,
+    alert_sent       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (limiter_id, notification_id),
+    CHECK (threshold_pct IS NOT NULL OR request_cost_usd IS NOT NULL),
+    CHECK (threshold_pct IS NULL OR (threshold_pct BETWEEN 1 AND 100)),
+    CHECK (request_cost_usd IS NULL OR request_cost_usd > 0)
 );
 `
 
@@ -158,6 +186,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err := db.seedDefaultSettings(ctx); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("seed default settings: %w", err)
+	}
+	if err := db.seedProxyIntegrations(ctx); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("seed proxy integrations: %w", err)
 	}
 
 	return db, nil

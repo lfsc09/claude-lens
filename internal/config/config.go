@@ -12,16 +12,10 @@ type Config struct {
 	ProxyAddr string
 	AdminAddr string
 
-	AnthropicBaseURL       string
-	AnthropicAuthToken     string
-	AnthropicCustomHeaders string
-
 	DataDir string
 	LogDir  string
 	DBPath  string
 }
-
-const defaultAnthropicBaseURL = "https://api.anthropic.com"
 
 // Load reads configuration from the OS environment (plus a dev-only .env file,
 // see dotenv_dev.go / dotenv_release.go), applies defaults, and ensures the
@@ -32,10 +26,6 @@ func Load() (Config, error) {
 	cfg := Config{
 		ProxyAddr: getEnv("CLENS_PROXY_ADDR", ":7801"),
 		AdminAddr: getEnv("CLENS_ADMIN_ADDR", ":7802"),
-
-		AnthropicBaseURL:       strings.TrimRight(getEnv("CLENS_PROXY_BASE_URL", defaultAnthropicBaseURL), "/"),
-		AnthropicAuthToken:     getEnv("CLENS_PROXY_AUTH_TOKEN", ""),
-		AnthropicCustomHeaders: getEnv("CLENS_PROXY_CUSTOM_HEADERS", ""),
 
 		DataDir: getEnv("CLENS_DATA_DIR", "data"),
 		LogDir:  getEnv("CLENS_LOG_DIR", "logs"),

@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/lfsc09/claude-lens/admin"
+	"github.com/lfsc09/claude-lens/internal/bifrost"
 	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/litellm"
@@ -22,6 +23,7 @@ import (
 	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 	"github.com/lfsc09/claude-lens/proxy"
 )
 
@@ -86,13 +88,19 @@ func main() {
 	fresh := status.NewFresh()
 	limitersFresh := status.NewFresh()
 
-	proxySrv, err := proxy.NewServer(cfg, db, est, st, fresh, limitersFresh)
+	registry, err := upstream.NewRegistry(ctx, db)
 	if err != nil {
-		slog.Error("failed to build proxy server", "error", err)
+		slog.Error("failed to resolve upstream", "error", err)
 		os.Exit(1)
 	}
+	fetchers := pricesync.Fetchers{
+		database.ProxyTypeLiteLLM: litellm.NewClient(),
+		database.ProxyTypeBifrost: bifrost.NewClient(),
+	}
 
-	adminSrv, err := admin.NewServer(db, est, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir, cfg.AnthropicBaseURL, cfg.AnthropicAuthToken)
+	proxySrv := proxy.NewServer(registry, db, est, st, fresh, limitersFresh)
+
+	adminSrv, err := admin.NewServer(db, est, registry, fetchers, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir)
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
 		os.Exit(1)
@@ -123,7 +131,7 @@ func main() {
 	}()
 	go func() {
 		defer wg.Done()
-		pricesync.RunLoop(ctx, db, est, litellm.NewClient(), cfg.AnthropicBaseURL, cfg.AnthropicAuthToken)
+		pricesync.RunLoop(ctx, db, est, fetchers, registry)
 	}()
 
 	<-ctx.Done()

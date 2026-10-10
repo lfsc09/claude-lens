@@ -21,9 +21,10 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   const alwaysActiveCheckbox = document.getElementById('limiter-always-active');
   const startHourSelect = document.getElementById('limiter-active-start-hour');
   const endHourSelect = document.getElementById('limiter-active-end-hour');
-  const alertThresholdPctInput = document.getElementById('limiter-alert-threshold-pct');
-  const alertRequestCostUsdInput = document.getElementById('limiter-alert-request-cost-usd');
-  const slackWebhookUrlInput = document.getElementById('limiter-slack-webhook-url');
+  const notificationsEl = document.getElementById('limiter-notifications');
+  const notificationsEmptyEl = document.getElementById('limiter-notifications-empty');
+  const addNotificationBtn = document.getElementById('add-limiter-notification-btn');
+  let notificationIntegrations = [];
 
   function populateHourSelect(select) {
     select.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${pad(h)}:00</option>`).join('');
@@ -49,16 +50,68 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     return `${badge}${alertBadge(l)}`;
   }
 
-  // Small bell indicator shown next to the scope badge when either Slack
-  // alert is armed for this limiter, with the details in a tooltip.
+  // Bell indicator shown next to the scope badge when the limiter has
+  // notification links, with each link's trigger in a tooltip.
   function alertBadge(l) {
-    if (!l.alert_threshold_pct && !l.alert_request_cost_usd) return '';
-    const lines = [];
-    if (l.alert_threshold_pct) lines.push(`At ${l.alert_threshold_pct}% of budget${l.alert_sent ? ' (already sent this window)' : ''}`);
-    if (l.alert_request_cost_usd) lines.push(`On a single request over ${fmtCost(l.alert_request_cost_usd)}`);
-    const tip = `Slack alert:\n${lines.join('\n')}`;
+    if (!l.notifications?.length) return '';
+    const lines = l.notifications.map((n) => {
+      const triggers = [];
+      if (n.threshold_pct) triggers.push(`at ${n.threshold_pct}% of budget${n.alert_sent ? ' (already sent this window)' : ''}`);
+      if (n.request_cost_usd) triggers.push(`on a single request over ${fmtCost(n.request_cost_usd)}`);
+      return `${integrationName(n.notification_id)}: ${triggers.join(', ')}`;
+    });
+    const tip = `Alerts:\n${lines.join('\n')}`;
     return ` <span data-tip="${esc(tip)}" class="text-amber-500 cursor-default" aria-label="${esc(tip)}">🔔</span>`;
   }
+
+  function integrationName(id) {
+    return notificationIntegrations.find((n) => n.id === id)?.name ?? `#${id}`;
+  }
+
+  // ── Notification link rows ──────────────────────────────────────────
+  function notificationRow(link = {}) {
+    const options = notificationIntegrations.map((n) => {
+      const label = n.active ? n.name : `${n.name} (inactive)`;
+      return `<option value="${n.id}" ${n.id === link.notification_id ? 'selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+    const field = 'w-full text-sm px-2 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500';
+    return `<div class="notification-row grid grid-cols-12 items-center gap-2">
+      <select class="notification-id col-span-5 ${field}" aria-label="Notification integration">${options}</select>
+      <input type="number" step="1" min="1" max="100" placeholder="% budget" value="${link.threshold_pct ?? ''}" class="notification-threshold col-span-3 ${field}" aria-label="Alert at percent of budget">
+      <input type="number" step="0.01" min="0.01" placeholder="$ request" value="${link.request_cost_usd ?? ''}" class="notification-cost col-span-3 ${field}" aria-label="Alert on a single request over dollars">
+      <button type="button" class="remove-notification-btn col-span-1 text-fg-subtle hover:text-red-600 dark:hover:text-red-400" aria-label="Remove notification">✕</button>
+    </div>`;
+  }
+
+  function renderNotificationRows(links) {
+    notificationsEl.innerHTML = links.map(notificationRow).join('');
+    notificationsEmptyEl.classList.toggle('hidden', notificationIntegrations.length > 0);
+    addNotificationBtn.disabled = notificationIntegrations.length === 0;
+  }
+
+  function readNotificationRows() {
+    return [...notificationsEl.querySelectorAll('.notification-row')].map((row) => {
+      const threshold = row.querySelector('.notification-threshold').value.trim();
+      const cost = row.querySelector('.notification-cost').value.trim();
+      return {
+        notification_id: parseInt(row.querySelector('.notification-id').value, 10),
+        threshold_pct: threshold ? parseInt(threshold, 10) : null,
+        request_cost_usd: cost ? parseFloat(cost) : null,
+      };
+    });
+  }
+
+  async function loadNotificationIntegrations() {
+    const res = await fetch('/api/notification-integrations');
+    notificationIntegrations = res.ok ? await res.json() : [];
+  }
+
+  addNotificationBtn.addEventListener('click', () => {
+    notificationsEl.insertAdjacentHTML('beforeend', notificationRow({ notification_id: notificationIntegrations.find((n) => n.active)?.id }));
+  });
+  notificationsEl.addEventListener('click', (e) => {
+    e.target.closest('.remove-notification-btn')?.closest('.notification-row').remove();
+  });
 
   function statusToggle(l) {
     return `<button type="button" class="toggle-active-btn inline-flex items-center relative h-5 w-9 rounded-full transition-colors ${l.is_active ? 'bg-emerald-600' : 'bg-surface-strong'}"
@@ -183,9 +236,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     endHourSelect.value = String(l.active_end_hour ?? 23);
     updateActivePeriodInputs();
 
-    alertThresholdPctInput.value = l.alert_threshold_pct ?? '';
-    alertRequestCostUsdInput.value = l.alert_request_cost_usd ?? '';
-    slackWebhookUrlInput.value = l.slack_webhook_url ?? '';
+    renderNotificationRows(l.notifications ?? []);
   }
 
   function resetDialog() {
@@ -194,6 +245,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     submitBtn.textContent = 'Add';
     setDialogMessage(null, '');
     form.reset();
+    renderNotificationRows([]);
     updateAlignedAvailability();
     updateActivePeriodInputs();
   }
@@ -203,8 +255,6 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     e.preventDefault();
     const data = new FormData(form);
     const alwaysActive = alwaysActiveCheckbox.checked;
-    const alertThresholdPct = String(data.get('alert_threshold_pct') || '').trim();
-    const alertRequestCostUsd = String(data.get('alert_request_cost_usd') || '').trim();
 
     const payload = {
       session_id: String(data.get('session_id') || '').trim(),
@@ -214,9 +264,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
       refresh_aligned: alignedCheckbox.checked && !alignedCheckbox.disabled,
       active_start_hour: alwaysActive ? null : parseInt(data.get('active_start_hour'), 10),
       active_end_hour: alwaysActive ? null : parseInt(data.get('active_end_hour'), 10),
-      slack_webhook_url: String(data.get('slack_webhook_url') || '').trim(),
-      alert_threshold_pct: alertThresholdPct ? parseInt(alertThresholdPct, 10) : null,
-      alert_request_cost_usd: alertRequestCostUsd ? parseFloat(alertRequestCostUsd) : null,
+      notifications: readNotificationRows(),
     };
 
     await withPending(submitBtn, async () => {
@@ -232,7 +280,8 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
 
   updateAlignedAvailability();
   updateActivePeriodInputs();
-  loadLimiters();
+  renderNotificationRows([]);
+  loadNotificationIntegrations().then(loadLimiters);
   initNav(null, { onLimitersChanged: loadLimiters });
   setInterval(tickCountdowns, 30000);
 })();

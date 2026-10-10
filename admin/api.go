@@ -13,10 +13,10 @@ import (
 
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/files"
-	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 // parsePageParams reads limit/offset query params, defaulting limit to
@@ -50,12 +50,10 @@ type handlers struct {
 	dbPath        string
 	logPath       string
 
-	// litellmClient/proxyBaseURL/proxyAuthToken back syncPricesFromLiteLLM.
-	// proxyBaseURL/proxyAuthToken are the same upstream claude-lens' proxy
-	// forwards to — only meaningful when that upstream is a LiteLLM proxy.
-	litellmClient  *litellm.Client
-	proxyBaseURL   string
-	proxyAuthToken string
+	// registry is refreshed after every proxy integration change so the
+	// proxy picks it up live; fetchers back the manual price sync.
+	registry *upstream.Registry
+	fetchers pricesync.Fetchers
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -441,29 +439,6 @@ func (h *handlers) createPrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
-// syncPricesFromLiteLLM triggers an on-demand internal/pricesync.Sync — the
-// same sync also run periodically in the background (see main.go) — and
-// reports what it did so the admin UI can show a meaningful summary instead
-// of a bare "ok".
-//
-// Status code distinguishes the failure kind: 502 specifically means the
-// upstream isn't a LiteLLM proxy (see pricesync.ErrUpstreamUnavailable),
-// which the Prices page's JS uses to grey out the manual sync button —
-// anything else (e.g. a DB write error) isn't a capability signal, so it
-// stays a plain 500 and the button stays usable for an immediate retry.
-func (h *handlers) syncPricesFromLiteLLM(w http.ResponseWriter, r *http.Request) {
-	result, err := pricesync.Sync(r.Context(), h.db, h.est, h.litellmClient, h.proxyBaseURL, h.proxyAuthToken)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, pricesync.ErrUpstreamUnavailable) {
-			status = http.StatusBadGateway
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
 type updatePriceRequest struct {
 	InputPerM               *float64 `json:"input_per_m"`
 	OutputPerM              *float64 `json:"output_per_m"`
@@ -568,21 +543,22 @@ func (h *handlers) listLimiters(w http.ResponseWriter, r *http.Request) {
 }
 
 type limiterRequest struct {
-	SessionID       string   `json:"session_id"`
-	LimitAmount     *float64 `json:"limit_amount"`
-	RefreshValue    *int     `json:"refresh_value"`
-	RefreshUnit     string   `json:"refresh_unit"`
-	RefreshAligned  bool     `json:"refresh_aligned"`
-	ActiveStartHour *int     `json:"active_start_hour"`
-	ActiveEndHour   *int     `json:"active_end_hour"`
-	SlackWebhookURL string   `json:"slack_webhook_url"`
-	// AlertThresholdPct fires a one-shot Slack alert the first time the
-	// limiter's spend reaches this percentage of its budget within the
-	// current refresh window. Nil disables the alert.
-	AlertThresholdPct *int `json:"alert_threshold_pct"`
-	// AlertRequestCostUSD fires a Slack alert every time a single exchange
-	// governed by this limiter costs at least this much. Nil disables it.
-	AlertRequestCostUSD *float64 `json:"alert_request_cost_usd"`
+	SessionID       string                `json:"session_id"`
+	LimitAmount     *float64              `json:"limit_amount"`
+	RefreshValue    *int                  `json:"refresh_value"`
+	RefreshUnit     string                `json:"refresh_unit"`
+	RefreshAligned  bool                  `json:"refresh_aligned"`
+	ActiveStartHour *int                  `json:"active_start_hour"`
+	ActiveEndHour   *int                  `json:"active_end_hour"`
+	Notifications   []limiterNotification `json:"notifications"`
+}
+
+// limiterNotification is one alert destination of a limiter, with the alert
+// rules that apply to it.
+type limiterNotification struct {
+	NotificationID int64    `json:"notification_id"`
+	ThresholdPct   *int     `json:"threshold_pct"`
+	RequestCostUSD *float64 `json:"request_cost_usd"`
 }
 
 var limiterRefreshUnits = map[string]bool{"minutes": true, "hours": true, "days": true, "months": true}
@@ -609,17 +585,21 @@ func validateLimiterRequest(req limiterRequest) string {
 	if req.ActiveStartHour != nil && (*req.ActiveStartHour < 0 || *req.ActiveStartHour > 23 || *req.ActiveEndHour < 0 || *req.ActiveEndHour > 23) {
 		return "active_start_hour and active_end_hour must be between 0 and 23"
 	}
-	if req.AlertThresholdPct != nil && (*req.AlertThresholdPct < 1 || *req.AlertThresholdPct > 100) {
-		return "alert_threshold_pct must be between 1 and 100"
-	}
-	if req.AlertRequestCostUSD != nil && *req.AlertRequestCostUSD <= 0 {
-		return "alert_request_cost_usd must be a positive number"
-	}
-	if req.SlackWebhookURL != "" && !strings.HasPrefix(req.SlackWebhookURL, "https://") {
-		return "slack_webhook_url must be a https:// URL"
-	}
-	if req.SlackWebhookURL == "" && (req.AlertThresholdPct != nil || req.AlertRequestCostUSD != nil) {
-		return "slack_webhook_url is required when an alert is configured"
+	seen := make(map[int64]struct{}, len(req.Notifications))
+	for _, n := range req.Notifications {
+		if _, dup := seen[n.NotificationID]; dup {
+			return "each notification integration can be linked only once"
+		}
+		seen[n.NotificationID] = struct{}{}
+		if n.ThresholdPct == nil && n.RequestCostUSD == nil {
+			return "each notification needs a threshold_pct or a request_cost_usd"
+		}
+		if n.ThresholdPct != nil && (*n.ThresholdPct < 1 || *n.ThresholdPct > 100) {
+			return "threshold_pct must be between 1 and 100"
+		}
+		if n.RequestCostUSD != nil && *n.RequestCostUSD <= 0 {
+			return "request_cost_usd must be a positive number"
+		}
 	}
 	return ""
 }
@@ -656,6 +636,34 @@ func (h *handlers) resolveLimiterScope(w http.ResponseWriter, r *http.Request, r
 	return sessionID, true
 }
 
+// newLimiterNotifications converts the request's links to their stored form,
+// carrying over AlertSent from previous for a link whose threshold is
+// unchanged so editing a limiter doesn't re-arm an alert already fired in
+// the current window.
+func newLimiterNotifications(links []limiterNotification, previous []database.LimiterNotification) []database.LimiterNotification {
+	out := make([]database.LimiterNotification, 0, len(links))
+	for _, n := range links {
+		link := database.LimiterNotification{NotificationID: n.NotificationID, ThresholdPct: n.ThresholdPct, RequestCostUSD: n.RequestCostUSD}
+		for _, p := range previous {
+			if p.NotificationID == n.NotificationID && p.ThresholdPct != nil && n.ThresholdPct != nil && *p.ThresholdPct == *n.ThresholdPct {
+				link.AlertSent = p.AlertSent
+			}
+		}
+		out = append(out, link)
+	}
+	return out
+}
+
+// writeLimiterWriteError maps a limiter write failure to a response: a
+// notification_id that names no integration is the client's mistake.
+func writeLimiterWriteError(w http.ResponseWriter, err error) {
+	if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		writeError(w, http.StatusBadRequest, "unknown notification integration")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
 // createLimiter adds a new limiter. An empty session_id scopes it globally.
 // Rejects an active period that overlaps another limiter already covering
 // the same session_id (see database.FindOverlappingLimiter).
@@ -677,24 +685,22 @@ func (h *handlers) createLimiter(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	l := database.Limiter{
-		SessionID:           sessionID,
-		LimitAmount:         *req.LimitAmount,
-		RefreshValue:        *req.RefreshValue,
-		RefreshUnit:         req.RefreshUnit,
-		RefreshAligned:      req.RefreshAligned,
-		NextRefreshAt:       float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
-		ActiveStartHour:     req.ActiveStartHour,
-		ActiveEndHour:       req.ActiveEndHour,
-		IsActive:            true,
-		CreatedAt:           float64(now.Unix()),
-		UpdatedAt:           float64(now.Unix()),
-		SlackWebhookURL:     strings.TrimSpace(req.SlackWebhookURL),
-		AlertThresholdPct:   req.AlertThresholdPct,
-		AlertRequestCostUSD: req.AlertRequestCostUSD,
+		SessionID:       sessionID,
+		LimitAmount:     *req.LimitAmount,
+		RefreshValue:    *req.RefreshValue,
+		RefreshUnit:     req.RefreshUnit,
+		RefreshAligned:  req.RefreshAligned,
+		NextRefreshAt:   float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
+		ActiveStartHour: req.ActiveStartHour,
+		ActiveEndHour:   req.ActiveEndHour,
+		IsActive:        true,
+		CreatedAt:       float64(now.Unix()),
+		UpdatedAt:       float64(now.Unix()),
+		Notifications:   newLimiterNotifications(req.Notifications, nil),
 	}
 	id, err := h.db.CreateLimiter(r.Context(), l)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLimiterWriteError(w, err)
 		return
 	}
 	l.ID = id
@@ -755,17 +761,18 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 	existing.ActiveStartHour = req.ActiveStartHour
 	existing.ActiveEndHour = req.ActiveEndHour
 	existing.UpdatedAt = float64(now.Unix())
-	existing.SlackWebhookURL = strings.TrimSpace(req.SlackWebhookURL)
-	existing.AlertThresholdPct = req.AlertThresholdPct
-	existing.AlertRequestCostUSD = req.AlertRequestCostUSD
+	var previous []database.LimiterNotification
+	if !scheduleChanged {
+		previous = existing.Notifications
+	}
+	existing.Notifications = newLimiterNotifications(req.Notifications, previous)
 	if scheduleChanged {
 		existing.CurrentCost = 0
-		existing.AlertSent = false
 		existing.NextRefreshAt = float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix())
 	}
 
 	if err := h.db.UpdateLimiter(r.Context(), *existing); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLimiterWriteError(w, err)
 		return
 	}
 	existing.WithinActivePeriod = database.WithinActivePeriodNow(*existing)

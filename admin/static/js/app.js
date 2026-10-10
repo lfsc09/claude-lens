@@ -41,7 +41,7 @@ export function jsonViewerTheme() {
  * Site-wide header/nav, shared by every admin page in place of duplicating
  * the markup per page. Set the `active` attribute to highlight the current
  * page: "dashboard" | "exchanges" | "analyze-exchange" | "prices" |
- * "limiters" | "about". Renders into light DOM (no shadow root) so existing
+ * "limiters" | "proxy-integrations" | "notification-integrations" | "about". Renders into light DOM (no shadow root) so existing
  * global code — updateProxyStatusBadge via getElementById('proxy-status') —
  * keeps working unchanged, and so the Tailwind CDN's mutation observer picks
  * up its utility classes the same way it does for every page's own
@@ -50,11 +50,22 @@ export function jsonViewerTheme() {
 class SiteNav extends HTMLElement {
   connectedCallback() {
     const active = this.getAttribute('active');
-    const exchangesActive = active === 'exchanges' || active === 'analyze-exchange';
     const linkClass = (key) => (key === active ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE);
     const menuItemClass = (key) => (key === active
       ? 'block text-emerald-700 dark:text-emerald-400 font-semibold px-3 py-2 bg-emerald-50 dark:bg-emerald-500/15'
       : 'block text-fg-muted hover:text-fg px-3 py-2 hover:bg-surface-hover');
+    const menu = (id, label, items) => `
+          <div class="relative" data-nav-menu>
+            <button type="button" id="${id}-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="${id}-menu" class="flex items-center gap-1 ${items.some(([key]) => key === active) ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}">
+              ${label}
+              <svg id="${id}-menu-chevron" class="h-3 w-3 transition-transform" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <div id="${id}-menu" role="menu" aria-labelledby="${id}-menu-button" class="hidden absolute left-0 z-50 w-48 mt-2 py-1 bg-surface rounded-lg border border-line shadow-lg">
+              ${items.map(([key, href, text]) => `<a href="${href}" role="menuitem" class="${menuItemClass(key)}">${text}</a>`).join('\n              ')}
+            </div>
+          </div>`;
 
     this.innerHTML = `
       <header class="px-6 py-3 bg-surface border-b border-line">
@@ -64,20 +75,10 @@ class SiteNav extends HTMLElement {
             <span class="text-base font-bold text-fg">claude-lens</span>
           </span>
           <a href="/" class="${linkClass('dashboard')}">Dashboard</a>
-          <div class="relative">
-            <button type="button" id="exchanges-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="exchanges-menu" class="flex items-center gap-1 ${exchangesActive ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}">
-              Exchanges
-              <svg id="exchanges-menu-chevron" class="h-3 w-3 transition-transform" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <div id="exchanges-menu" role="menu" aria-labelledby="exchanges-menu-button" class="hidden absolute left-0 z-50 w-48 mt-2 py-1 bg-surface rounded-lg border border-line shadow-lg">
-              <a href="/exchanges" role="menuitem" class="${menuItemClass('exchanges')}">All Exchanges</a>
-              <a href="/exchanges/analyze" role="menuitem" class="${menuItemClass('analyze-exchange')}">Analyze Exchange</a>
-            </div>
-          </div>
+          ${menu('exchanges', 'Exchanges', [['exchanges', '/exchanges', 'All Exchanges'], ['analyze-exchange', '/exchanges/analyze', 'Analyze Exchange']])}
           <a href="/prices" class="${linkClass('prices')}">Prices</a>
           <a href="/limiters" class="${linkClass('limiters')}">Limiters</a>
+          ${menu('integrations', 'Integrations', [['proxy-integrations', '/integrations/proxy', 'Proxy'], ['notification-integrations', '/integrations/notifications', 'Notifications']])}
           <a href="/about" class="${linkClass('about')}">About</a>
           <div class="flex items-center gap-2 ml-auto">
             <span id="proxy-status" class="text-xs text-fg-muted px-2 py-1.5 border border-line-strong border-dashed rounded-lg">Proxy Service</span>
@@ -94,17 +95,22 @@ class SiteNav extends HTMLElement {
       </header>
     `;
 
-    this.menuButton = this.querySelector('#exchanges-menu-button');
-    this.menu = this.querySelector('#exchanges-menu');
-    this.chevron = this.querySelector('#exchanges-menu-chevron');
+    this.menus = [...this.querySelectorAll('[data-nav-menu]')];
     this.themeToggle = this.querySelector('#theme-toggle');
     this.onDocumentClick = (e) => {
-      if (!this.contains(e.target)) this.closeMenu();
+      this.menus.forEach((m) => {
+        if (!m.contains(e.target)) this.setMenuOpen(m, false);
+      });
     };
     this.onDocumentKeydown = (e) => {
-      if (e.key === 'Escape') this.closeMenu();
+      if (e.key === 'Escape') this.menus.forEach((m) => this.setMenuOpen(m, false));
     };
-    this.menuButton.addEventListener('click', () => this.toggleMenu());
+    this.menus.forEach((m) => {
+      m.querySelector('button').addEventListener('click', () => {
+        const opening = m.querySelector('[role="menu"]').classList.contains('hidden');
+        this.menus.forEach((other) => this.setMenuOpen(other, other === m && opening));
+      });
+    });
     this.themeToggle.addEventListener('click', () => applyTheme(!isDarkTheme()));
     document.addEventListener('click', this.onDocumentClick);
     document.addEventListener('keydown', this.onDocumentKeydown);
@@ -115,21 +121,16 @@ class SiteNav extends HTMLElement {
     document.removeEventListener('keydown', this.onDocumentKeydown);
   }
 
-  toggleMenu() {
-    if (this.menu.classList.contains('hidden')) this.openMenu();
-    else this.closeMenu();
-  }
-
-  openMenu() {
-    this.menu.classList.remove('hidden');
-    this.menuButton.setAttribute('aria-expanded', 'true');
-    this.chevron.classList.add('rotate-180');
-  }
-
-  closeMenu() {
-    this.menu.classList.add('hidden');
-    this.menuButton.setAttribute('aria-expanded', 'false');
-    this.chevron.classList.remove('rotate-180');
+  /**
+   * Opens or closes one dropdown, keeping its button's aria-expanded and
+   * chevron in sync.
+   * @param {HTMLElement} menu - The [data-nav-menu] wrapper.
+   * @param {boolean} open - Whether the dropdown should be shown.
+   */
+  setMenuOpen(menu, open) {
+    menu.querySelector('[role="menu"]').classList.toggle('hidden', !open);
+    menu.querySelector('button').setAttribute('aria-expanded', String(open));
+    menu.querySelector('svg').classList.toggle('rotate-180', open);
   }
 }
 customElements.define('site-nav', SiteNav);

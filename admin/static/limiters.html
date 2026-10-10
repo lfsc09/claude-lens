@@ -170,24 +170,13 @@
             class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-surface-hover disabled:text-fg-subtle"></select>
         </div>
         <div class="col-span-2 my-2 border-b border-line"></div>
-        <div class="col-span-2">
-          <label for="limiter-alert-threshold-pct" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Slack alert at % of budget (blank = off)</label>
-          <input type="number" step="1" min="1" max="100" id="limiter-alert-threshold-pct" name="alert_threshold_pct" placeholder="80"
-            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small class="text-fg-subtle">Fires once per refresh window, the first time spend crosses the threshold.</small>
-        </div>
-        <div class="col-span-2">
-          <label for="limiter-alert-request-cost-usd" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Slack alert on a single request over $ (blank = off)</label>
-          <input type="number" step="0.01" min="0.01" id="limiter-alert-request-cost-usd" name="alert_request_cost_usd" placeholder="5.00"
-            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small class="text-fg-subtle">Fires every time a single exchange governed by this limiter costs at least this much.</small>
-        </div>
-        <div class="col-span-2">
-          <label for="limiter-slack-webhook-url" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Slack webhook URL</label>
-          <input type="url" id="limiter-slack-webhook-url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/…"
-            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small class="text-fg-subtle">Required when either alert above is set — each limiter posts to its own webhook, so different limiters can alert into different Slack channels.</small>
-        </div>
+        <fieldset class="col-span-2 flex flex-col gap-2">
+          <legend class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Notifications</legend>
+          <small class="text-fg-subtle">Each row alerts through one notification integration: at a % of budget (once per refresh window), on a single request over a cost (every time), or both.</small>
+          <div id="limiter-notifications" class="flex flex-col gap-2"></div>
+          <p id="limiter-notifications-empty" class="hidden text-xs text-fg-subtle">No notification integrations yet — create one under Integrations → Notifications.</p>
+          <button type="button" id="add-limiter-notification-btn" class="self-start text-sm text-fg px-3 py-1.5 bg-surface border border-line-strong rounded-md hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed">Add notification</button>
+        </fieldset>
       </div>
       <div id="limiter-dialog-message" class="hidden text-xs px-3 py-2 rounded-md border"></div>
       <div class="flex justify-end w-full gap-2">

@@ -2,53 +2,8 @@ package proxy
 
 import (
 	"net/http"
-	"reflect"
 	"testing"
 )
-
-func TestParseCustomHeaders(t *testing.T) {
-	tests := []struct {
-		name    string
-		raw     string
-		want    map[string]string
-		wantErr bool
-	}{
-		{name: "empty", raw: "", want: map[string]string{}},
-		{name: "single header", raw: "X-Api-Key: abc123", want: map[string]string{"X-Api-Key": "abc123"}},
-		{
-			name: "multiple headers with blank lines",
-			raw:  "X-Api-Key: abc123\n\nX-Team: platform\n",
-			want: map[string]string{"X-Api-Key": "abc123", "X-Team": "platform"},
-		},
-		{
-			name: "value containing a colon is preserved",
-			raw:  "X-Custom: value:with:colons",
-			want: map[string]string{"X-Custom": "value:with:colons"},
-		},
-		{name: "missing colon is an error", raw: "not-a-header-line", wantErr: true},
-		{name: "empty name is an error", raw: ": value", wantErr: true},
-		{name: "empty value is an error", raw: "X-Api-Key:", wantErr: true},
-		{name: "whitespace-only value is an error", raw: "X-Api-Key:    ", wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseCustomHeaders(tt.raw)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("ParseCustomHeaders(%q) = %v, want error", tt.raw, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ParseCustomHeaders(%q) unexpected error: %v", tt.raw, err)
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseCustomHeaders(%q) = %v, want %v", tt.raw, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestSetHeader_ReplacesCaseInsensitively(t *testing.T) {
 	h := http.Header{}

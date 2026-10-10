@@ -20,13 +20,7 @@ export ANTHROPIC_BASE_URL=http://localhost:7801
 
 #### Existing proxy
 
-If you have another proxy already in use (e.g. LiteLLM), feed its envs to `CLENS_*` [environment variables](#environment-variables) like:
-
-```sh
-export CLENS_PROXY_BASE_URL=https://your.lite.llmproxy.com
-export CLENS_PROXY_AUTH_TOKEN=your_token
-export CLENS_PROXY_CUSTOM_HEADERS="X-My-Header: value"
-```
+If you have another proxy already in use (e.g. LiteLLM or Bifrost), configure and activate it in the admin UI under **Integrations → Proxy**: base URL, auth token and optional custom headers. With no proxy integration active, requests go directly to the Anthropic API.
 
 ### Install script
 
@@ -40,9 +34,6 @@ You may provide flags to the install script to customize the Envs.
 
 | Flag | Default | Points to Env |
 |---|---|---|
-| `--proxy-base-url` | `https://api.anthropic.com` | `CLENS_PROXY_BASE_URL` |
-| `--proxy-auth-token` | — | `CLENS_PROXY_AUTH_TOKEN` |
-| `--proxy-custom-header` | — | `CLENS_PROXY_CUSTOM_HEADERS` (repeatable) |
 | `--proxy-addr` | `7801` | `CLENS_PROXY_ADDR` |
 | `--admin-addr` | `7802` | `CLENS_ADMIN_ADDR` |
 | `--install-dir` | `/usr/local/bin` (Linux), REQUIRED in (macOS) | |
@@ -68,10 +59,6 @@ To provide custom configurations, use flags like:
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash -s -- \
-  --proxy-base-url https://api.anthropic.com \
-  --proxy-auth-token sk-ant-your-token \
-  --proxy-custom-header "X-My-Header: value" \
-  --proxy-custom-header "X-Another-Header: value" \
   --proxy-addr 7801 \
   --admin-addr 7802 \
   --install-dir ~/claude-lens \
@@ -122,9 +109,6 @@ They all must be set in OS environment. The `.env` file is only read in developm
 
 | Variable | Default | Description |
 |---|---|---|
-| `CLENS_PROXY_BASE_URL` | `https://api.anthropic.com` | Upstream API URL. Point this at a LiteLLM proxy or any other Anthropic-compatible endpoint. Replaces current `ANTHROPIC_BASE_URL` setting. |
-| `CLENS_PROXY_AUTH_TOKEN` | — | If set, replaces the `Authorization` header on every forwarded request. Accepts a raw key or a full `Scheme token` value. Replaces current `ANTHROPIC_AUTH_TOKEN` setting. |
-| `CLENS_PROXY_CUSTOM_HEADERS` | — | Extra headers injected into every forwarded request, one per line as `Header-Name: value`. Replaces current `ANTHROPIC_CUSTOM_HEADERS` setting. |
 | `CLENS_PROXY_ADDR` | `:7801` | Proxy server listen address. |
 | `CLENS_ADMIN_ADDR` | `:7802` | Admin server listen address. |
 | `CLENS_DATA_DIR` | `data` | Where the SQLite database is created. |
@@ -191,7 +175,7 @@ Creation times are spread over the last 30 days. `--dummy` cannot be combined wi
 
 ## Slack alerts
 
-A limiter with a `slack_webhook_url` set gets notified when it crosses its alert thresholds. Every notification is a Slack [incoming webhook](https://api.slack.com/messaging/webhooks) POST with the same minimal JSON structure — a single `text` field, no blocks or attachments:
+A limiter linked to one or more active Slack notification integrations (**Integrations → Notifications** in the admin UI) gets notified when it crosses the `threshold_pct` or `request_cost_usd` set on each link. Every notification is a Slack [incoming webhook](https://api.slack.com/messaging/webhooks) POST with the same minimal JSON structure — a single `text` field, no blocks or attachments:
 
 ```json
 {
@@ -201,8 +185,8 @@ A limiter with a `slack_webhook_url` set gets notified when it crosses its alert
 
 | Trigger | Message format | Example |
 |---|---|---|
-| Limiter's accumulated cost crosses `alert_threshold_pct` of its budget | `:warning: claude-lens: <scope> limiter has spent $<current> of its $<budget> budget (<pct>% threshold reached)` | `:warning: claude-lens: global limiter has spent $16.00 of its $20.00 budget (80% threshold reached)` |
-| A single exchange's cost meets or exceeds `alert_request_cost_usd` | `:rotating_light: claude-lens: a single request cost $<cost> (<model>, <scope>) — over the $<threshold> alert threshold` | `:rotating_light: claude-lens: a single request cost $1.50 (claude-opus-5, session abc123) — over the $1.00 alert threshold` |
+| Limiter's accumulated cost crosses `threshold_pct` of its budget | `:warning: claude-lens: <scope> limiter has spent $<current> of its $<budget> budget (<pct>% threshold reached)` | `:warning: claude-lens: global limiter has spent $16.00 of its $20.00 budget (80% threshold reached)` |
+| A single exchange's cost meets or exceeds `request_cost_usd` | `:rotating_light: claude-lens: a single request cost $<cost> (<model>, <scope>) — over the $<threshold> alert threshold` | `:rotating_light: claude-lens: a single request cost $1.50 (claude-opus-5, session abc123) — over the $1.00 alert threshold` |
 
 `<scope>` is `global` for a limiter with no `session_id`, or `session <id>` otherwise. Each alert is sent at most once per threshold crossing (budget alerts reset only when the limiter's period refreshes).
 

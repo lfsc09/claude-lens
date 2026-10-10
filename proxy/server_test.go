@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/lfsc09/claude-lens/internal/config"
-	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
 )
@@ -28,11 +25,7 @@ func freePort(t *testing.T) string {
 }
 
 func TestServer_HealthAndGracefulShutdown(t *testing.T) {
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("database.Open: %v", err)
-	}
-	defer db.Close()
+	db := openTestDB(t)
 	est := pricing.New(db)
 	_ = est.Refresh(context.Background())
 
@@ -41,11 +34,8 @@ func TestServer_HealthAndGracefulShutdown(t *testing.T) {
 		t.Errorf("initial status = %q, want %q", st.Get(), status.Unreachable)
 	}
 
-	cfg := config.Config{AnthropicBaseURL: "http://127.0.0.1:1"}
-	server, err := NewServer(cfg, db, est, st, status.NewFresh(), status.NewFresh())
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	reg := newTestRegistry(t, db, "http://127.0.0.1:1", "token", nil)
+	server := NewServer(reg, db, est, st, status.NewFresh(), status.NewFresh())
 
 	addr := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())

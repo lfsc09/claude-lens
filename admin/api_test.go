@@ -14,10 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lfsc09/claude-lens/internal/bifrost"
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 func newTestServer(t *testing.T) (*Server, *database.DB) {
@@ -32,14 +35,6 @@ func newTestServer(t *testing.T) (*Server, *database.DB) {
 // signals, limiter-refresh signals) directly instead of only through the
 // HTTP surface.
 func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag, *status.Fresh, *status.Fresh) {
-	t.Helper()
-	return newTestServerWithProxy(t, "https://api.anthropic.com", "")
-}
-
-// newTestServerWithProxy is newTestServerWithStatus with a caller-chosen
-// upstream, for tests (e.g. the LiteLLM sync) that need proxyBaseURL to
-// point at a local httptest.Server instead of the real Anthropic API.
-func newTestServerWithProxy(t *testing.T, proxyBaseURL, proxyAuthToken string) (*Server, *database.DB, *status.Flag, *status.Fresh, *status.Fresh) {
 	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -56,7 +51,15 @@ func newTestServerWithProxy(t *testing.T, proxyBaseURL, proxyAuthToken string) (
 	fresh := status.NewFresh()
 	limitersFresh := status.NewFresh()
 	tmpDir := t.TempDir()
-	s, err := NewServer(db, est, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir, proxyBaseURL, proxyAuthToken)
+	reg, err := upstream.NewRegistry(context.Background(), db)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	fetchers := pricesync.Fetchers{
+		database.ProxyTypeLiteLLM: litellm.NewClient(),
+		database.ProxyTypeBifrost: bifrost.NewClient(),
+	}
+	s, err := NewServer(db, est, reg, fetchers, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -643,7 +646,7 @@ func TestUpdatePrice_FullReplaceSemantics(t *testing.T) {
 	}
 }
 
-func TestSyncPricesFromLiteLLM_UpsertsAndReportsCounts(t *testing.T) {
+func TestSyncProxyPrices_UpsertsAndReportsCounts(t *testing.T) {
 	litellmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[
 			{"model_name":"claude-sonnet-5","model_info":{"input_cost_per_token":0.0000022,"output_cost_per_token":0.000011}},
@@ -652,12 +655,13 @@ func TestSyncPricesFromLiteLLM_UpsertsAndReportsCounts(t *testing.T) {
 	}))
 	defer litellmSrv.Close()
 
-	s, db, _, _, _ := newTestServerWithProxy(t, litellmSrv.URL, "sk-test")
+	s, db := newTestServer(t)
+	id := activateProxy(t, s, "litellm", litellmSrv.URL, "sk-test")
 
 	// claude-sonnet-5 already exists among the seeded defaults, so it
 	// should be updated in place; brand-new-model has no existing row, so
 	// it should be created.
-	rec := doJSON(t, s, http.MethodPost, "/api/prices/sync-litellm", nil)
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -687,29 +691,31 @@ func TestSyncPricesFromLiteLLM_UpsertsAndReportsCounts(t *testing.T) {
 	}
 }
 
-func TestSyncPricesFromLiteLLM_NonLiteLLMUpstreamIsBadGateway(t *testing.T) {
-	notLiteLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestSyncProxyPrices_UpstreamWithoutPriceRouteIsBadGateway(t *testing.T) {
+	noPrices := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
-	defer notLiteLLM.Close()
+	defer noPrices.Close()
 
-	s, _, _, _, _ := newTestServerWithProxy(t, notLiteLLM.URL, "")
-	rec := doJSON(t, s, http.MethodPost, "/api/prices/sync-litellm", nil)
+	s, _ := newTestServer(t)
+	id := activateProxy(t, s, "litellm", noPrices.URL, "sk-test")
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d for a non-LiteLLM upstream", rec.Code, http.StatusBadGateway)
+		t.Errorf("status = %d, want %d for an upstream that can't serve prices", rec.Code, http.StatusBadGateway)
 	}
 }
 
-func TestSyncPricesFromLiteLLM_InternalErrorIsNot502(t *testing.T) {
+func TestSyncProxyPrices_InternalErrorIsNot502(t *testing.T) {
 	litellmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"model_name":"m","model_info":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}]}`))
 	}))
 	defer litellmSrv.Close()
 
-	s, db, _, _, _ := newTestServerWithProxy(t, litellmSrv.URL, "")
+	s, db := newTestServer(t)
+	id := activateProxy(t, s, "litellm", litellmSrv.URL, "sk-test")
 	db.Close() // fetch succeeds, but the subsequent upsert now fails with a DB error, not a reachability one.
 
-	rec := doJSON(t, s, http.MethodPost, "/api/prices/sync-litellm", nil)
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code == http.StatusBadGateway {
 		t.Errorf("status = %d, want anything but 502 — the UI greys out its sync button on 502, "+
 			"which a mere DB error shouldn't trigger", rec.Code)

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Proxy integrations – claude-lens Admin</title>
+  <link rel="icon" href="/favicon.ico">
+  <meta name="color-scheme" content="light dark">
+  <script src="/js/theme-init.js"></script>
+  <link rel="stylesheet" href="/css/theme.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            canvas: 'rgb(var(--color-canvas) / <alpha-value>)',
+            surface: 'rgb(var(--color-surface) / <alpha-value>)',
+            'surface-hover': 'rgb(var(--color-surface-hover) / <alpha-value>)',
+            'surface-active': 'rgb(var(--color-surface-active) / <alpha-value>)',
+            'surface-strong': 'rgb(var(--color-surface-strong) / <alpha-value>)',
+            line: 'rgb(var(--color-line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--color-line-strong) / <alpha-value>)',
+            fg: 'rgb(var(--color-fg) / <alpha-value>)',
+            'fg-muted': 'rgb(var(--color-fg-muted) / <alpha-value>)',
+            'fg-subtle': 'rgb(var(--color-fg-subtle) / <alpha-value>)',
+          },
+        },
+      },
+    };
+  </script>
+</head>
+
+<body class="min-h-screen text-fg bg-canvas">
+
+  <site-nav active="proxy-integrations"></site-nav>
+
+  <main class="max-w-4xl mx-auto px-6 py-8 pb-28">
+    <header class="mb-6">
+      <h1 class="text-xl font-semibold">Proxy integrations</h1>
+      <p class="max-w-2xl text-sm text-fg-muted mt-1">
+        Route requests through an existing proxy and sync model prices from it. Only one proxy can be active at a time.
+      </p>
+      <p id="proxy-mode-note" role="status" class="max-w-2xl text-sm text-fg-muted mt-2 px-3 py-2 border-2 border-line-strong border-dashed rounded-md"></p>
+    </header>
+    <section id="proxy-cards" aria-label="Proxy integrations" class="flex flex-col gap-6">
+      <p class="text-center text-fg-subtle py-8">Loading…</p>
+    </section>
+  </main>
+
+  <div id="app-tooltip" role="tooltip" class="fixed z-50 max-w-xs whitespace-pre-line text-white text-xs leading-snug px-2.5 py-1.5 rounded-md bg-gray-600 shadow-lg pointer-events-none opacity-0 transition-opacity duration-150"></div>
+
+  <script type="module" src="/js/proxy-integrations.js"></script>
+</body>
+
+</html>

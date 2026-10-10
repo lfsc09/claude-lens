@@ -1,5 +1,5 @@
 // Package proxy implements the reverse-proxy server: it forwards requests to
-// the configured Anthropic base URL and, for POSTs, records an exchange row
+// the active upstream (a proxy integration or the Anthropic API) and, for POSTs, records an exchange row
 // once the (possibly streamed) response has been fully delivered to the
 // client.
 package proxy
@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 // Server runs the proxy's HTTP listener.
@@ -25,13 +25,10 @@ type Server struct {
 	logger  *slog.Logger
 }
 
-// NewServer builds a Server. See NewHandler for the possible config errors.
-func NewServer(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) (*Server, error) {
-	h, err := NewHandler(cfg, db, estimator, st, fr, limitersFresh)
-	if err != nil {
-		return nil, err
-	}
-	return &Server{handler: h, status: st, logger: slog.Default().With("component", "proxy")}, nil
+// NewServer builds a Server forwarding to whatever target reg resolves to.
+func NewServer(reg *upstream.Registry, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) *Server {
+	h := NewHandler(reg, db, estimator, st, fr, limitersFresh)
+	return &Server{handler: h, status: st, logger: slog.Default().With("component", "proxy")}
 }
 
 // Run serves on addr until ctx is done, then gracefully shuts down.

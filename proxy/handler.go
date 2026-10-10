@@ -11,16 +11,15 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/parsing"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 // exchangeMeta carries per-request state from Director to ModifyResponse —
@@ -40,17 +39,15 @@ type exchangeMeta struct {
 
 type metaKey struct{}
 
-// Handler is an http.Handler that reverse-proxies to the configured
-// Anthropic base URL, intercepting POST requests to record an exchange.
+// Handler is an http.Handler that reverse-proxies to the current upstream
+// target (see upstream.Registry), intercepting POST requests to record an exchange.
 type Handler struct {
-	cfg           config.Config
+	upstream      *upstream.Registry
 	db            *database.DB
 	estimator     *pricing.Estimator
 	status        *status.Flag
 	fresh         *status.Fresh
 	limitersFresh *status.Fresh
-	customHeaders map[string]string
-	target        *url.URL
 	rp            *httputil.ReverseProxy
 	logger        *slog.Logger
 
@@ -61,28 +58,16 @@ type Handler struct {
 	saveWG sync.WaitGroup
 }
 
-// NewHandler builds a Handler. It fails only if
-// CLENS_PROXY_CUSTOM_HEADERS or CLENS_PROXY_BASE_URL is malformed.
-func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) (*Handler, error) {
-	customHeaders, err := ParseCustomHeaders(cfg.AnthropicCustomHeaders)
-	if err != nil {
-		return nil, err
-	}
-
-	target, err := url.Parse(cfg.AnthropicBaseURL)
-	if err != nil {
-		return nil, err
-	}
-
+// NewHandler builds a Handler that forwards to whatever target reg currently
+// resolves to.
+func NewHandler(reg *upstream.Registry, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) *Handler {
 	h := &Handler{
-		cfg:           cfg,
+		upstream:      reg,
 		db:            db,
 		estimator:     estimator,
 		status:        st,
 		fresh:         fr,
 		limitersFresh: limitersFresh,
-		customHeaders: customHeaders,
-		target:        target,
 		logger:        slog.Default().With("component", "proxy"),
 	}
 
@@ -105,7 +90,7 @@ func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator
 		FlushInterval: -1,
 	}
 
-	return h, nil
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -158,10 +143,11 @@ func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
 func (h *Handler) director(r *http.Request) {
 	originalPath := r.URL.Path
 
-	r.URL.Scheme = h.target.Scheme
-	r.URL.Host = h.target.Host
-	r.URL.Path = h.target.Path + originalPath
-	r.Host = h.target.Host
+	target := h.upstream.Current()
+	r.URL.Scheme = target.BaseURL.Scheme
+	r.URL.Host = target.BaseURL.Host
+	r.URL.Path = target.BaseURL.Path + originalPath
+	r.Host = target.BaseURL.Host
 
 	// The client's Accept-Encoding (Claude Code asks for gzip/br) would
 	// otherwise ride straight through to upstream. http.Transport only
@@ -173,10 +159,10 @@ func (h *Handler) director(r *http.Request) {
 	// transparently undo gzip on its own.
 	r.Header.Del("Accept-Encoding")
 
-	if h.cfg.AnthropicAuthToken != "" {
-		SetHeader(r.Header, "Authorization", FormatAuthHeader(h.cfg.AnthropicAuthToken))
+	if target.AuthToken != "" {
+		SetHeader(r.Header, "Authorization", FormatAuthHeader(target.AuthToken))
 	}
-	for name, value := range h.customHeaders {
+	for name, value := range target.Headers {
 		SetHeader(r.Header, name, value)
 	}
 
