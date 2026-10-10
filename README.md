@@ -36,9 +36,7 @@ You may provide flags to the install script to customize the Envs.
 |---|---|---|
 | `--proxy-addr` | `7801` | `CLENS_PROXY_ADDR` |
 | `--admin-addr` | `7802` | `CLENS_ADMIN_ADDR` |
-| `--install-dir` | `/usr/local/bin` (Linux), REQUIRED in (macOS) | |
-| `--data-dir` | `/var/lib/claude-lens` | `CLENS_DATA_DIR` |
-| `--log-dir` | `/var/log/claude-lens` | `CLENS_LOG_DIR` |
+| `--install-dir` | `~/.claude-lens` | Holds the binary, `data/` (`CLENS_DATA_DIR`) and `logs/` (`CLENS_LOG_DIR`). |
 | `--as-service` | — | If set, will install as a system service (Linux) or launchd agent (macOS). |
 
 #### Linux
@@ -61,9 +59,7 @@ To provide custom configurations, use flags like:
 curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_linux.sh | sudo bash -s -- \
   --proxy-addr 7801 \
   --admin-addr 7802 \
-  --install-dir ~/claude-lens \
-  --data-dir ~/claude-lens/data \
-  --log-dir ~/claude-lens/logs \
+  --install-dir ~/.claude-lens \
   --as-service
 ```
 
@@ -72,13 +68,13 @@ curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/inst
 To only install:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- --install-dir ~/claude-lens
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash
 ```
 
 To install and run as a launchd agent:
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- --install-dir ~/claude-lens --as-service
+curl -sSL https://raw.githubusercontent.com/lfsc09/claude-lens/main/scripts/install_macos.sh | bash -s -- --as-service
 ```
 
 ### Manual install
