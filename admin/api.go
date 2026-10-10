@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -132,12 +133,10 @@ func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
 type createExchangeRequest struct {
 	SessionID           string   `json:"session_id"`
 	Path                string   `json:"path"`
-	Timestamp           float64  `json:"timestamp"`
+	CreatedAt           float64  `json:"created_at"`
 	IsStreaming         bool     `json:"is_streaming"`
-	InputMessages       *string  `json:"input_messages"`
 	RawRequest          string   `json:"raw_request"`
 	RawResponse         string   `json:"raw_response"`
-	OutputText          *string  `json:"output_text"`
 	InputTokens         *int     `json:"input_tokens"`
 	OutputTokens        *int     `json:"output_tokens"`
 	CacheCreationTokens *int     `json:"cache_creation_tokens"`
@@ -150,8 +149,8 @@ type createExchangeRequest struct {
 	MatchedPrice        *string  `json:"matched_price"`
 }
 
-// createExchange stores one exchange and its exchanges_ledger row exactly as
-// the proxy would, defaulting timestamp to now. It exists so development
+// createExchange stores one exchange exactly as the proxy would, defaulting
+// created_at to now. It exists so development
 // data can be generated through the running service.
 func (h *handlers) createExchange(w http.ResponseWriter, r *http.Request) {
 	var req createExchangeRequest
@@ -163,8 +162,8 @@ func (h *handlers) createExchange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "matched_price must be a JSON object")
 		return
 	}
-	if req.Timestamp == 0 {
-		req.Timestamp = float64(time.Now().UnixNano()) / 1e9
+	if req.CreatedAt == 0 {
+		req.CreatedAt = float64(time.Now().UnixNano()) / 1e9
 	}
 
 	err := h.db.SaveExchange(r.Context(), database.Exchange(req))
@@ -190,7 +189,7 @@ type bulkDeleteExchangesRequest struct {
 // bulkDeleteExchanges deletes exchanges for the given sessions, or every
 // exchange when session_ids is empty and confirm_all is set. When
 // also_delete_claude_session is set, it also removes each affected
-// session's on-disk Claude Code files and its session_names entry;
+// session's on-disk Claude Code files and its sessions row;
 // failures there are logged but never fail the request, since the
 // exchanges delete has already committed by that point.
 func (h *handlers) bulkDeleteExchanges(w http.ResponseWriter, r *http.Request) {
@@ -219,8 +218,8 @@ func (h *handlers) bulkDeleteExchanges(w http.ResponseWriter, r *http.Request) {
 				h.logger.Error("failed to delete Claude session", "error", err, "session_id", sessionID, "deleted", n)
 			}
 		}
-		if err := h.db.DeleteSessionNames(r.Context(), affectedSessions); err != nil {
-			h.logger.Error("failed to delete session names", "error", err, "session_ids", affectedSessions)
+		if err := h.db.DeleteSessions(r.Context(), affectedSessions); err != nil {
+			h.logger.Error("failed to delete sessions", "error", err, "session_ids", affectedSessions)
 		}
 	}
 
@@ -314,7 +313,7 @@ type sessionNameRequest struct {
 }
 
 // setSessionName sets or clears a session's display name. An empty (or
-// whitespace-only) name clears it back to showing the raw session id.
+// whitespace-only) name resets it to the raw session id.
 func (h *handlers) setSessionName(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("sessionID")
 	if sessionID == "" {
@@ -338,11 +337,7 @@ func (h *handlers) setSessionName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{"session_id": sessionID, "session_name": nil}
-	if name != "" {
-		resp["session_name"] = name
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]string{"session_id": sessionID, "session_name": cmp.Or(name, sessionID)})
 }
 
 // dailyCosts powers the dashboard's spending heatmap. ?days= defaults to 60

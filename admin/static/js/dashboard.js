@@ -125,6 +125,16 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     return `${progressBar(l)}<p class="text-xs text-fg-subtle mt-1">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</p>`;
   }
 
+  /**
+   * Returns the user-chosen name of a session, or '' while it still shows its
+   * session id as the default name.
+   * @param {?{session_id: string, session_name: string}} session - Session stats row.
+   * @returns {string} The custom name, or an empty string.
+   */
+  function customSessionName(session) {
+    return session && session.session_name !== session.session_id ? session.session_name : '';
+  }
+
   function buildSessionRow(session) {
     const cacheTok = (session.total_cache_creation_tokens ?? 0) + (session.total_cache_read_tokens ?? 0);
     const inputTok = session.total_input_tokens ?? 0;
@@ -159,10 +169,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
       cache_read_tokens: session.context_cache_read_tokens,
     };
     const sessionQuery = 'session = ' + JSON.stringify(session.session_id);
+    const customName = customSessionName(session);
     const isEditing = session.session_id === editingSessionId;
     const nameHtml = isEditing
       ? `<input type="text" class="w-full max-w-56 text-sm px-1.5 py-0.5 border border-emerald-400 dark:border-emerald-600 rounded focus:outline-none focus:ring-1 focus:ring-emerald-400 session-name-input" value="${esc(editingDraft)}" maxlength="200">`
-      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 dark:text-emerald-400 font-medium hover:underline">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-fg-subtle font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
+      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 dark:text-emerald-400 font-medium hover:underline">${esc(customName || fmtSessionId(session.session_id, 24))}</a>${customName ? `<span class="block text-xs text-fg-subtle font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
     return `<tr class="hover:bg-surface-hover">
       <td class="h-px">
         <label class="flex h-full cursor-pointer items-center px-4 py-2">
@@ -215,7 +226,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   function startEditingSession(sessionId) {
     const session = lastSessionRows.find((r) => r.session_id === sessionId);
     editingSessionId = sessionId;
-    editingDraft = session?.session_name || '';
+    editingDraft = customSessionName(session);
     renderSessionRows();
   }
 
@@ -237,7 +248,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     const sessionId = editingSessionId;
     const name = input.value.trim();
     const session = lastSessionRows.find((r) => r.session_id === sessionId);
-    if (name === (session?.session_name || '')) {
+    if (name === customSessionName(session)) {
       stopEditingSession();
       return;
     }

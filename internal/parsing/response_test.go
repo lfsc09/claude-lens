@@ -107,3 +107,10 @@ func assertIntPtrEqual(t *testing.T, field string, got, want *int) {
 		t.Errorf("%s = %d, want %d", field, *got, *want)
 	}
 }
+
+func derefOrNil(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
+}

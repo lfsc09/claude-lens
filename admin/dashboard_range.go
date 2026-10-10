@@ -31,7 +31,7 @@ func normalizeDashboardRange(key string) string {
 }
 
 // sinceForRange resolves a dashboard range key to a Unix-seconds lower bound
-// for a "timestamp >= since" totals query, computed against `now` in local
+// for a "created_at >= since" totals query, computed against `now` in local
 // time (matching fmtTime's local rendering elsewhere in the admin UI). Every
 // range's upper bound is implicitly "now" — the picker has no way to choose
 // a past end date — so a single lower bound is enough; no upper-bound param

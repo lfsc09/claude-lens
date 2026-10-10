@@ -29,14 +29,13 @@ import (
 // *http.Request Director mutated, per net/http.Transport's contract of
 // setting Response.Request to the request it sent).
 type exchangeMeta struct {
-	intercept     bool
-	sessionID     string
-	path          string
-	timestamp     float64
-	rawRequest    string
-	inputMessages *string
-	isStreaming   bool
-	model         *string
+	intercept   bool
+	sessionID   string
+	path        string
+	timestamp   float64
+	rawRequest  string
+	isStreaming bool
+	model       *string
 }
 
 type metaKey struct{}
@@ -197,7 +196,7 @@ func (h *Handler) director(r *http.Request) {
 		} else {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			meta.rawRequest = string(body)
-			meta.inputMessages, meta.isStreaming, meta.model = parsing.ExtractRequestFields(body)
+			meta.isStreaming, meta.model = parsing.ExtractRequestFields(body)
 		}
 	}
 
@@ -241,7 +240,7 @@ func (h *Handler) waitForSaves(timeout time.Duration) {
 func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
-	outputText, usage := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
+	_, usage := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
 
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
 	var matchedPrice *string
@@ -277,12 +276,10 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	err := h.db.SaveExchange(ctx, database.Exchange{
 		SessionID:           meta.sessionID,
 		Path:                meta.path,
-		Timestamp:           meta.timestamp,
+		CreatedAt:           meta.timestamp,
 		IsStreaming:         meta.isStreaming,
-		InputMessages:       meta.inputMessages,
 		RawRequest:          meta.rawRequest,
 		RawResponse:         strings.ToValidUTF8(string(rawResponse), "�"),
-		OutputText:          outputText,
 		InputTokens:         usage.InputTokens,
 		OutputTokens:        usage.OutputTokens,
 		CacheCreationTokens: usage.CacheCreationTokens,

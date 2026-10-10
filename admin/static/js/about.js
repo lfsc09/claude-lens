@@ -53,7 +53,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   }
 
   // ── Clear All Data ───────────────────────────────────────────────────────
-  // Wipes every exchange, and optionally session_names + on-disk Claude Code
+  // Wipes every exchange, and optionally sessions rows + on-disk Claude Code
   // files, via the bulk-delete endpoint with confirm_all set and session_ids
   // empty.
   const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {

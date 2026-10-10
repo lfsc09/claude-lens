@@ -9,18 +9,18 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/lfsc09/claude-lens/internal/parsing"
 )
 
 // Exchange is a row to be written after a proxied request/response completes.
 type Exchange struct {
 	SessionID           string
 	Path                string
-	Timestamp           float64
+	CreatedAt           float64
 	IsStreaming         bool
-	InputMessages       *string
 	RawRequest          string
 	RawResponse         string
-	OutputText          *string
 	InputTokens         *int
 	OutputTokens        *int
 	CacheCreationTokens *int
@@ -39,9 +39,9 @@ type Exchange struct {
 type ExchangeSummary struct {
 	ID                  int64    `json:"id"`
 	SessionID           string   `json:"session_id"`
-	SessionName         *string  `json:"session_name"`
+	SessionName         string   `json:"session_name"`
 	Path                string   `json:"path"`
-	Timestamp           float64  `json:"timestamp"`
+	CreatedAt           float64  `json:"created_at"`
 	IsStreaming         bool     `json:"is_streaming"`
 	InputTokens         *int     `json:"input_tokens"`
 	OutputTokens        *int     `json:"output_tokens"`
@@ -60,11 +60,10 @@ type ExchangeSummary struct {
 type ExchangeDetail struct {
 	ID                  int64    `json:"id"`
 	SessionID           string   `json:"session_id"`
-	SessionName         *string  `json:"session_name"`
+	SessionName         string   `json:"session_name"`
 	Path                string   `json:"path"`
-	Timestamp           float64  `json:"timestamp"`
+	CreatedAt           float64  `json:"created_at"`
 	IsStreaming         bool     `json:"is_streaming"`
-	InputMessages       *string  `json:"input_messages"`
 	OutputText          *string  `json:"output_text"`
 	InputTokens         *int     `json:"input_tokens"`
 	OutputTokens        *int     `json:"output_tokens"`
@@ -80,8 +79,8 @@ type ExchangeDetail struct {
 	// exchange, captured as JSON at save time — a permanent snapshot, not a
 	// live lookup, so it stays accurate even after model_prices changes.
 	MatchedPrice json.RawMessage `json:"matched_price,omitempty"`
-	RawRequest   *string         `json:"raw_request"`
-	RawResponse  *string         `json:"raw_response"`
+	RawRequest   string          `json:"raw_request"`
+	RawResponse  string          `json:"raw_response"`
 }
 
 // Totals is an aggregate over a set of exchanges.
@@ -101,7 +100,7 @@ type Totals struct {
 // SessionStat is a per-session aggregate row.
 type SessionStat struct {
 	SessionID                string   `json:"session_id"`
-	SessionName              *string  `json:"session_name"`
+	SessionName              string   `json:"session_name"`
 	ExchangeCount            int64    `json:"exchange_count"`
 	TotalInputTokens         int64    `json:"total_input_tokens"`
 	TotalOutputTokens        int64    `json:"total_output_tokens"`
@@ -132,10 +131,10 @@ type DailyCost struct {
 	DailyCost float64 `json:"daily_cost"`
 }
 
-// SaveExchange inserts one exchange row and its mirrored exchanges_ledger
-// bookkeeping row in a single transaction, so the two never drift out of
-// sync. On failure it logs the error and returns it; the caller decides
-// whether that should affect a response already sent to the client.
+// SaveExchange inserts one exchange row, its exchange_data payload and the
+// owning sessions row (created on a session's first exchange) in a single
+// transaction. On failure it logs the error and returns it; the caller
+// decides whether that should affect a response already sent to the client.
 func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	var cost *float64
 	if sum, any := sumCosts(e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost); any {
@@ -143,43 +142,7 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 		cost = &c
 	}
 
-	tx, err := db.sql.BeginTx(ctx, nil)
-	if err != nil {
-		slog.Error("save exchange failed", "error", err, "session_id", e.SessionID)
-		return err
-	}
-	defer tx.Rollback()
-
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO exchanges
-			(session_id, path, timestamp, is_streaming,
-			 input_messages, output_text, input_tokens, output_tokens,
-			 cache_creation_tokens, cache_read_tokens,
-			 model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
-			 raw_request, raw_response)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.SessionID, e.Path, e.Timestamp, boolToInt(e.IsStreaming),
-		e.InputMessages, e.OutputText, e.InputTokens, e.OutputTokens,
-		e.CacheCreationTokens, e.CacheReadTokens,
-		e.Model, cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost, e.MatchedPrice,
-		e.RawRequest, e.RawResponse,
-	)
-	if err != nil {
-		slog.Error("save exchange failed", "error", err, "session_id", e.SessionID)
-		return err
-	}
-
-	exchangeID, err := res.LastInsertId()
-	if err != nil {
-		slog.Error("save exchange failed", "error", err, "session_id", e.SessionID)
-		return err
-	}
-	if err := insertLedgerEntry(ctx, tx, exchangeID, e, cost); err != nil {
-		slog.Error("save exchange ledger entry failed", "error", err, "session_id", e.SessionID)
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
+	if err := db.insertExchange(ctx, e, cost); err != nil {
 		slog.Error("save exchange failed", "error", err, "session_id", e.SessionID)
 		return err
 	}
@@ -197,6 +160,49 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 		"cost", deref(cost), "streaming", e.IsStreaming,
 	)
 	return nil
+}
+
+// insertExchange writes the sessions, exchanges and exchange_data rows for e
+// atomically.
+func (db *DB) insertExchange(ctx context.Context, e Exchange, cost *float64) error {
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO sessions (session_id, name, updated_at) VALUES (?, ?, ?)`,
+		e.SessionID, e.SessionID, e.CreatedAt,
+	); err != nil {
+		return err
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO exchanges
+			(session_id, path, created_at, is_streaming, model,
+			 input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+			 cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.SessionID, e.Path, e.CreatedAt, boolToInt(e.IsStreaming), e.Model,
+		e.InputTokens, e.OutputTokens, e.CacheCreationTokens, e.CacheReadTokens,
+		cost, e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost, e.MatchedPrice,
+	)
+	if err != nil {
+		return err
+	}
+	exchangeID, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO exchange_data (exchange_id, raw_request, raw_response) VALUES (?, ?, ?)`,
+		exchangeID, e.RawRequest, e.RawResponse,
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // sumCosts adds together whichever of the given cost components are
@@ -222,18 +228,19 @@ func (db *DB) GetExchanges(ctx context.Context, filterQuery string, limit, offse
 		return nil, err
 	}
 
-	query := `SELECT exchanges.id, exchanges.session_id, sn.name, exchanges.path, exchanges.timestamp, exchanges.is_streaming,
+	query := `SELECT exchanges.id, exchanges.session_id, sessions.name, exchanges.path, exchanges.created_at, exchanges.is_streaming,
 	                  exchanges.input_tokens, exchanges.output_tokens, exchanges.cache_creation_tokens, exchanges.cache_read_tokens,
 	                  exchanges.model, exchanges.cost, exchanges.input_cost, exchanges.output_cost, exchanges.cache_creation_cost, exchanges.cache_read_cost,
 	                  ` + totalTokensExpr + ` AS total_tokens
 	           FROM exchanges
-	           LEFT JOIN session_names sn ON sn.session_id = exchanges.session_id `
+	           JOIN sessions ON sessions.session_id = exchanges.session_id
+	           WHERE exchanges.deleted_at IS NULL `
 	args := []any{}
 	if where != "" {
-		query += "WHERE " + where + " "
+		query += "AND (" + where + ") "
 		args = append(args, whereArgs...)
 	}
-	query += "ORDER BY id DESC LIMIT ? OFFSET ?"
+	query += "ORDER BY exchanges.id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
 	rows, err := db.sql.QueryContext(ctx, query, args...)
@@ -246,7 +253,7 @@ func (db *DB) GetExchanges(ctx context.Context, filterQuery string, limit, offse
 	for rows.Next() {
 		var e ExchangeSummary
 		var isStreaming int
-		if err := rows.Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp,
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.CreatedAt,
 			&isStreaming, &e.InputTokens, &e.OutputTokens, &e.CacheCreationTokens, &e.CacheReadTokens,
 			&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.CacheCreationCost, &e.CacheReadCost,
 			&e.TotalTokens); err != nil {
@@ -267,9 +274,9 @@ func (db *DB) CountExchanges(ctx context.Context, filterQuery string) (int, erro
 		return 0, err
 	}
 
-	query := "SELECT COUNT(*) FROM exchanges LEFT JOIN session_names sn ON sn.session_id = exchanges.session_id "
+	query := "SELECT COUNT(*) FROM exchanges JOIN sessions ON sessions.session_id = exchanges.session_id WHERE exchanges.deleted_at IS NULL"
 	if where != "" {
-		query += "WHERE " + where
+		query += " AND (" + where + ")"
 	}
 
 	var total int
@@ -279,23 +286,24 @@ func (db *DB) CountExchanges(ctx context.Context, filterQuery string) (int, erro
 	return total, nil
 }
 
-// GetExchangeDetail returns a single exchange, or nil if id doesn't exist.
+// GetExchangeDetail returns a single exchange with its request/response
+// bodies and the output text assembled from the response, or nil if id
+// doesn't exist or its data was deleted.
 func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail, error) {
 	var e ExchangeDetail
 	var isStreaming int
 	var matchedPrice sql.NullString
 	err := db.sql.QueryRowContext(ctx,
-		`SELECT exchanges.id, exchanges.session_id, sn.name, exchanges.path, exchanges.timestamp, exchanges.is_streaming,
-		        input_messages, output_text, input_tokens, output_tokens,
-		        cache_creation_tokens, cache_read_tokens,
+		`SELECT exchanges.id, exchanges.session_id, sessions.name, exchanges.path, exchanges.created_at, exchanges.is_streaming,
+		        input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 		        model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
 		        raw_request, raw_response
 		 FROM exchanges
-		 LEFT JOIN session_names sn ON sn.session_id = exchanges.session_id
-		 WHERE exchanges.id = ?`, id,
-	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.Timestamp, &isStreaming,
-		&e.InputMessages, &e.OutputText, &e.InputTokens, &e.OutputTokens,
-		&e.CacheCreationTokens, &e.CacheReadTokens,
+		 JOIN sessions ON sessions.session_id = exchanges.session_id
+		 JOIN exchange_data ON exchange_data.exchange_id = exchanges.id
+		 WHERE exchanges.id = ? AND exchanges.deleted_at IS NULL`, id,
+	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.CreatedAt, &isStreaming,
+		&e.InputTokens, &e.OutputTokens, &e.CacheCreationTokens, &e.CacheReadTokens,
 		&e.Model, &e.Cost, &e.InputCost, &e.OutputCost, &e.CacheCreationCost, &e.CacheReadCost, &matchedPrice,
 		&e.RawRequest, &e.RawResponse)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -308,20 +316,20 @@ func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail,
 	if matchedPrice.Valid {
 		e.MatchedPrice = json.RawMessage(matchedPrice.String)
 	}
+	e.OutputText, _ = parsing.ExtractResponseFields([]byte(e.RawResponse), e.IsStreaming)
 	return &e, nil
 }
 
 // GetTokenTotals returns aggregate token/cost counts, optionally scoped to a
-// session (sessionID == "" for no filter) and/or a start timestamp. Reads
-// from exchanges_ledger rather than exchanges so totals stay accurate after
-// DeleteExchanges reclaims space from a session's raw payloads.
+// session (sessionID == "" for no filter) and/or a start time. Includes
+// soft-deleted exchanges so totals stay accurate after DeleteExchanges.
 func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float64) (Totals, error) {
 	query := `SELECT COUNT(*),
 	                 SUM(input_tokens), SUM(output_tokens),
 	                 SUM(cache_creation_tokens), SUM(cache_read_tokens),
 	                 SUM(cost), SUM(input_cost), SUM(output_cost),
 	                 SUM(cache_creation_cost), SUM(cache_read_cost)
-	          FROM exchanges_ledger`
+	          FROM exchanges`
 	var conditions []string
 	var args []any
 	if sessionID != "" {
@@ -329,7 +337,7 @@ func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float
 		args = append(args, sessionID)
 	}
 	if since != nil {
-		conditions = append(conditions, "timestamp >= ?")
+		conditions = append(conditions, "created_at >= ?")
 		args = append(args, *since)
 	}
 	if len(conditions) > 0 {
@@ -363,7 +371,7 @@ func (db *DB) GetTokenTotals(ctx context.Context, sessionID string, since *float
 // differently. The le.* columns are wrapped in MAX() only to satisfy
 // GROUP BY e.session_id; last_exchange already joins 1:1 per session, so
 // it's a no-op, not an actual aggregation.
-const sessionStatsColumns = `e.session_id, MAX(sn.name),
+const sessionStatsColumns = `e.session_id, sessions.name,
 		        COUNT(*),
 		        COALESCE(SUM(e.input_tokens), 0), COALESCE(SUM(e.output_tokens), 0),
 		        COALESCE(SUM(e.cache_creation_tokens), 0), COALESCE(SUM(e.cache_read_tokens), 0),
@@ -371,7 +379,7 @@ const sessionStatsColumns = `e.session_id, MAX(sn.name),
 		        SUM(e.cache_creation_cost), SUM(e.cache_read_cost),
 		        MAX(le.input_tokens), MAX(le.output_tokens),
 		        MAX(le.cache_creation_tokens), MAX(le.cache_read_tokens),
-		        MAX(e.timestamp), MAX(tm.model)`
+		        MAX(e.created_at), MAX(tm.model)`
 
 // sessionStatsCTEs supplies the two per-session lookups joined onto the
 // GROUP BY e.session_id aggregate below. top_models ranks each session's
@@ -388,7 +396,7 @@ const sessionStatsCTEs = `WITH top_models AS (
 		        SELECT session_id, model,
 		               ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY COUNT(*) DESC, model ASC) AS rn
 		        FROM exchanges
-		        WHERE model IS NOT NULL
+		        WHERE model IS NOT NULL AND deleted_at IS NULL
 		        GROUP BY session_id, model
 		    )
 		    WHERE rn = 1
@@ -398,6 +406,7 @@ const sessionStatsCTEs = `WITH top_models AS (
 		        SELECT session_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 		               ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id DESC) AS rn
 		        FROM exchanges
+		        WHERE deleted_at IS NULL
 		    )
 		    WHERE rn = 1
 		)`
@@ -411,9 +420,10 @@ func (db *DB) GetSessionStats(ctx context.Context, limit, offset int) ([]Session
 		 FROM exchanges e
 		 LEFT JOIN top_models tm ON tm.session_id = e.session_id
 		 LEFT JOIN last_exchange le ON le.session_id = e.session_id
-		 LEFT JOIN session_names sn ON sn.session_id = e.session_id
+		 JOIN sessions ON sessions.session_id = e.session_id
+		 WHERE e.deleted_at IS NULL
 		 GROUP BY e.session_id
-		 ORDER BY MAX(e.timestamp) DESC
+		 ORDER BY MAX(e.created_at) DESC
 		 LIMIT ? OFFSET ?`,
 		limit, offset,
 	)
@@ -427,7 +437,7 @@ func (db *DB) GetSessionStats(ctx context.Context, limit, offset int) ([]Session
 // one exchange, for the by-session table's pagination total.
 func (db *DB) CountSessionStats(ctx context.Context) (int, error) {
 	var total int
-	err := db.sql.QueryRowContext(ctx, "SELECT COUNT(DISTINCT session_id) FROM exchanges").Scan(&total)
+	err := db.sql.QueryRowContext(ctx, "SELECT COUNT(DISTINCT session_id) FROM exchanges WHERE deleted_at IS NULL").Scan(&total)
 	return total, err
 }
 
@@ -441,10 +451,11 @@ func (db *DB) GetSessionStatsSince(ctx context.Context, sinceID int64) ([]Sessio
 		 FROM exchanges e
 		 LEFT JOIN top_models tm ON tm.session_id = e.session_id
 		 LEFT JOIN last_exchange le ON le.session_id = e.session_id
-		 LEFT JOIN session_names sn ON sn.session_id = e.session_id
-		 WHERE e.session_id IN (SELECT DISTINCT session_id FROM exchanges WHERE id > ?)
+		 JOIN sessions ON sessions.session_id = e.session_id
+		 WHERE e.deleted_at IS NULL
+		   AND e.session_id IN (SELECT DISTINCT session_id FROM exchanges WHERE id > ?)
 		 GROUP BY e.session_id
-		 ORDER BY MAX(e.timestamp) DESC`,
+		 ORDER BY MAX(e.created_at) DESC`,
 		sinceID,
 	)
 	if err != nil {
@@ -506,16 +517,15 @@ func scanSessionStats(rows *sql.Rows) ([]SessionStat, error) {
 }
 
 // GetDailyCosts returns daily cost totals for the last `days` days
-// (local-time bucketed), oldest first. Reads from exchanges_ledger rather
-// than exchanges so the heatmap stays accurate after DeleteExchanges
-// reclaims space from a session's raw payloads.
+// (local-time bucketed), oldest first. Includes soft-deleted exchanges so the
+// heatmap stays accurate after DeleteExchanges.
 func (db *DB) GetDailyCosts(ctx context.Context, days int) ([]DailyCost, error) {
 	cutoff := float64(time.Now().AddDate(0, 0, -days).Unix())
 	rows, err := db.sql.QueryContext(ctx,
-		`SELECT date(timestamp, 'unixepoch', 'localtime') as day,
+		`SELECT date(created_at, 'unixepoch', 'localtime') as day,
 		        SUM(COALESCE(cost, 0))
-		 FROM exchanges_ledger
-		 WHERE timestamp >= ?
+		 FROM exchanges
+		 WHERE created_at >= ?
 		 GROUP BY day
 		 ORDER BY day`,
 		cutoff,
@@ -547,23 +557,26 @@ func sqlInClause(ids []string) (string, []any) {
 	return placeholders, args
 }
 
-// DeleteExchanges deletes exchanges rows and reports which sessions had rows
-// deleted. A non-empty sessionIDs scopes the delete to those sessions; an
-// empty sessionIDs deletes every exchange. The returned session IDs let
-// callers also clean up Claude Code session files and session_names for
-// exactly the sessions actually affected.
+// DeleteExchanges soft-deletes exchanges, hard-deletes their exchange_data,
+// and reports which sessions had exchanges deleted. A non-empty sessionIDs
+// scopes the delete to those sessions; an empty sessionIDs deletes every
+// exchange. The returned session IDs let callers also clean up Claude Code
+// session files and sessions rows for exactly the sessions actually affected.
 func (db *DB) DeleteExchanges(ctx context.Context, sessionIDs []string) (deletedRows int64, affectedSessions []string, err error) {
-	selectQuery, deleteQuery := "SELECT DISTINCT session_id FROM exchanges", "DELETE FROM exchanges"
-	var args []any
+	scope, args := "", []any(nil)
 	if len(sessionIDs) > 0 {
 		placeholders, inArgs := sqlInClause(sessionIDs)
-		selectQuery += " WHERE session_id IN (" + placeholders + ")"
-		deleteQuery += " WHERE session_id IN (" + placeholders + ")"
-		args = inArgs
+		scope, args = " AND session_id IN ("+placeholders+")", inArgs
 	}
-	selectQuery += " ORDER BY session_id"
 
-	rows, err := db.sql.QueryContext(ctx, selectQuery, args...)
+	tx, err := db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx,
+		"SELECT DISTINCT session_id FROM exchanges WHERE deleted_at IS NULL"+scope+" ORDER BY session_id", args...)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -585,55 +598,25 @@ func (db *DB) DeleteExchanges(ctx context.Context, sessionIDs []string) (deleted
 		return 0, nil, nil
 	}
 
-	res, err := db.sql.ExecContext(ctx, deleteQuery, args...)
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM exchange_data WHERE exchange_id IN (SELECT id FROM exchanges WHERE deleted_at IS NULL"+scope+")", args...); err != nil {
+		slog.Error("delete exchange data failed", "error", err, "session_ids", sessionIDs)
+		return 0, nil, err
+	}
+	res, err := tx.ExecContext(ctx,
+		"UPDATE exchanges SET deleted_at = ? WHERE deleted_at IS NULL"+scope,
+		append([]any{float64(time.Now().UnixNano()) / 1e9}, args...)...)
 	if err != nil {
 		slog.Error("delete exchanges failed", "error", err, "session_ids", sessionIDs)
 		return 0, nil, err
 	}
-	deletedRows, err = res.RowsAffected()
-	return deletedRows, affectedSessions, err
-}
-
-// DeleteSessionNames removes session_names rows for sessionIDs. Called
-// alongside DeleteExchanges only when the caller also purges those sessions'
-// on-disk Claude Code files, since a name is otherwise independent of the
-// exchange log the same way exchanges_ledger survives DeleteExchanges.
-func (db *DB) DeleteSessionNames(ctx context.Context, sessionIDs []string) error {
-	if len(sessionIDs) == 0 {
-		return nil
+	if deletedRows, err = res.RowsAffected(); err != nil {
+		return 0, nil, err
 	}
-	placeholders, args := sqlInClause(sessionIDs)
-	_, err := db.sql.ExecContext(ctx, "DELETE FROM session_names WHERE session_id IN ("+placeholders+")", args...)
-	return err
-}
-
-// SessionName returns a session's display name and whether one is set.
-func (db *DB) SessionName(ctx context.Context, sessionID string) (name string, ok bool, err error) {
-	err = db.sql.QueryRowContext(ctx, "SELECT name FROM session_names WHERE session_id = ?", sessionID).Scan(&name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+	if err := tx.Commit(); err != nil {
+		return 0, nil, err
 	}
-	return name, err == nil, err
-}
-
-// SetSessionName sets or clears a session's display name. An empty (after
-// trimming) name removes the mapping entirely, reverting the session to
-// showing its raw id.
-func (db *DB) SetSessionName(ctx context.Context, sessionID, name string) error {
-	if sessionID == "" {
-		return errors.New("session_id is required")
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		_, err := db.sql.ExecContext(ctx, "DELETE FROM session_names WHERE session_id = ?", sessionID)
-		return err
-	}
-	_, err := db.sql.ExecContext(ctx,
-		`INSERT INTO session_names (session_id, name, updated_at) VALUES (?, ?, ?)
-		 ON CONFLICT(session_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
-		sessionID, name, float64(time.Now().Unix()),
-	)
-	return err
+	return deletedRows, affectedSessions, nil
 }
 
 func boolToInt(b bool) int {

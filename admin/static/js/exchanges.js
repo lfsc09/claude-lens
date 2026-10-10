@@ -47,7 +47,7 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
 
   // ── Table ───────────────────────────────────────────────────────────────
   function buildRow(row) {
-    const label = esc(row.session_name || row.session_id);
+    const label = esc(row.session_name);
     const modelLabel = esc(row.model || '—');
     return `<tr class="hover:bg-surface-hover">
       <td class="px-4 py-2"><a href="/exchanges/${row.id}" class="text-emerald-600 dark:text-emerald-400 hover:underline">${row.id}</a></td>
@@ -58,7 +58,7 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
           <span class="text-xs text-fg-subtle truncate">${esc(row.path)}</span>
         </div>
       </td>
-      <td class="text-fg whitespace-nowrap px-4 py-2">${fmtTime(row.timestamp)}</td>
+      <td class="text-fg whitespace-nowrap px-4 py-2">${fmtTime(row.created_at)}</td>
       <td class="text-right text-fg px-4 py-2" data-tip="${esc(tokensTooltip(row))}">${fmtTokens(row.total_tokens)}</td>
       <td class="text-right text-fg px-4 py-2" data-tip="${esc(costTooltip(row))}">${fmtCost(row.cost)}</td>
       <td class="text-fg-subtle text-center px-4 py-2">${row.is_streaming ? '✓' : ''}</td>

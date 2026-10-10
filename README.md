@@ -175,7 +175,7 @@ claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet
 
 ## Dummy data
 
-You can generate dummy exchanges (each with its `exchanges_ledger` row) for development, through the running service:
+You can generate dummy exchanges for development, through the running service:
 
 ```sh
 claude-lens --dummy --count 200 --sessions 6

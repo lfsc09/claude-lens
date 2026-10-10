@@ -305,7 +305,7 @@ func TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert(t *testi
 			if err := db.SaveExchange(ctx, Exchange{
 				SessionID:   "sess_concurrent",
 				Path:        "/v1/messages",
-				Timestamp:   float64(time.Now().Unix()),
+				CreatedAt:   float64(time.Now().Unix()),
 				RawRequest:  "{}",
 				RawResponse: "{}",
 				InputCost:   floatPtr(0.60),

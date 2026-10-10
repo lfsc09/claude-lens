@@ -23,16 +23,22 @@ var dummyPrices = []database.Price{
 	{Prefix: "claude-haiku-4-5-20251001", InputPerM: 1, OutputPerM: 5, CacheWritePerM: 1.25, CacheReadPerM: 0.1},
 }
 
+// dummyResponse and dummyStreamResponse are the upstream bodies stored for
+// non-streaming and streaming dummy exchanges; both assemble to "Dummy response".
+const (
+	dummyResponse       = `{"type":"message","role":"assistant","content":[{"type":"text","text":"Dummy response"}]}`
+	dummyStreamResponse = "event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Dummy response\"}}\n\n"
+)
+
 // dummyExchange is the JSON body accepted by POST /api/exchanges.
 type dummyExchange struct {
 	SessionID           string  `json:"session_id"`
 	Path                string  `json:"path"`
-	Timestamp           float64 `json:"timestamp"`
+	CreatedAt           float64 `json:"created_at"`
 	IsStreaming         bool    `json:"is_streaming"`
-	InputMessages       string  `json:"input_messages"`
 	RawRequest          string  `json:"raw_request"`
 	RawResponse         string  `json:"raw_response"`
-	OutputText          string  `json:"output_text"`
 	InputTokens         int     `json:"input_tokens"`
 	OutputTokens        int     `json:"output_tokens"`
 	CacheCreationTokens int     `json:"cache_creation_tokens"`
@@ -57,18 +63,19 @@ func newDummyExchange(rng *rand.Rand, now time.Time, sessions int) (dummyExchang
 	e := dummyExchange{
 		SessionID:           fmt.Sprintf("dummy-session-%d", 1+rng.IntN(sessions)),
 		Path:                "/v1/messages",
-		Timestamp:           float64(now.UnixNano())/1e9 - rng.Float64()*dummyHistoryDays*24*3600,
+		CreatedAt:           float64(now.UnixNano())/1e9 - rng.Float64()*dummyHistoryDays*24*3600,
 		IsStreaming:         rng.IntN(2) == 0,
-		InputMessages:       `[{"role":"user","content":"Dummy prompt"}]`,
 		RawRequest:          fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"Dummy prompt"}]}`, price.Prefix),
-		RawResponse:         `{"type":"message","role":"assistant","content":[{"type":"text","text":"Dummy response"}]}`,
-		OutputText:          "Dummy response",
 		InputTokens:         200 + rng.IntN(8000),
 		OutputTokens:        50 + rng.IntN(2000),
 		CacheCreationTokens: rng.IntN(4000),
 		CacheReadTokens:     rng.IntN(20000),
 		Model:               price.Prefix,
 		MatchedPrice:        string(matchedPrice),
+	}
+	e.RawResponse = dummyResponse
+	if e.IsStreaming {
+		e.RawResponse = dummyStreamResponse
 	}
 	e.InputCost = tokenCost(e.InputTokens, price.InputPerM)
 	e.OutputCost = tokenCost(e.OutputTokens, price.OutputPerM)
@@ -83,9 +90,8 @@ func tokenCost(tokens int, perMillion float64) float64 {
 }
 
 // runDummy creates count random exchanges, spread over sessions sessions,
-// through the running admin API. Each one is stored with its
-// exchanges_ledger row, so dashboards, totals and limiters behave as with
-// real proxy traffic.
+// through the running admin API, so dashboards, totals and limiters
+// behave as with real proxy traffic.
 func runDummy(ctx context.Context, cfg config.Config, count, sessions int) error {
 	if count < 1 || sessions < 1 {
 		return fmt.Errorf("--count and --sessions must be at least 1")

@@ -13,7 +13,7 @@ func saveExchangeWithCost(t *testing.T, db *DB, sessionID string, cost float64) 
 	if err := db.SaveExchange(context.Background(), Exchange{
 		SessionID:   sessionID,
 		Path:        "/v1/messages",
-		Timestamp:   float64(time.Now().Unix()),
+		CreatedAt:   float64(time.Now().Unix()),
 		RawRequest:  "{}",
 		RawResponse: "{}",
 		InputCost:   floatPtr(cost),

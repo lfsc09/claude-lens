@@ -140,7 +140,7 @@ func TestExchangesList_FilterPaginationAndSessionID(t *testing.T) {
 	ctx := context.Background()
 	for i, sess := range []string{"a", "a", "b"} {
 		if err := db.SaveExchange(ctx, database.Exchange{
-			SessionID: sess, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
+			SessionID: sess, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
 		}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
@@ -182,7 +182,7 @@ func TestExchangesList_NegativeLimitClamped(t *testing.T) {
 	ctx := context.Background()
 	for i, sess := range []string{"a", "b", "c"} {
 		if err := db.SaveExchange(ctx, database.Exchange{
-			SessionID: sess, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
+			SessionID: sess, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
 		}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
@@ -224,7 +224,7 @@ func TestExchangeDetail_Found(t *testing.T) {
 	ctx := context.Background()
 	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15,"cache_write_per_m":3.75,"cache_read_per_m":0.3,"created_at":1000,"updated_at":1000}`
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "s1", Path: "/v1/messages", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/v1/messages", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}",
 		MatchedPrice: &matchedPrice,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -257,7 +257,7 @@ func TestTotals(t *testing.T) {
 	inCost, outCost := 0.01, 0.02
 	inTok, outTok := 10, 20
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "s1", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &inTok, OutputTokens: &outTok, InputCost: &inCost, OutputCost: &outCost,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -279,13 +279,13 @@ func TestTotals_RangeExcludesOlderExchanges(t *testing.T) {
 	now := time.Now()
 	oldTok, newTok := 100, 5
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "old", Path: "/p", Timestamp: float64(now.AddDate(0, 0, -90).Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "old", Path: "/p", CreatedAt: float64(now.AddDate(0, 0, -90).Unix()), RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &oldTok,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "new", Path: "/p", Timestamp: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "new", Path: "/p", CreatedAt: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &newTok,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -304,7 +304,7 @@ func TestTotals_RangeExcludesOlderExchanges(t *testing.T) {
 func TestSessionStats(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
-	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "s1", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "s1", Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
@@ -322,7 +322,7 @@ func TestSessionStatsPagination(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for i, id := range []string{"a", "b", "c"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -344,7 +344,7 @@ func TestSessionStatsPagination_NegativeLimitClamped(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for i, id := range []string{"a", "b", "c"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -362,14 +362,14 @@ func TestSessionStatsPagination_NegativeLimitClamped(t *testing.T) {
 func TestSessionStatsSince(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
-	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "a", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "a", Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 	firstPage, err := db.GetExchanges(ctx, "", 1, 0)
 	if err != nil || len(firstPage) != 1 {
 		t.Fatalf("GetExchanges: rows=%+v err=%v", firstPage, err)
 	}
-	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "b", Path: "/p", Timestamp: 1001, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "b", Path: "/p", CreatedAt: 1001, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
@@ -391,7 +391,7 @@ func TestDailyCosts(t *testing.T) {
 	ctx := context.Background()
 	cost := 1.5
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "s1", Path: "/p", Timestamp: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/p", CreatedAt: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
 		InputCost: &cost,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -414,7 +414,7 @@ func TestBulkDeleteExchanges(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for _, sess := range []string{"a", "a", "b", "c"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -470,14 +470,14 @@ func TestBulkDeleteExchanges(t *testing.T) {
 	}
 }
 
-// TestBulkDeleteExchanges_SessionNames verifies session_names deletion is
+// TestBulkDeleteExchanges_SessionNames verifies sessions deletion is
 // conditional on also_delete_claude_session, scoped to exactly the sessions
 // that had exchange rows deleted.
 func TestBulkDeleteExchanges_SessionNames(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for _, sess := range []string{"a", "b"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 		if err := db.SetSessionName(ctx, sess, "name-"+sess); err != nil {
@@ -507,7 +507,7 @@ func TestBulkDeleteExchanges_SessionNames(t *testing.T) {
 }
 
 // assertSessionNames checks that exactly the given sessions still have a
-// session_names entry (each set to "name-<id>" by the test setup) and every
+// sessions entry (each set to "name-<id>" by the test setup) and every
 // other candidate session ID does not.
 func assertSessionNames(t *testing.T, db *database.DB, present ...string) {
 	t.Helper()
@@ -780,7 +780,7 @@ func TestStaticFrontend_UnknownPathIs404(t *testing.T) {
 	}
 }
 
-func TestCreateExchange_StoresExchangeAndLedger(t *testing.T) {
+func TestCreateExchange_StoresExchange(t *testing.T) {
 	s, _ := newTestServer(t)
 
 	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
@@ -805,7 +805,7 @@ func TestCreateExchange_StoresExchangeAndLedger(t *testing.T) {
 	var totals database.Totals
 	json.Unmarshal(rec.Body.Bytes(), &totals)
 	if totals.TotalCost == nil || *totals.TotalCost != 0.5 {
-		t.Errorf("ledger-backed total cost = %v, want 0.5", totals.TotalCost)
+		t.Errorf("total cost = %v, want 0.5", totals.TotalCost)
 	}
 }
 
@@ -847,5 +847,50 @@ func TestCreateExchange_MatchedPriceMustBeJSON(t *testing.T) {
 	json.Unmarshal(rec.Body.Bytes(), &detail)
 	if detail.MatchedPrice.Prefix != "claude-sonnet-5-5" {
 		t.Errorf("matched_price.model_prefix = %q", detail.MatchedPrice.Prefix)
+	}
+}
+
+func TestSetSessionName_BlankResetsToSessionID(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	for name, want := range map[string]string{"  My session ": "My session", "   ": "s1"} {
+		rec := doJSON(t, s, http.MethodPatch, "/api/sessions/s1/name", map[string]string{"name": name})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("name %q: status = %d, want 200: %s", name, rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["session_name"] != want {
+			t.Errorf("name %q: session_name = %q, want %q", name, body["session_name"], want)
+		}
+	}
+}
+
+func TestGetExchange_IncludesOutputTextAndCreatedAt(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "s1", Path: "/p", CreatedAt: 1234, RawRequest: "{}",
+		RawResponse: `{"content":[{"type":"text","text":"hello"}]}`,
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	list, _ := db.GetExchanges(ctx, "", 10, 0)
+
+	rec := doJSON(t, s, http.MethodGet, fmt.Sprintf("/api/exchanges/%d", list[0].ID), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["output_text"] != "hello" || body["created_at"] != float64(1234) {
+		t.Errorf("unexpected detail body: %v", body)
+	}
+	if _, ok := body["timestamp"]; ok {
+		t.Errorf("detail still exposes timestamp: %v", body)
 	}
 }

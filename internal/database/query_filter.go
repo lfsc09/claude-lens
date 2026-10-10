@@ -45,8 +45,8 @@ const (
 
 // filterField describes one FIELD name accepted by the query language: which
 // SQL expression(s) it reads from (more than one for "session", which
-// matches either the exchange's session_id or its session_names.name, via
-// GetExchanges/CountExchanges' LEFT JOIN session_names sn), its value kind,
+// matches either the exchange's session_id or its sessions.name, via
+// GetExchanges/CountExchanges' JOIN sessions), its value kind,
 // and which operators are valid for it.
 type filterField struct {
 	kind  filterFieldKind
@@ -55,10 +55,10 @@ type filterField struct {
 
 var filterFields = map[string]filterField{
 	"id":            {kind: fieldNumber, exprs: []string{"id"}},
-	"session":       {kind: fieldText, exprs: []string{"exchanges.session_id", "sn.name"}},
+	"session":       {kind: fieldText, exprs: []string{"exchanges.session_id", "sessions.name"}},
 	"model":         {kind: fieldText, exprs: []string{"model"}},
 	"path":          {kind: fieldText, exprs: []string{"path"}},
-	"date":          {kind: fieldDate, exprs: []string{"timestamp"}},
+	"date":          {kind: fieldDate, exprs: []string{"created_at"}},
 	"input_tokens":  {kind: fieldNumber, exprs: []string{"input_tokens"}},
 	"output_tokens": {kind: fieldNumber, exprs: []string{"output_tokens"}},
 	"cache_tokens":  {kind: fieldNumber, exprs: []string{cacheTokensExpr}},
@@ -315,7 +315,7 @@ func (p *filterParser) parseCond() (filterExpr, error) {
 // ---- Value parsing -------------------------------------------------------
 
 // filterDateLayouts are tried in order; dates are interpreted in local time,
-// matching fmtTime's rendering of the timestamp column.
+// matching fmtTime's rendering of the created_at column.
 var filterDateLayouts = []string{
 	"2006-01-02T15:04:05",
 	"2006-01-02 15:04:05",

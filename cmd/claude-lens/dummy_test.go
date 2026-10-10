@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/parsing"
 )
 
 func TestNewDummyExchange(t *testing.T) {
@@ -24,8 +25,11 @@ func TestNewDummyExchange(t *testing.T) {
 		}
 		seen[e.SessionID] = true
 
-		if e.Timestamp < earliest || e.Timestamp > float64(now.UnixNano())/1e9 {
-			t.Fatalf("timestamp %v outside the last %d days", e.Timestamp, dummyHistoryDays)
+		if e.CreatedAt < earliest || e.CreatedAt > float64(now.UnixNano())/1e9 {
+			t.Fatalf("timestamp %v outside the last %d days", e.CreatedAt, dummyHistoryDays)
+		}
+		if text, _ := parsing.ExtractResponseFields([]byte(e.RawResponse), e.IsStreaming); text == nil || *text != "Dummy response" {
+			t.Fatalf("response (streaming=%v) assembles to %v, want %q", e.IsStreaming, text, "Dummy response")
 		}
 		var price database.Price
 		if err := json.Unmarshal([]byte(e.MatchedPrice), &price); err != nil || price.Prefix != e.Model {
