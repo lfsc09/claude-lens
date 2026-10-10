@@ -70,14 +70,19 @@
     </section>
   </main>
 
-  <dialog id="notification-dialog" class="w-full max-w-md p-6 border border-line-strong rounded-lg">
-    <form id="notification-form" class="flex flex-col gap-5">
-      <p id="notification-dialog-title" class="text-lg font-medium">Add an integration</p>
-      <div class="flex flex-col gap-3">
+  <dialog id="notification-dialog" aria-labelledby="notification-dialog-title" class="w-full max-w-md p-0 border border-line-strong rounded-lg">
+    <form id="notification-form">
+      <header class="px-6 py-4 border-b border-line">
+        <h2 id="notification-dialog-title" class="text-lg font-medium">Add an integration</h2>
+        <p class="text-sm text-fg-muted mt-0.5">A destination limiters can send alerts to. It starts active.</p>
+      </header>
+
+      <div class="flex flex-col gap-4 px-6 py-5">
         <div>
           <label for="notification-name" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Name</label>
-          <input type="text" id="notification-name" name="name" required placeholder="#alerts"
+          <input type="text" id="notification-name" name="name" required placeholder="Team alerts" autocomplete="off" aria-describedby="notification-name-hint"
             class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <small id="notification-name-hint" class="block text-fg-subtle mt-1">A label shown in this list and when linking it to a limiter. It doesn't have to match the Slack channel.</small>
         </div>
         <div>
           <label for="notification-type" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Type</label>
@@ -88,16 +93,18 @@
         </div>
         <div>
           <label for="notification-webhook-url" class="block text-xs text-fg-muted uppercase tracking-wide mb-1">Webhook URL</label>
-          <input type="url" id="notification-webhook-url" name="webhook_url" required placeholder="https://hooks.slack.com/services/…"
-            class="w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
-          <small id="notification-webhook-hint" class="text-fg-subtle">Slack incoming webhook that receives the alerts.</small>
+          <input type="url" id="notification-webhook-url" name="webhook_url" required placeholder="https://hooks.slack.com/services/…" autocomplete="off" spellcheck="false" aria-describedby="notification-webhook-hint"
+            class="w-full text-sm font-mono px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500">
+          <p id="notification-webhook-current" class="hidden text-xs text-fg-muted font-mono mt-1"></p>
+          <small id="notification-webhook-hint" class="block text-fg-subtle mt-1"></small>
         </div>
+        <div id="notification-dialog-message" role="alert" class="hidden text-xs px-3 py-2 rounded-md border"></div>
       </div>
-      <div id="notification-dialog-message" class="hidden text-xs px-3 py-2 rounded-md border"></div>
-      <div class="flex justify-end w-full gap-2">
+
+      <footer class="flex justify-end gap-2 px-6 py-4 bg-surface-hover border-t border-line rounded-b-lg">
         <button type="button" commandfor="notification-dialog" command="close" class="text-fg px-3 py-1.5 bg-surface border border-line-strong rounded-md hover:bg-surface-hover">Cancel</button>
         <button type="submit" id="notification-dialog-submit" class="flex gap-2 items-center text-white px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
-      </div>
+      </footer>
     </form>
   </dialog>
 

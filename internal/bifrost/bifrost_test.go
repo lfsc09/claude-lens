@@ -107,15 +107,21 @@ func TestFetchModelPrices_EmptyPricingFieldIsZeroNotError(t *testing.T) {
 	}
 }
 
-func TestFetchModelPrices_MalformedPricingFieldIsAnError(t *testing.T) {
+func TestFetchModelPrices_SkipsModelsWithMalformedOrMissingPrices(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[{"id":"bedrock/us.anthropic.claude-sonnet-5","pricing":{"prompt":"not-a-number","completion":"0.000002"}}]}`))
+		w.Write([]byte(`{"data":[
+			{"id":"bedrock/us.anthropic.claude-bad","pricing":{"prompt":"not-a-number","completion":"0.000002"}},
+			{"id":"anthropic/claude-unpriced","pricing":{}},
+			{"id":"anthropic/claude-good","pricing":{"prompt":"0.000001","completion":"0.000002"}}]}`))
 	}))
 	defer srv.Close()
 
-	c := NewClient()
-	if _, err := c.FetchModelPrices(context.Background(), srv.URL, ""); err == nil {
-		t.Fatal("expected an error for a malformed pricing field")
+	prices, err := NewClient().FetchModelPrices(context.Background(), srv.URL, "")
+	if err != nil {
+		t.Fatalf("FetchModelPrices: %v", err)
+	}
+	if len(prices) != 1 || prices[0].ModelName != "claude-good" {
+		t.Fatalf("got %+v, want only claude-good", prices)
 	}
 }
 

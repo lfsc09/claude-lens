@@ -363,3 +363,31 @@ func TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert(t *testi
 	waitForCount(t, count, 1)
 	assertNoMoreAlerts(t, count, 1)
 }
+
+func TestApplicableLimiters_FlagsLimitersWithLinks(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	server, _ := newAlertServer(t)
+	webhookID := addNotification(t, db, server.URL)
+
+	pct := 50
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_linked", 1.0, LimiterNotification{NotificationID: webhookID, ThresholdPct: &pct})); err != nil {
+		t.Fatalf("CreateLimiter linked: %v", err)
+	}
+	if _, err := db.CreateLimiter(ctx, alertLimiter("", 1.0)); err != nil {
+		t.Fatalf("CreateLimiter global: %v", err)
+	}
+
+	limiters, err := db.applicableLimiters(ctx, "sess_linked")
+	if err != nil {
+		t.Fatalf("applicableLimiters: %v", err)
+	}
+	if len(limiters) != 2 {
+		t.Fatalf("got %d limiters, want 2", len(limiters))
+	}
+	for _, l := range limiters {
+		if want := l.SessionID == "sess_linked"; l.hasLinks != want {
+			t.Errorf("limiter %q hasLinks = %v, want %v", l.SessionID, l.hasLinks, want)
+		}
+	}
+}

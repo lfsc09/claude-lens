@@ -69,24 +69,57 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   }
 
   // ── Notification link rows ──────────────────────────────────────────
+  const NOTIFICATION_LABEL = 'block text-xs text-fg-muted uppercase tracking-wide';
+  const NOTIFICATION_FIELD = 'w-full text-sm normal-case tracking-normal mt-1 px-2 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500';
+
+  /**
+   * Renders one notification link as a card with labelled fields.
+   * @param {{notification_id?: number, threshold_pct?: ?number, request_cost_usd?: ?number}} [link] - Link to prefill.
+   * @returns {string} Row markup.
+   */
   function notificationRow(link = {}) {
     const options = notificationIntegrations.map((n) => {
       const label = n.active ? n.name : `${n.name} (inactive)`;
       return `<option value="${n.id}" ${n.id === link.notification_id ? 'selected' : ''}>${esc(label)}</option>`;
     }).join('');
-    const field = 'w-full text-sm px-2 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500';
-    return `<div class="notification-row grid grid-cols-12 items-center gap-2">
-      <select class="notification-id col-span-5 ${field}" aria-label="Notification integration">${options}</select>
-      <input type="number" step="1" min="1" max="100" placeholder="% budget" value="${link.threshold_pct ?? ''}" class="notification-threshold col-span-3 ${field}" aria-label="Alert at percent of budget">
-      <input type="number" step="0.01" min="0.01" placeholder="$ request" value="${link.request_cost_usd ?? ''}" class="notification-cost col-span-3 ${field}" aria-label="Alert on a single request over dollars">
-      <button type="button" class="remove-notification-btn col-span-1 text-fg-subtle hover:text-red-600 dark:hover:text-red-400" aria-label="Remove notification">✕</button>
+    return `<div class="notification-row flex flex-col gap-3 p-3 bg-surface-hover border border-line rounded-md">
+      <div class="flex items-end gap-2">
+        <label class="${NOTIFICATION_LABEL} flex-1 min-w-0">Integration
+          <select class="notification-id ${NOTIFICATION_FIELD}">${options}</select>
+        </label>
+        <button type="button" class="remove-notification-btn shrink-0 text-sm text-fg-subtle px-2 py-1.5 hover:text-red-600 dark:hover:text-red-400" aria-label="Remove notification">Remove</button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="${NOTIFICATION_LABEL}">At % of budget
+          <input type="number" step="1" min="1" max="100" placeholder="80" value="${link.threshold_pct ?? ''}" class="notification-threshold ${NOTIFICATION_FIELD}">
+        </label>
+        <label class="${NOTIFICATION_LABEL}">On request over ($)
+          <input type="number" step="0.01" min="0.01" placeholder="5.00" value="${link.request_cost_usd ?? ''}" class="notification-cost ${NOTIFICATION_FIELD}">
+        </label>
+      </div>
     </div>`;
+  }
+
+  /** Hides, in each row's select, the integrations already chosen in other rows, and disables "Add" once every integration is linked. */
+  function syncNotificationOptions() {
+    const selects = [...notificationsEl.querySelectorAll('.notification-id')];
+    const chosen = selects.map((select) => select.value);
+    selects.forEach((select) => {
+      const takenElsewhere = new Set(chosen.filter((_, i) => selects[i] !== select));
+      select.querySelectorAll('option').forEach((option) => {
+        option.hidden = option.disabled = takenElsewhere.has(option.value);
+      });
+    });
+    notificationsEmptyEl.classList.toggle('hidden', selects.length > 0);
+    notificationsEmptyEl.innerHTML = notificationIntegrations.length
+      ? 'No alerts — this limiter won\'t notify anyone.'
+      : 'No notification integrations yet. <a href="/integrations/notifications" class="underline hover:text-fg">Create one</a> first.';
+    addNotificationBtn.disabled = selects.length >= notificationIntegrations.length;
   }
 
   function renderNotificationRows(links) {
     notificationsEl.innerHTML = links.map(notificationRow).join('');
-    notificationsEmptyEl.classList.toggle('hidden', notificationIntegrations.length > 0);
-    addNotificationBtn.disabled = notificationIntegrations.length === 0;
+    syncNotificationOptions();
   }
 
   function readNotificationRows() {
@@ -101,16 +134,26 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     });
   }
 
-  async function loadNotificationIntegrations() {
+  /** Reloads the notification integrations and re-renders the dialog's link rows, keeping what is already entered. */
+  async function refreshNotificationIntegrations() {
     const res = await fetch('/api/notification-integrations');
     notificationIntegrations = res.ok ? await res.json() : [];
+    renderNotificationRows(readNotificationRows());
   }
 
   addNotificationBtn.addEventListener('click', () => {
-    notificationsEl.insertAdjacentHTML('beforeend', notificationRow({ notification_id: notificationIntegrations.find((n) => n.active)?.id }));
+    const linked = new Set(readNotificationRows().map((n) => n.notification_id));
+    const available = notificationIntegrations.filter((n) => !linked.has(n.id));
+    const next = available.find((n) => n.active) ?? available[0];
+    notificationsEl.insertAdjacentHTML('beforeend', notificationRow({ notification_id: next?.id }));
+    syncNotificationOptions();
   });
   notificationsEl.addEventListener('click', (e) => {
     e.target.closest('.remove-notification-btn')?.closest('.notification-row').remove();
+    syncNotificationOptions();
+  });
+  notificationsEl.addEventListener('change', (e) => {
+    if (e.target.matches('.notification-id')) syncNotificationOptions();
   });
 
   function statusToggle(l) {
@@ -237,6 +280,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     updateActivePeriodInputs();
 
     renderNotificationRows(l.notifications ?? []);
+    refreshNotificationIntegrations();
   }
 
   function resetDialog() {
@@ -280,8 +324,8 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
 
   updateAlignedAvailability();
   updateActivePeriodInputs();
-  renderNotificationRows([]);
-  loadNotificationIntegrations().then(loadLimiters);
+  document.getElementById('add-limiter-btn').addEventListener('click', refreshNotificationIntegrations);
+  refreshNotificationIntegrations().then(loadLimiters);
   initNav(null, { onLimitersChanged: loadLimiters });
   setInterval(tickCountdowns, 30000);
 })();

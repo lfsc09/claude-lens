@@ -12,13 +12,13 @@ package bifrost
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/lfsc09/claude-lens/internal/priceprovider"
 )
@@ -29,10 +29,9 @@ type Client struct {
 	http *http.Client
 }
 
-// NewClient builds a Client with a 10s request timeout — generous for an
-// admin-triggered, not-on-the-hot-path call.
+// NewClient builds a Client with a bounded request timeout.
 func NewClient() *Client {
-	return &Client{http: &http.Client{Timeout: 10 * time.Second}}
+	return &Client{http: priceprovider.NewHTTPClient()}
 }
 
 type listModelsResponse struct {
@@ -99,27 +98,12 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 		return nil, fmt.Errorf("parse base URL %q: %w", baseURL, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, hostRoot+"/v1/models?page_size=1000", nil)
-	if err != nil {
-		return nil, fmt.Errorf("build v1/models request: %w", err)
-	}
-	if authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+authToken)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call %s/v1/models: %w", hostRoot, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s/v1/models returned status %d — is this upstream a Bifrost gateway?", hostRoot, resp.StatusCode)
-	}
-
 	var parsed listModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("decode v1/models response: %w", err)
+	if err := priceprovider.GetJSON(ctx, c.http, hostRoot+"/v1/models?page_size=1000", authToken, &parsed); err != nil {
+		if statusErr := (*priceprovider.StatusError)(nil); errors.As(err, &statusErr) {
+			return nil, fmt.Errorf("%w — is this upstream a Bifrost gateway?", err)
+		}
+		return nil, err
 	}
 
 	prices := make([]priceprovider.ModelPrice, 0, len(parsed.Data))
@@ -134,32 +118,36 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 		}
 		seen[modelName] = struct{}{}
 
-		inputPerToken, err := parsePerTokenRate(m.Pricing.Prompt)
+		price, err := modelPrice(modelName, m.Pricing.Prompt, m.Pricing.Completion, m.Pricing.InputCacheWrite, m.Pricing.InputCacheRead)
 		if err != nil {
-			return nil, fmt.Errorf("%s: parse prompt price: %w", m.ID, err)
+			slog.Warn("skip bifrost model with unusable pricing", "model", m.ID, "error", err)
+			continue
 		}
-		outputPerToken, err := parsePerTokenRate(m.Pricing.Completion)
-		if err != nil {
-			return nil, fmt.Errorf("%s: parse completion price: %w", m.ID, err)
+		if price.Priced() {
+			prices = append(prices, price)
 		}
-		cacheWritePerToken, err := parsePerTokenRate(m.Pricing.InputCacheWrite)
-		if err != nil {
-			return nil, fmt.Errorf("%s: parse input_cache_write price: %w", m.ID, err)
-		}
-		cacheReadPerToken, err := parsePerTokenRate(m.Pricing.InputCacheRead)
-		if err != nil {
-			return nil, fmt.Errorf("%s: parse input_cache_read price: %w", m.ID, err)
-		}
-
-		prices = append(prices, priceprovider.ModelPrice{
-			ModelName:      modelName,
-			InputPerM:      priceprovider.Round6(inputPerToken * 1_000_000),
-			OutputPerM:     priceprovider.Round6(outputPerToken * 1_000_000),
-			CacheWritePerM: priceprovider.Round6(cacheWritePerToken * 1_000_000),
-			CacheReadPerM:  priceprovider.Round6(cacheReadPerToken * 1_000_000),
-		})
 	}
 	return prices, nil
+}
+
+// modelPrice converts a model's decimal-string per-token rates to a
+// ModelPrice in USD per million tokens.
+func modelPrice(name string, prompt, completion, cacheWrite, cacheRead string) (priceprovider.ModelPrice, error) {
+	rates := [4]float64{}
+	for i, raw := range [...]string{prompt, completion, cacheWrite, cacheRead} {
+		rate, err := parsePerTokenRate(raw)
+		if err != nil {
+			return priceprovider.ModelPrice{}, err
+		}
+		rates[i] = priceprovider.Round6(rate * 1_000_000)
+	}
+	return priceprovider.ModelPrice{
+		ModelName:      name,
+		InputPerM:      rates[0],
+		OutputPerM:     rates[1],
+		CacheWritePerM: rates[2],
+		CacheReadPerM:  rates[3],
+	}, nil
 }
 
 // parsePerTokenRate parses a Bifrost pricing field's decimal-string USD

@@ -153,6 +153,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
 
   // ── Sync prices from the active proxy integration ────────────────────
   const syncBtn = document.getElementById('sync-prices-btn');
+  const syncBtnWrap = document.getElementById('sync-btn-wrap');
   const syncMessageEl = document.getElementById('sync-message');
 
   /**
@@ -177,14 +178,17 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     return integrations.find((p) => p.active) ?? null;
   }
 
-  /** Enables the sync button only while an active proxy integration can sync, and explains why otherwise. */
+  /** Enables the sync button only while an active proxy integration can sync; otherwise its wrapper shows a tooltip with the reason. */
   async function refreshSyncAvailability() {
     const proxy = await loadActiveProxy();
     const lastSynced = proxy?.price_synced_at ? ` (last synced ${fmtTime(proxy.price_synced_at)})` : '';
-    syncBtn.disabled = !proxy || !!proxy.price_sync_error;
-    if (!proxy) setSyncMessage('Price sync needs an active proxy integration.');
-    else if (proxy.price_sync_error) setSyncMessage(`${proxy.name} sync unavailable: ${proxy.price_sync_error}${lastSynced}`, true);
-    else setSyncMessage(`Syncing from ${proxy.name}${lastSynced}.`);
+    const reason = !proxy
+      ? 'Price sync needs an active proxy integration.'
+      : proxy.price_sync_error && `${proxy.name} sync unavailable: ${proxy.price_sync_error}${lastSynced}`;
+    syncBtn.disabled = !!reason;
+    if (reason) syncBtnWrap.dataset.tip = esc(reason);
+    else syncBtnWrap.removeAttribute('data-tip');
+    setSyncMessage(reason ? '' : `Syncing from ${proxy.name}${lastSynced}.`);
     return proxy;
   }
 
@@ -195,19 +199,19 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
       return;
     }
     setSyncMessage('Syncing…');
+    let outcome;
     await withPending(syncBtn, async () => {
       const res = await postJSON(`/api/proxy-integrations/${proxy.id}/sync-prices`, {});
       if (!res.ok) {
-        const message = await extractErrorMessage(res, 'Sync failed.');
-        await refreshSyncAvailability();
-        setSyncMessage(message, true);
+        outcome = { text: await extractErrorMessage(res, 'Sync failed.'), isError: true };
         return;
       }
       const data = await res.json();
-      await refreshSyncAvailability();
-      setSyncMessage(`Synced ${data.models.length} model(s) from ${proxy.name}: ${data.created} created, ${data.updated} updated.`);
+      outcome = { text: `Synced ${data.models.length} model(s) from ${proxy.name}: ${data.created} created, ${data.updated} updated.`, isError: false };
       loadPrices();
     });
+    await refreshSyncAvailability();
+    if (!(outcome.isError && syncBtn.disabled)) setSyncMessage(outcome.text, outcome.isError);
   });
 
   loadPrices();

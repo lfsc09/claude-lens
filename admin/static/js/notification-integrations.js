@@ -12,6 +12,13 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
   const typeSelect = document.getElementById('notification-type');
   const webhookInput = document.getElementById('notification-webhook-url');
   const webhookHint = document.getElementById('notification-webhook-hint');
+  const webhookCurrent = document.getElementById('notification-webhook-current');
+  const WEBHOOK_BY_TYPE = {
+    slack: {
+      placeholder: 'https://hooks.slack.com/services/…',
+      hint: 'Create one in Slack: <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener noreferrer" class="underline hover:text-fg">Incoming Webhooks</a>. Alerts post to the channel it was created for.',
+    },
+  };
   const integrationsById = new Map();
   let editingId = null;
 
@@ -81,6 +88,14 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     else if (e.target.closest('.delete-btn')) deleteIntegration(n);
   });
 
+  /** Shows the webhook placeholder and hint that belong to the selected integration type. */
+  function renderWebhookHelp() {
+    const help = WEBHOOK_BY_TYPE[typeSelect.value];
+    webhookInput.placeholder = editingId ? 'Paste a new URL to replace it' : (help?.placeholder ?? '');
+    if (editingId) webhookHint.textContent = 'Leave blank to keep the current URL.';
+    else webhookHint.innerHTML = help?.hint ?? '';
+  }
+
   function startEdit(n) {
     editingId = n.id;
     dialogTitle.textContent = 'Edit integration';
@@ -88,8 +103,9 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     nameInput.value = n.name;
     typeSelect.value = n.type;
     webhookInput.required = false;
-    webhookInput.placeholder = n.webhook_hint;
-    webhookHint.textContent = 'Leave blank to keep the stored webhook URL.';
+    webhookCurrent.textContent = `Current: ${n.webhook_hint}`;
+    webhookCurrent.classList.remove('hidden');
+    renderWebhookHelp();
   }
 
   function resetDialog() {
@@ -97,12 +113,14 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     dialogTitle.textContent = 'Add an integration';
     submitBtn.textContent = 'Add';
     webhookInput.required = true;
-    webhookInput.placeholder = 'https://hooks.slack.com/services/…';
-    webhookHint.textContent = 'Slack incoming webhook that receives the alerts.';
+    webhookCurrent.classList.add('hidden');
     setDialogMessage(null, '');
     form.reset();
+    renderWebhookHelp();
   }
   dialog.addEventListener('close', resetDialog);
+  typeSelect.addEventListener('change', renderWebhookHelp);
+  renderWebhookHelp();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -128,8 +128,9 @@ func (db *DB) queryProxyIntegration(ctx context.Context, query string, args ...a
 	return &p, nil
 }
 
-// UpdateProxyIntegration replaces an integration's editable fields. Active
-// state and sync bookkeeping are left untouched.
+// UpdateProxyIntegration replaces an integration's editable fields and
+// clears its last sync failure so the next sync starts fresh. Active state
+// and the last successful sync time are left untouched.
 func (db *DB) UpdateProxyIntegration(ctx context.Context, p ProxyIntegration) error {
 	headers, err := json.Marshal(p.CustomHeaders)
 	if err != nil {
@@ -137,7 +138,7 @@ func (db *DB) UpdateProxyIntegration(ctx context.Context, p ProxyIntegration) er
 	}
 	_, err = db.sql.ExecContext(ctx,
 		`UPDATE proxy_integrations SET base_url = ?, auth_token = ?, custom_headers = ?,
-			price_sync_interval_minutes = ?, updated_at = ? WHERE id = ?`,
+			price_sync_interval_minutes = ?, price_sync_error = '', price_sync_attempted_at = 0, updated_at = ? WHERE id = ?`,
 		p.BaseURL, p.AuthToken, string(headers), p.PriceSyncIntervalMinutes, p.UpdatedAt, p.ID,
 	)
 	return err

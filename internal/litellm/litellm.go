@@ -5,10 +5,9 @@ package litellm
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/lfsc09/claude-lens/internal/priceprovider"
 )
@@ -18,10 +17,9 @@ type Client struct {
 	http *http.Client
 }
 
-// NewClient builds a Client with a 10s request timeout — generous for an
-// admin-triggered, not-on-the-hot-path call.
+// NewClient builds a Client with a bounded request timeout.
 func NewClient() *Client {
-	return &Client{http: &http.Client{Timeout: 10 * time.Second}}
+	return &Client{http: priceprovider.NewHTTPClient()}
 }
 
 type modelInfoResponse struct {
@@ -42,31 +40,16 @@ type modelInfoResponse struct {
 
 // FetchModelPrices queries baseURL's /model/info endpoint (a LiteLLM proxy
 // convention, not part of the Anthropic API) and returns per-million-token
-// rates for every model it reports. Only a LiteLLM upstream serves this
+// rates for every model it reports with an input and output price. Only a LiteLLM upstream serves this
 // route — pointing claude-lens at api.anthropic.com directly, or any other
 // non-LiteLLM upstream, surfaces as the status-code error below.
 func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string) ([]priceprovider.ModelPrice, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/model/info", nil)
-	if err != nil {
-		return nil, fmt.Errorf("build model/info request: %w", err)
-	}
-	if authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+authToken)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call %s/model/info: %w", baseURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s/model/info returned status %d — is this upstream a LiteLLM proxy?", baseURL, resp.StatusCode)
-	}
-
 	var parsed modelInfoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("decode model/info response: %w", err)
+	if err := priceprovider.GetJSON(ctx, c.http, baseURL+"/model/info", authToken, &parsed); err != nil {
+		if statusErr := (*priceprovider.StatusError)(nil); errors.As(err, &statusErr) {
+			return nil, fmt.Errorf("%w — is this upstream a LiteLLM proxy?", err)
+		}
+		return nil, err
 	}
 
 	prices := make([]priceprovider.ModelPrice, 0, len(parsed.Data))
@@ -74,7 +57,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 		if m.ModelName == "" {
 			continue
 		}
-		prices = append(prices, priceprovider.ModelPrice{
+		price := priceprovider.ModelPrice{
 			ModelName:               m.ModelName,
 			InputPerM:               priceprovider.Round6(m.ModelInfo.InputCostPerToken * 1_000_000),
 			OutputPerM:              priceprovider.Round6(m.ModelInfo.OutputCostPerToken * 1_000_000),
@@ -84,7 +67,10 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 			OutputPerMAbove200k:     priceprovider.PerMPtr(m.ModelInfo.OutputCostPerTokenAbove200k),
 			CacheWritePerMAbove200k: priceprovider.PerMPtr(m.ModelInfo.CacheCreationInputTokenCostAbove200k),
 			CacheReadPerMAbove200k:  priceprovider.PerMPtr(m.ModelInfo.CacheReadInputTokenCostAbove200k),
-		})
+		}
+		if price.Priced() {
+			prices = append(prices, price)
+		}
 	}
 	return prices, nil
 }

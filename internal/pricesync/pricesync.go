@@ -61,7 +61,9 @@ func Sync(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers
 
 	prices, fetchErr := fetcher.FetchModelPrices(ctx, integration.BaseURL, integration.AuthToken)
 	if fetchErr != nil {
-		_ = db.MarkPriceSyncFailed(ctx, integration.ID, fetchErr.Error(), now)
+		if err := db.MarkPriceSyncFailed(ctx, integration.ID, fetchErr.Error(), now); err != nil {
+			slog.Warn("record price sync failure", "integration", integration.Type, "error", err)
+		}
 		return Result{}, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, fetchErr)
 	}
 

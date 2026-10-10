@@ -6,7 +6,17 @@ package priceprovider
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"time"
+)
+
+const (
+	requestTimeout   = 10 * time.Second
+	maxResponseBytes = 8 << 20
 )
 
 // ModelPrice is one model's USD-per-million-token rates, converted from the
@@ -23,6 +33,12 @@ type ModelPrice struct {
 	OutputPerMAbove200k     *float64
 	CacheWritePerMAbove200k *float64
 	CacheReadPerMAbove200k  *float64
+}
+
+// Priced reports whether the upstream reported both an input and an output
+// rate, so a model it knows nothing about never overwrites a stored price.
+func (p ModelPrice) Priced() bool {
+	return p.InputPerM > 0 && p.OutputPerM > 0
 }
 
 // Fetcher fetches per-model pricing from an upstream gateway's own API.
@@ -46,4 +62,57 @@ func PerMPtr(perToken *float64) *float64 {
 	}
 	perM := Round6(*perToken * 1_000_000)
 	return &perM
+}
+
+// NewHTTPClient builds the HTTP client price fetchers use, with a bounded
+// request timeout.
+func NewHTTPClient() *http.Client {
+	return &http.Client{Timeout: requestTimeout}
+}
+
+// StatusError is returned by GetJSON when the upstream answers with a
+// non-200 status.
+type StatusError struct {
+	URL  string
+	Code int
+}
+
+// Error implements error.
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s returned status %d", e.URL, e.Code)
+}
+
+// GetJSON GETs url with an optional Bearer token and decodes the JSON body
+// into v. It fails with a *StatusError on a non-200 status and refuses
+// bodies larger than maxResponseBytes.
+func GetJSON(ctx context.Context, client *http.Client, url, authToken string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("call %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &StatusError{URL: url, Code: resp.StatusCode}
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", url, err)
+	}
+	if len(body) > maxResponseBytes {
+		return fmt.Errorf("%s response exceeds %d bytes", url, maxResponseBytes)
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("decode %s: %w", url, err)
+	}
+	return nil
 }

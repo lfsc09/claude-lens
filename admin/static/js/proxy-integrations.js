@@ -7,9 +7,11 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
   const modeNote = document.getElementById('proxy-mode-note');
   const integrationsById = new Map();
 
-  const FIELD_CLASS = 'w-full text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500';
+  const FIELD_BASE = 'text-sm px-3 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500';
+  const FIELD_CLASS = `w-full ${FIELD_BASE}`;
   const LABEL_CLASS = 'block text-xs text-fg-muted uppercase tracking-wide mb-1';
-  const BUTTON_CLASS = 'flex gap-2 items-center text-sm px-3 py-1.5 bg-surface border border-line-strong rounded-md hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed';
+  const BUTTON_CLASS = 'flex gap-2 items-center text-sm text-fg px-3 py-1.5 bg-surface border border-line-strong rounded-md hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed';
+  const PRICE_ENDPOINTS = { litellm: '/model/info', bifrost: '/v1/models' };
 
   /**
    * Renders one custom-header key/value input row.
@@ -18,10 +20,10 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
    * @returns {string} Row markup.
    */
   function headerRow(key = '', value = '') {
-    return `<div class="header-row grid grid-cols-12 items-center gap-2">
-      <input type="text" value="${esc(key)}" placeholder="Header name" aria-label="Header name" class="header-key col-span-5 ${FIELD_CLASS}">
-      <input type="text" value="${esc(value)}" placeholder="Value" aria-label="Header value" class="header-value col-span-6 ${FIELD_CLASS}">
-      <button type="button" class="remove-header-btn col-span-1 text-fg-subtle hover:text-red-600 dark:hover:text-red-400" aria-label="Remove header">✕</button>
+    return `<div class="header-row flex items-center gap-2">
+      <input type="text" value="${esc(key)}" placeholder="Header name" aria-label="Header name" class="header-key flex-1 min-w-0 ${FIELD_CLASS}">
+      <input type="text" value="${esc(value)}" placeholder="Value" aria-label="Header value" class="header-value flex-1 min-w-0 ${FIELD_CLASS}">
+      <button type="button" class="remove-header-btn shrink-0 text-fg-subtle p-1.5 rounded hover:text-red-600 dark:hover:text-red-400" aria-label="Remove header">✕</button>
     </div>`;
   }
 
@@ -32,8 +34,8 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
    */
   function syncStatus(p) {
     if (p.price_sync_error) return `Last price sync failed: ${p.price_sync_error}`;
-    if (p.price_synced_at) return `Prices last synced ${fmtTime(p.price_synced_at)}.`;
-    return 'Prices not synced yet.';
+    if (p.price_synced_at) return `Prices last synced ${fmtTime(p.price_synced_at)}`;
+    return 'Prices not synced yet';
   }
 
   /**
@@ -44,41 +46,52 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
   function buildCard(p) {
     const headers = Object.entries(p.custom_headers ?? {});
     const badge = p.active
-      ? '<span class="text-emerald-700 dark:text-emerald-400 text-xs font-medium px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-500/15 rounded">Active</span>'
-      : '<span class="text-fg-subtle text-xs font-medium px-1.5 py-0.5 bg-surface-hover rounded">Inactive</span>';
-    const tokenPlaceholder = p.has_auth_token ? `Stored (${p.auth_token_hint}) — leave blank to keep` : 'Auth token';
-    return `<article class="proxy-card p-5 bg-surface rounded-lg border border-line" data-id="${p.id}" aria-label="${esc(p.name)} integration">
-      <form class="proxy-form flex flex-col gap-4">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="flex items-center gap-2 text-base font-semibold">${esc(p.name)} ${badge}</h2>
-          <button type="button" class="toggle-active-btn ${BUTTON_CLASS}">${p.active ? 'Deactivate' : 'Activate'}</button>
+      ? '<span class="text-emerald-700 dark:text-emerald-400 text-xs font-medium px-2 py-0.5 bg-emerald-50 dark:bg-emerald-500/15 rounded-full">Active</span>'
+      : '<span class="text-fg-subtle text-xs font-medium px-2 py-0.5 bg-surface-hover rounded-full">Inactive</span>';
+    const tokenPlaceholder = p.has_auth_token ? `Stored (${p.auth_token_hint}) — leave blank to keep` : 'Paste the gateway token';
+    const id = `proxy-${p.id}`;
+    return `<article class="proxy-card ${p.active ? 'border-emerald-600' : 'border-line'} bg-surface rounded-lg border" data-id="${p.id}" aria-label="${esc(p.name)} integration">
+      <form class="proxy-form">
+        <header class="flex items-start justify-between gap-4 px-5 py-4 border-b border-line">
+          <div>
+            <h2 class="flex items-center gap-2 text-base font-semibold">${esc(p.name)} ${badge}</h2>
+            <p class="text-xs text-fg-subtle mt-0.5">Prices are read from <code>${PRICE_ENDPOINTS[p.type] ?? ''}</code> on the gateway.</p>
+          </div>
+          <button type="button" class="toggle-active-btn shrink-0 ${BUTTON_CLASS}">${p.active ? 'Deactivate' : 'Activate'}</button>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 px-5 py-4">
+          <div>
+            <label for="${id}-base-url" class="${LABEL_CLASS}">Base URL</label>
+            <input type="url" id="${id}-base-url" name="base_url" required value="${esc(p.base_url)}" placeholder="http://localhost:4000" class="${FIELD_CLASS}">
+          </div>
+          <div>
+            <label for="${id}-token" class="${LABEL_CLASS}">Auth token</label>
+            <input type="password" id="${id}-token" name="auth_token" autocomplete="off" placeholder="${esc(tokenPlaceholder)}" class="${FIELD_CLASS}">
+          </div>
         </div>
-        <div>
-          <label class="${LABEL_CLASS}">Base URL
-            <input type="url" name="base_url" required value="${esc(p.base_url)}" placeholder="http://localhost:4000" class="normal-case tracking-normal mt-1 ${FIELD_CLASS}">
-          </label>
-        </div>
-        <div>
-          <label class="${LABEL_CLASS}">Auth token
-            <input type="password" name="auth_token" autocomplete="off" placeholder="${esc(tokenPlaceholder)}" class="normal-case tracking-normal mt-1 ${FIELD_CLASS}">
-          </label>
-        </div>
-        <fieldset class="flex flex-col gap-2">
+
+        <fieldset class="px-5 pb-4">
           <legend class="${LABEL_CLASS}">Custom headers</legend>
           <div class="headers flex flex-col gap-2">${headers.map(([k, v]) => headerRow(k, v)).join('')}</div>
-          <button type="button" class="add-header-btn self-start ${BUTTON_CLASS}">Add header</button>
+          <p class="no-headers ${headers.length ? 'hidden' : ''} text-xs text-fg-subtle">None — only the auth token is added to forwarded requests.</p>
+          <button type="button" class="add-header-btn mt-2 ${BUTTON_CLASS}">Add header</button>
         </fieldset>
-        <div class="flex items-center gap-2">
-          <label class="flex items-center gap-2 text-xs text-fg-muted uppercase tracking-wide">Sync prices every
-            <input type="number" name="price_sync_interval_minutes" min="0" step="1" required value="${p.price_sync_interval_minutes}" class="w-20 normal-case tracking-normal ${FIELD_CLASS}">
-          </label>
-          <span class="text-xs text-fg-muted">min (0 = off)</span>
-        </div>
-        <p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-muted'} text-xs">${esc(syncStatus(p))}</p>
-        <p class="card-message hidden text-xs text-red-700 dark:text-red-400" role="alert"></p>
-        <div class="flex justify-end">
-          <button type="submit" class="save-btn text-white text-sm px-3 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700 flex gap-2 items-center disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
-        </div>
+
+        <footer class="flex flex-wrap items-center justify-between gap-4 px-5 py-4 bg-surface-hover border-t border-line rounded-b-lg">
+          <div class="flex flex-col gap-1">
+            <label class="flex items-center gap-2 text-sm text-fg-muted">
+              Sync prices every
+              <input type="number" name="price_sync_interval_minutes" min="0" step="1" required value="${p.price_sync_interval_minutes}" aria-label="Price sync interval in minutes" class="w-20 ${FIELD_BASE}">
+              min <span class="text-xs text-fg-subtle">(0 = off)</span>
+            </label>
+            <p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-subtle'} text-xs">${esc(syncStatus(p))}</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <p class="card-message hidden text-xs text-red-700 dark:text-red-400" role="alert"></p>
+            <button type="submit" class="save-btn flex gap-2 items-center text-white text-sm px-4 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+          </div>
+        </footer>
       </form>
     </article>`;
   }
@@ -148,8 +161,10 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
     if (!card) return;
     if (e.target.closest('.add-header-btn')) {
       card.querySelector('.headers').insertAdjacentHTML('beforeend', headerRow());
+      card.querySelector('.no-headers').classList.add('hidden');
     } else if (e.target.closest('.remove-header-btn')) {
       e.target.closest('.header-row').remove();
+      card.querySelector('.no-headers').classList.toggle('hidden', card.querySelector('.header-row') !== null);
     } else if (e.target.closest('.toggle-active-btn')) {
       const p = integrationsById.get(card.dataset.id);
       const btn = e.target.closest('.toggle-active-btn');

@@ -191,8 +191,12 @@ func (h *handlers) respondProxyIntegration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	p, err := h.db.GetProxyIntegration(r.Context(), id)
-	if err != nil || p == nil {
-		writeError(w, http.StatusInternalServerError, "reload integration")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if p == nil {
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, newProxyIntegrationView(*p))
