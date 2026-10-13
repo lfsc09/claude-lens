@@ -151,6 +151,18 @@ Update price if it exists, otherwise create it (`--match` finds the row by `mode
 claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet-5"}' --row '{"model_prefix": "claude-sonnet-5", "input_per_m": 3, "output_per_m": 15, "cache_write_per_m": 4, "cache_read_per_m": 0.2}'
 ```
 
+Update a proxy integration (`proxy_integrations` rows come from migrations, so `--match` is required and the command fails if no row matches; `--match` can use `type` or `name`):
+
+```sh
+claude-lens --feed --table proxy_integrations --match '{"type": "litellm"}' --row '{"base_url": "https://litellm.example.com", "auth_token": "sk-...", "price_sync_interval_minutes": 60}'
+```
+
+Add or update a notification integration (`--match` can use `type` or `name`; secrets like `webhook_url` are masked by the API, so they cannot be matched on):
+
+```sh
+claude-lens --feed --table notification_integrations --match '{"name": "Team Slack"}' --row '{"name": "Team Slack", "type": "slack", "webhook_url": "https://hooks.slack.com/services/..."}'
+```
+
 `--row` must still be the full row on a match — any field it omits that the table accepts is reset to its default (e.g. an omitted `cache_read_per_m` becomes `0`, an omitted `*_above_200k` becomes unset), not left as its current value.
 
 ## Dummy data

@@ -15,11 +15,21 @@ import (
 	"github.com/lfsc09/claude-lens/internal/config"
 )
 
-// feedTables maps a --table value to the admin API endpoint that creates and
-// lists rows there. Add an entry here to make --feed support another table.
-var feedTables = map[string]string{
-	"limiters":     "/api/limiters",
-	"model_prices": "/api/prices",
+// feedTable describes how --feed reaches a table through the admin API.
+type feedTable struct {
+	endpoint string
+	// updateOnly rejects creating rows: the table's rows are inserted by
+	// migrations, so --feed may only update an existing one.
+	updateOnly bool
+}
+
+// feedTables maps a --table value to its admin API access. Add an entry here
+// to make --feed support another table.
+var feedTables = map[string]feedTable{
+	"limiters":                  {endpoint: "/api/limiters"},
+	"model_prices":              {endpoint: "/api/prices"},
+	"notification_integrations": {endpoint: "/api/notification-integrations"},
+	"proxy_integrations":        {endpoint: "/api/proxy-integrations", updateOnly: true},
 }
 
 // runFeed inserts or updates a single row in table via the admin API, so
@@ -28,12 +38,13 @@ var feedTables = map[string]string{
 // to create a new row. With match set to a JSON object of column:value
 // pairs, runFeed first looks up rows in table whose fields equal every pair
 // in match: no match still creates row, exactly one match updates it with
-// row, and more than one match is an error. All field validation for row
+// row, and more than one match is an error. For update-only tables, match is
+// required and no match is an error. All field validation for row
 // lives in the admin handler that receives it; runFeed only checks that
 // table is known and row/match are syntactically valid JSON before making
 // requests.
 func runFeed(ctx context.Context, cfg config.Config, table, row, match string) error {
-	endpoint, ok := feedTables[table]
+	spec, ok := feedTables[table]
 	if !ok {
 		names := make([]string, 0, len(feedTables))
 		for name := range feedTables {
@@ -46,7 +57,11 @@ func runFeed(ctx context.Context, cfg config.Config, table, row, match string) e
 		return fmt.Errorf("--row is not valid JSON")
 	}
 
-	base := "http://" + dialAddr(cfg.AdminAddr) + endpoint
+	if spec.updateOnly && match == "" {
+		return fmt.Errorf("table %q only supports updates, --match is required", table)
+	}
+
+	base := "http://" + dialAddr(cfg.AdminAddr) + spec.endpoint
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	if match != "" {
@@ -69,6 +84,9 @@ func runFeed(ctx context.Context, cfg config.Config, table, row, match string) e
 			}
 			fmt.Println(string(body))
 			return nil
+		}
+		if spec.updateOnly {
+			return fmt.Errorf("--match matched no row in %q, which only supports updates", table)
 		}
 	}
 

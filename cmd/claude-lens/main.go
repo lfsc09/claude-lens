@@ -29,7 +29,7 @@ import (
 
 func main() {
 	feed := flag.Bool("feed", false, "seed a single row into a table via the running admin API, instead of starting the service")
-	table := flag.String("table", "", "table to seed with --feed (limiters, model_prices)")
+	table := flag.String("table", "", "table to seed with --feed (limiters, model_prices, notification_integrations, proxy_integrations)")
 	row := flag.String("row", "", "row to insert or update with --feed, as a JSON object")
 	match := flag.String("match", "", "match an existing row by column:value pairs (JSON object) for --feed; updates it instead of inserting")
 	dummy := flag.Bool("dummy", false, "create dummy exchanges via the running admin API, instead of starting the service")
