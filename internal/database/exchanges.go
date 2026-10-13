@@ -132,10 +132,11 @@ type DailyCost struct {
 	DailyCost float64 `json:"daily_cost"`
 }
 
-// SaveExchange inserts one exchange row, its exchange_data payload and the
-// owning sessions row (created on a session's first exchange) in a single
-// transaction. On failure it logs the error and returns it; the caller
-// decides whether that should affect a response already sent to the client.
+// SaveExchange inserts one exchange row, its exchange_data payload (only
+// while the save_raw_payloads setting is on) and the owning sessions row
+// (created on a session's first exchange) in a single transaction. On
+// failure it logs the error and returns it; the caller decides whether that
+// should affect a response already sent to the client.
 func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	var cost *float64
 	if sum, any := sumCosts(e.InputCost, e.OutputCost, e.CacheCreationCost, e.CacheReadCost); any {
@@ -163,8 +164,8 @@ func (db *DB) SaveExchange(ctx context.Context, e Exchange) error {
 	return nil
 }
 
-// insertExchange writes the sessions, exchanges and exchange_data rows for e
-// atomically.
+// insertExchange writes the sessions, exchanges and, when raw payloads are
+// being saved, exchange_data rows for e atomically.
 func (db *DB) insertExchange(ctx context.Context, e Exchange, cost *float64) error {
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
@@ -197,11 +198,13 @@ func (db *DB) insertExchange(ctx context.Context, e Exchange, cost *float64) err
 		return fmt.Errorf("exchange id: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO exchange_data (exchange_id, raw_request, raw_response) VALUES (?, ?, ?)`,
-		exchangeID, e.RawRequest, e.RawResponse,
-	); err != nil {
-		return fmt.Errorf("insert exchange data: %w", err)
+	if db.saveRawPayloads.Load() {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO exchange_data (exchange_id, raw_request, raw_response) VALUES (?, ?, ?)`,
+			exchangeID, e.RawRequest, e.RawResponse,
+		); err != nil {
+			return fmt.Errorf("insert exchange data: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -292,7 +295,8 @@ func (db *DB) CountExchanges(ctx context.Context, filterQuery string) (int, erro
 
 // GetExchangeDetail returns a single exchange with its request/response
 // bodies and the output text assembled from the response, or nil if id
-// doesn't exist or its data was deleted.
+// doesn't exist or was deleted. Exchanges saved while raw payloads were off
+// come back with empty RawRequest/RawResponse.
 func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail, error) {
 	var e ExchangeDetail
 	var isStreaming int
@@ -301,10 +305,10 @@ func (db *DB) GetExchangeDetail(ctx context.Context, id int64) (*ExchangeDetail,
 		`SELECT exchanges.id, exchanges.session_id, sessions.name, exchanges.path, exchanges.created_at, exchanges.is_streaming,
 		        input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 		        model, cost, input_cost, output_cost, cache_creation_cost, cache_read_cost, matched_price,
-		        raw_request, raw_response
+		        COALESCE(raw_request, ''), COALESCE(raw_response, '')
 		 FROM exchanges
 		 JOIN sessions ON sessions.session_id = exchanges.session_id
-		 JOIN exchange_data ON exchange_data.exchange_id = exchanges.id
+		 LEFT JOIN exchange_data ON exchange_data.exchange_id = exchanges.id
 		 WHERE exchanges.id = ? AND exchanges.deleted_at IS NULL`, id,
 	).Scan(&e.ID, &e.SessionID, &e.SessionName, &e.Path, &e.CreatedAt, &isStreaming,
 		&e.InputTokens, &e.OutputTokens, &e.CacheCreationTokens, &e.CacheReadTokens,

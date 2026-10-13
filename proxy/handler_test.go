@@ -21,7 +21,7 @@ import (
 	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
-// openTestDB opens a throwaway database.
+// openTestDB opens a throwaway database with raw payload saving enabled.
 func openTestDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
@@ -29,6 +29,9 @@ func openTestDB(t *testing.T) *database.DB {
 		t.Fatalf("database.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if err := db.SetSaveRawPayloads(context.Background(), true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
 	return db
 }
 

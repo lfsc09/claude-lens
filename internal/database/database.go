@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lfsc09/claude-lens/internal/notify"
 	_ "modernc.org/sqlite"
@@ -26,6 +27,10 @@ type DB struct {
 	// the same limiter can't both observe AlertSent == false and send a
 	// duplicate budget-threshold alert.
 	alertMu sync.Mutex
+
+	// saveRawPayloads mirrors settings.save_raw_payloads so SaveExchange can
+	// check it per request without a query.
+	saveRawPayloads atomic.Bool
 }
 
 // SetNotifications wires up delivery for limiter alerts (both the
@@ -104,8 +109,9 @@ CREATE TABLE IF NOT EXISTS limiters (
 CREATE INDEX IF NOT EXISTS idx_limiters_session_id ON limiters (session_id);
 
 CREATE TABLE IF NOT EXISTS settings (
-    id         INTEGER PRIMARY KEY CHECK (id = 1),
-    updated_at REAL NOT NULL
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    save_raw_payloads INTEGER NOT NULL DEFAULT 0 CHECK (save_raw_payloads IN (0, 1)),
+    updated_at        REAL    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS proxy_integrations (
@@ -186,6 +192,10 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	if err := db.seedDefaultSettings(ctx); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("seed default settings: %w", err)
+	}
+	if err := db.loadSettings(ctx); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("load settings: %w", err)
 	}
 	if err := db.seedProxyIntegrations(ctx); err != nil {
 		sqlDB.Close()

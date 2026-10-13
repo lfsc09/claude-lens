@@ -806,6 +806,39 @@ func (h *handlers) setLimiterActive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"is_active": *req.IsActive})
 }
 
+// getSettings returns the global settings.
+func (h *handlers) getSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.db.GetSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// updateSettingsRequest is the payload for PATCH /api/settings; nil fields
+// are left unchanged.
+type updateSettingsRequest struct {
+	SaveRawPayloads *bool `json:"save_raw_payloads"`
+}
+
+// updateSettings applies the provided fields and returns the resulting
+// settings.
+func (h *handlers) updateSettings(w http.ResponseWriter, r *http.Request) {
+	var req updateSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.SaveRawPayloads != nil {
+		if err := h.db.SetSaveRawPayloads(r.Context(), *req.SaveRawPayloads); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	h.getSettings(w, r)
+}
+
 func (h *handlers) deleteLimiter(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {

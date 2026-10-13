@@ -877,6 +877,9 @@ func TestSetSessionName_BlankResetsToSessionID(t *testing.T) {
 func TestGetExchange_IncludesOutputTextAndCreatedAt(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
 	if err := db.SaveExchange(ctx, database.Exchange{
 		SessionID: "s1", Path: "/p", CreatedAt: 1234, RawRequest: "{}",
 		RawResponse: `{"content":[{"type":"text","text":"hello"}]}`,
@@ -898,5 +901,27 @@ func TestGetExchange_IncludesOutputTextAndCreatedAt(t *testing.T) {
 	}
 	if _, ok := body["timestamp"]; ok {
 		t.Errorf("detail still exposes timestamp: %v", body)
+	}
+}
+
+func TestSettings_GetAndPatchSaveRawPayloads(t *testing.T) {
+	s, db := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodGet, "/api/settings", nil)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"save_raw_payloads":false}` {
+		t.Fatalf("GET = %d %s, want default false", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, s, http.MethodPatch, "/api/settings", map[string]any{"save_raw_payloads": true})
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"save_raw_payloads":true}` {
+		t.Fatalf("PATCH = %d %s, want true", rec.Code, rec.Body.String())
+	}
+	if settings, _ := db.GetSettings(context.Background()); !settings.SaveRawPayloads {
+		t.Error("PATCH did not persist")
+	}
+
+	rec = doJSON(t, s, http.MethodPatch, "/api/settings", map[string]any{})
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"save_raw_payloads":true}` {
+		t.Fatalf("empty PATCH = %d %s, want value unchanged", rec.Code, rec.Body.String())
 	}
 }

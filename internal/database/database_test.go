@@ -108,6 +108,9 @@ func TestPricesCRUD(t *testing.T) {
 func TestSaveAndGetExchange(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
 	now := float64(time.Now().Unix())
 
 	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15}`
@@ -797,4 +800,79 @@ func TestConcurrentWrites(t *testing.T) {
 
 func round4(f float64) float64 {
 	return float64(int(f*10000+0.5)) / 10000
+}
+
+func TestSaveRawPayloads_DefaultsOffAndKeepsExchangeReadable(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	settings, err := db.GetSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetSettings: %v", err)
+	}
+	if settings.SaveRawPayloads {
+		t.Fatal("SaveRawPayloads defaults to true, want false")
+	}
+
+	e := Exchange{
+		SessionID: "s", Path: "/p", CreatedAt: 1, RawRequest: `{"a":1}`, RawResponse: `{"b":2}`,
+		InputTokens: intPtr(7), Model: strPtr("m"),
+	}
+	if err := db.SaveExchange(ctx, e); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	var rows int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM exchange_data`).Scan(&rows); err != nil {
+		t.Fatalf("count exchange_data: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("exchange_data rows = %d with setting off, want 0", rows)
+	}
+
+	list, err := db.GetExchanges(ctx, "", 10, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("GetExchanges = %v, %v; want 1 exchange", list, err)
+	}
+	detail, err := db.GetExchangeDetail(ctx, list[0].ID)
+	if err != nil || detail == nil {
+		t.Fatalf("GetExchangeDetail = %v, %v; want the exchange", detail, err)
+	}
+	if detail.RawRequest != "" || detail.RawResponse != "" || detail.InputTokens == nil || *detail.InputTokens != 7 {
+		t.Errorf("unexpected detail without payloads: %+v", detail)
+	}
+
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
+	e.CreatedAt = 2
+	if err := db.SaveExchange(ctx, e); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	list, _ = db.GetExchanges(ctx, "", 10, 0)
+	detail, _ = db.GetExchangeDetail(ctx, list[0].ID)
+	if detail == nil || detail.RawRequest != e.RawRequest || detail.RawResponse != e.RawResponse {
+		t.Errorf("payloads not saved with setting on: %+v", detail)
+	}
+}
+
+func TestSaveRawPayloads_PersistsAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
+	db.Close()
+
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db.Close()
+	if !db.saveRawPayloads.Load() {
+		t.Error("setting not restored into memory after reopen")
+	}
 }

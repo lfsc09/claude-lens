@@ -44,6 +44,20 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     return exchange;
   }
 
+  /**
+   * Renders one Request/Response tab button, selected when it is the first
+   * tab with content and disabled when its payload is empty.
+   * @param {string} name - Tab key: "request" | "response".
+   * @param {string} label - Visible tab label.
+   * @param {string} payload - Raw payload the tab reveals.
+   * @param {?string} selected - Key of the initially selected tab.
+   * @returns {string} Button markup.
+   */
+  function tabButton(name, label, payload, selected) {
+    const active = name === selected;
+    return `<button type="button" role="tab" id="${name}-tab" aria-selected="${active}" aria-controls="${name}-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${active ? 'bg-fg text-canvas' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="${name}" ${payload ? '' : 'disabled'}>${label}</button>`;
+  }
+
   const ABOVE_200K_TOKENS = 200_000;
   const ABOVE_200K_FIELDS = [
     ['input_per_m_above_200k', 'Input $/M (above 200k)'],
@@ -79,6 +93,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     document.getElementById('page-title').textContent = `Exchange #${exchange.id} – claude-lens Admin`;
 
     const content = document.getElementById('exchange-content');
+    const firstTab = exchange.raw_request ? 'request' : exchange.raw_response ? 'response' : null;
     let html = `
       <h1 class="text-xl font-semibold">Exchange #${exchange.id}</h1>
       <section class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -168,12 +183,18 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
           </div>
         ` : ``}
       </section>
+      ${firstTab ? `
       <section class="flex flex-col gap-4">
         <div class="flex w-full gap-0.5 rounded-lg shadow-xs *:text-sm" role="tablist">
-          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-fg text-canvas' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
-          <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded bg-surface-active hover:bg-surface-strong" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
+          ${tabButton('request', 'Request', exchange.raw_request, firstTab)}
+          ${tabButton('response', 'Response', exchange.raw_response, firstTab)}
         </div>
       </section>
+      ` : `
+      <section class="text-sm text-fg-muted p-4 bg-surface rounded-lg border border-line border-dashed" role="status">
+        No raw payload was saved for this exchange. Enable "Save raw payloads" in Settings to keep request and response bodies of new exchanges.
+      </section>
+      `}
     `;
 
     if (exchange.raw_request) {
@@ -212,7 +233,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
 
     if (exchange.raw_response) {
       html += `
-        <section class="hidden flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
+        <section class="${firstTab === 'response' ? '' : 'hidden '}flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
           <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
             <h2 class="font-semibold uppercase tracking-wide">Response</h2>
             <div class="flex flex-col items-end gap-2">

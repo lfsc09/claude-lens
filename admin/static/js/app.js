@@ -8,6 +8,30 @@ const txtEncoder = new TextEncoder();
 const NAV_LINK_ACTIVE = 'text-emerald-50 py-1 px-2 rounded-lg bg-emerald-700 shadow-md hover:shadow-emerald-700/50 transition';
 const NAV_LINK_INACTIVE = 'text-fg-muted hover:text-fg';
 
+const PROXY_BADGE_BASE = 'px-2 py-1 border border-dashed text-xs rounded-lg';
+const PROXY_STATUSES = {
+  ok: {
+    label: 'OK',
+    badge: 'border-emerald-300 dark:border-emerald-700 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  degraded: {
+    label: 'Degraded',
+    badge: 'border-yellow-300 dark:border-yellow-700 bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-400',
+    dot: 'bg-yellow-500',
+  },
+  unreachable: {
+    label: 'Unreachable',
+    badge: 'border-red-300 dark:border-red-700 bg-red-100 dark:bg-red-500/20 text-red-800 dark:text-red-300',
+    dot: 'bg-red-500 animate-pulse',
+  },
+  unknown: {
+    label: 'Unknown',
+    badge: 'border-line-strong bg-surface-hover text-fg',
+    dot: 'bg-fg-subtle',
+  },
+};
+
 /**
  * Applies the given theme to the document, persists it, and notifies
  * listeners (e.g. the JSON viewer) so they can follow along.
@@ -54,18 +78,46 @@ class SiteNav extends HTMLElement {
     const menuItemClass = (key) => (key === active
       ? 'block text-emerald-700 dark:text-emerald-400 font-semibold px-3 py-2 bg-emerald-50 dark:bg-emerald-500/15'
       : 'block text-fg-muted hover:text-fg px-3 py-2 hover:bg-surface-hover');
-    const menu = (id, label, items) => `
-          <div class="relative" data-nav-menu>
-            <button type="button" id="${id}-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="${id}-menu" class="flex items-center gap-1 ${items.some(([key]) => key === active) ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE}">
-              ${label}
-              <svg id="${id}-menu-chevron" class="h-3 w-3 transition-transform" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <div id="${id}-menu" role="menu" aria-labelledby="${id}-menu-button" class="hidden absolute left-0 z-50 w-48 mt-2 py-1 bg-surface rounded-lg border border-line shadow-lg">
-              ${items.map(([key, href, text]) => `<a href="${href}" role="menuitem" class="${menuItemClass(key)}">${text}</a>`).join('\n              ')}
-            </div>
-          </div>`;
+    const dropdown = (id, buttonClass, buttonContent, panelClass, body) => `
+      <div class="relative" data-nav-menu>
+        <button type="button" id="${id}-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="${id}-menu" class="flex items-center gap-1.5 ${buttonClass}">
+          ${buttonContent}
+          <svg class="h-3 w-3 transition-transform" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <div id="${id}-menu" role="menu" aria-labelledby="${id}-menu-button" class="hidden absolute z-50 mt-2 py-1 bg-surface rounded-lg border border-line shadow-lg ${panelClass}">
+          ${body}
+        </div>
+      </div>`;
+    const menu = (id, label, items) => dropdown(
+      id,
+      items.some(([key]) => key === active) ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE,
+      label,
+      'left-0 w-48',
+      items.map(([key, href, text]) => `<a href="${href}" role="menuitem" class="${menuItemClass(key)}">${text}</a>`).join('\n              '),
+    );
+    const switchRow = (id, label, hint = '') => `<button type="button" id="${id}" role="menuitemcheckbox" aria-checked="false" class="group flex items-center justify-between w-full text-left text-fg-muted gap-4 px-3 py-2 hover:text-fg hover:bg-surface-hover disabled:opacity-50 disabled:pointer-events-none">
+                <span class="flex flex-col">
+                  ${label}
+                  ${hint && `<span class="text-xs text-fg-subtle">${hint}</span>`}
+                </span>
+                <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-surface-strong group-aria-checked:bg-emerald-600 transition-colors" aria-hidden="true">
+                  <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform group-aria-checked:translate-x-4"></span>
+                </span>
+              </button>`;
+    const settingsMenu = dropdown(
+      'settings',
+      'text-xs text-fg-muted px-2 py-1.5 border border-line-strong rounded-lg bg-surface hover:text-fg hover:bg-surface-hover transition',
+      '<span id="proxy-status-dot" class="h-2 w-2 rounded-full" aria-hidden="true"></span>Settings',
+      'right-0 w-72',
+      `<div role="menuitem" class="flex items-center justify-between text-fg-muted gap-4 px-3 py-2">
+                Proxy Service
+                <span id="proxy-status"></span>
+              </div>
+              ${switchRow('theme-toggle', 'Dark mode')}
+              ${switchRow('save-raw-toggle', 'Save raw payloads', 'Keep request/response bodies of new exchanges')}`,
+    );
 
     this.innerHTML = `
       <header class="px-6 py-3 bg-surface border-b border-line">
@@ -80,16 +132,7 @@ class SiteNav extends HTMLElement {
           <a href="/limiters" class="${linkClass('limiters')}">Limiters</a>
           ${menu('integrations', 'Integrations', [['proxy-integrations', '/integrations/proxy', 'Proxy'], ['notification-integrations', '/integrations/notifications', 'Notifications']])}
           <a href="/about" class="${linkClass('about')}">About</a>
-          <div class="flex items-center gap-2 ml-auto">
-            <span id="proxy-status" class="text-xs text-fg-muted px-2 py-1.5 border border-line-strong border-dashed rounded-lg">Proxy Service</span>
-            <button type="button" id="theme-toggle" aria-label="Toggle dark mode" class="text-fg-muted hover:text-fg p-1.5 rounded-lg border border-line-strong bg-surface hover:bg-surface-hover transition">
-              <svg class="h-4 w-4 dark:hidden" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4.22 2.05a1 1 0 011.41 1.41l-.7.7a1 1 0 01-1.42-1.4l.7-.71zM17 9a1 1 0 110 2h-1a1 1 0 110-2h1zM4 9a1 1 0 110 2H3a1 1 0 110-2h1zm11.71 5.66a1 1 0 01-1.41 1.41l-.71-.7a1 1 0 011.41-1.42l.71.71zM6.34 5.76a1 1 0 01-1.41-1.41l.7-.71a1 1 0 111.42 1.41l-.71.71zM4.93 14.66a1 1 0 011.41 1.41l-.7.71a1 1 0 11-1.42-1.41l.71-.71zM10 5a5 5 0 100 10 5 5 0 000-10zm0 1a1 1 0 011 1v8a1 1 0 11-2 0V3a1 1 0 011-1z" />
-              </svg>
-              <svg class="hidden h-4 w-4 dark:block" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-              </svg>
-            </button>
+          <div class="ml-auto">${settingsMenu}
           </div>
         </nav>
       </header>
@@ -97,6 +140,7 @@ class SiteNav extends HTMLElement {
 
     this.menus = [...this.querySelectorAll('[data-nav-menu]')];
     this.themeToggle = this.querySelector('#theme-toggle');
+    this.saveRawToggle = this.querySelector('#save-raw-toggle');
     this.onDocumentClick = (e) => {
       this.menus.forEach((m) => {
         if (!m.contains(e.target)) this.setMenuOpen(m, false);
@@ -111,14 +155,66 @@ class SiteNav extends HTMLElement {
         this.menus.forEach((other) => this.setMenuOpen(other, other === m && opening));
       });
     });
-    this.themeToggle.addEventListener('click', () => applyTheme(!isDarkTheme()));
+    this.onThemeChange = () => this.themeToggle.setAttribute('aria-checked', String(isDarkTheme()));
+    this.querySelector('#settings-menu').addEventListener('click', (e) => {
+      const toggle = e.target.closest('[role="menuitemcheckbox"]');
+      if (toggle === this.themeToggle) applyTheme(!isDarkTheme());
+      else if (toggle === this.saveRawToggle) this.toggleSaveRawPayloads();
+    });
+    this.onThemeChange();
+    this.saveRawToggle.disabled = true;
+    this.loadSettings();
+    updateProxyStatusBadge();
+    window.addEventListener('themechange', this.onThemeChange);
     document.addEventListener('click', this.onDocumentClick);
     document.addEventListener('keydown', this.onDocumentKeydown);
   }
 
   disconnectedCallback() {
+    window.removeEventListener('themechange', this.onThemeChange);
     document.removeEventListener('click', this.onDocumentClick);
     document.removeEventListener('keydown', this.onDocumentKeydown);
+  }
+
+  /**
+   * Fetches the global settings and reflects them on their switches, which
+   * stay disabled until the server's values are known.
+   * @returns {Promise<void>}
+   */
+  async loadSettings() {
+    try {
+      const res = await fetch('/api/settings');
+      if (!res.ok) return;
+      const settings = await res.json();
+      this.saveRawToggle.setAttribute('aria-checked', String(settings.save_raw_payloads));
+      this.saveRawToggle.disabled = false;
+    } catch {
+      return;
+    }
+  }
+
+  /**
+   * Flips the save-raw-payloads setting optimistically, restoring the
+   * previous state if the server rejects the change. The switch is disabled
+   * while the request is in flight so rapid clicks cannot interleave.
+   * @returns {Promise<void>}
+   */
+  async toggleSaveRawPayloads() {
+    const enabled = this.saveRawToggle.getAttribute('aria-checked') !== 'true';
+    this.saveRawToggle.setAttribute('aria-checked', String(enabled));
+    this.saveRawToggle.disabled = true;
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ save_raw_payloads: enabled }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      this.saveRawToggle.setAttribute('aria-checked', String(!enabled));
+    } finally {
+      this.saveRawToggle.disabled = false;
+    }
   }
 
   /**
@@ -348,26 +444,19 @@ export function connectSSE(range, onMessage) {
   return eventSource;
 }
 
+/**
+ * Reflects the proxy service status on the settings menu's badge and on the
+ * status dot of the menu's trigger button.
+ * @param {string} [statusValue] - 'ok' | 'degraded' | 'unreachable'; anything else renders as unknown.
+ */
 export function updateProxyStatusBadge(statusValue) {
-  const el = document.getElementById('proxy-status');
-  if (!el) return;
-  switch (statusValue) {
-    case 'ok':
-      el.textContent = 'Proxy Service: OK';
-      el.className = 'px-2 py-1.5 border border-emerald-300 dark:border-emerald-700 border-dashed text-xs text-fg-muted rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300';
-      break;
-    case 'degraded':
-      el.textContent = 'Proxy Service: Degraded';
-      el.className = 'px-2 py-1.5 border border-yellow-300 dark:border-yellow-700 border-dashed text-xs text-fg-muted rounded-lg bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-400';
-      break;
-    case 'unreachable':
-      el.textContent = 'Proxy Service: Unreachable';
-      el.className = 'px-2 py-1.5 border border-red-300 dark:border-red-700 border-dashed text-xs text-fg-muted rounded-lg bg-red-100 dark:bg-red-500/20 text-red-800 dark:text-red-300 animate-pulse';
-      break;
-    default:
-      el.textContent = 'Proxy Service: Unknown';
-      el.className = 'px-2 py-1.5 border border-line-strong border-dashed text-xs text-fg-muted rounded-lg bg-surface-hover text-fg';
-  }
+  const badge = document.getElementById('proxy-status');
+  const dot = document.getElementById('proxy-status-dot');
+  if (!badge || !dot) return;
+  const status = PROXY_STATUSES[Object.hasOwn(PROXY_STATUSES, statusValue) ? statusValue : 'unknown'];
+  badge.textContent = status.label;
+  badge.className = `${PROXY_BADGE_BASE} ${status.badge}`;
+  dot.className = `h-2 w-2 rounded-full ${status.dot}`;
 }
 
 /**
