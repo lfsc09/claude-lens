@@ -100,7 +100,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
 
   /**
    * Renders the banner stating whether requests go through a proxy or directly to Anthropic.
-   * @param {?object} active - The active proxy integration, or null when requests go direct.
+   * @param {?object} [active] - The active proxy integration, or null when requests go direct.
    * @param {boolean} [hidden=false] - Whether to hide the banner, e.g. when loading failed.
    */
   function renderModeNote(active, hidden = false) {
@@ -116,7 +116,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
       : 'No proxy is active — requests go directly to the Anthropic API.';
     modeNote.className = `flex items-start gap-3 max-w-2xl mt-4 px-4 py-3 border rounded-lg ${tone}`;
     modeNote.innerHTML = `<span class="relative flex shrink-0 w-2.5 h-2.5 mt-1.5" aria-hidden="true">
-        ${active ? `<span class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping ${dot}"></span>` : ''}
+        ${active ? `<span class="absolute inline-flex w-full h-full rounded-full opacity-75 motion-safe:animate-ping ${dot}"></span>` : ''}
         <span class="relative inline-flex w-2.5 h-2.5 rounded-full ${dot}"></span>
       </span>
       <div>
@@ -138,7 +138,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
     integrationsById.clear();
     integrations.forEach((p) => integrationsById.set(String(p.id), p));
     const active = integrations.find((p) => p.active);
-    renderModeNote(active);
+    renderModeNote(active ?? null);
     cardsEl.innerHTML = integrations.length
       ? integrations.map(buildCard).join('')
       : '<p class="text-center text-fg-subtle py-8">No proxy integrations available.</p>';
@@ -150,31 +150,34 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
    */
   function flashSaved(card) {
     const el = card.querySelector('.card-message');
-    setCardMessage(card, 'Saved', false);
-    el.innerHTML = CHECK_ICON;
-    el.setAttribute('aria-label', 'Saved');
+    setCardMessage(card, 'Saved', false, CHECK_ICON);
     const icon = el.firstElementChild;
+    // Reading layout commits the initial opacity so the fade-in transition runs.
     icon.getBoundingClientRect();
     icon.classList.remove('opacity-0');
     messageTimers.set(el, setTimeout(() => {
       icon.classList.add('opacity-0');
-      messageTimers.set(el, setTimeout(() => {
-        setCardMessage(card, '');
-        el.removeAttribute('aria-label');
-      }, SAVED_FADE_MS));
+      messageTimers.set(el, setTimeout(() => setCardMessage(card, ''), SAVED_FADE_MS));
     }, SAVED_FLASH_MS));
   }
 
   /**
    * Shows a status line beside a card's Save button, or hides it when text is empty.
    * @param {HTMLElement} card - The card element.
-   * @param {string} text - Message to show.
+   * @param {string} text - Message to show; also the accessible label when markup is given.
    * @param {boolean} [isError=true] - Whether to style and announce it as an error.
+   * @param {?string} [markup=null] - HTML to render in place of the text.
    */
-  function setCardMessage(card, text, isError = true) {
+  function setCardMessage(card, text, isError = true, markup = null) {
     const el = card.querySelector('.card-message');
     clearTimeout(messageTimers.get(el));
-    el.textContent = text;
+    if (markup) {
+      el.innerHTML = markup;
+      el.setAttribute('aria-label', text);
+    } else {
+      el.textContent = text;
+      el.removeAttribute('aria-label');
+    }
     el.setAttribute('role', isError ? 'alert' : 'status');
     el.classList.toggle('hidden', !text);
     el.classList.toggle('text-red-700', isError);
