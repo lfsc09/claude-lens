@@ -11,6 +11,10 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
   const FIELD_CLASS = `w-full ${FIELD_BASE}`;
   const LABEL_CLASS = 'block text-xs text-fg-muted uppercase tracking-wide mb-1';
   const BUTTON_CLASS = 'flex gap-2 items-center text-sm text-fg px-3 py-1.5 bg-surface border border-line-strong rounded-md hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed';
+  const CHECK_ICON = '<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 opacity-0 transition-opacity duration-150" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>';
+  const SAVED_FLASH_MS = 3000;
+  const SAVED_FADE_MS = 300;
+  const messageTimers = new WeakMap();
   const PRICE_ENDPOINTS = { litellm: '/model/info', bifrost: '/v1/models' };
 
   /**
@@ -86,12 +90,39 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
             <p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-subtle'} text-xs">${esc(syncStatus(p))}</p>
           </div>
           <div class="flex items-center gap-3">
-            <p class="card-message hidden text-xs text-red-700 dark:text-red-400" role="alert"></p>
+            <p class="card-message hidden text-xs" role="alert"></p>
             <button type="submit" class="save-btn flex gap-2 items-center text-white text-sm px-4 py-1.5 bg-emerald-600 rounded-md hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
           </div>
         </footer>
       </form>
     </article>`;
+  }
+
+  /**
+   * Renders the banner stating whether requests go through a proxy or directly to Anthropic.
+   * @param {?object} active - The active proxy integration, or null when requests go direct.
+   * @param {boolean} [hidden=false] - Whether to hide the banner, e.g. when loading failed.
+   */
+  function renderModeNote(active, hidden = false) {
+    modeNote.classList.toggle('hidden', hidden);
+    if (hidden) return;
+    const tone = active
+      ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950'
+      : 'border-line-strong bg-surface';
+    const dot = active ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-fg-subtle';
+    const title = active ? `Routing through ${active.name}` : 'Direct to Anthropic';
+    const detail = active
+      ? `Requests are forwarded to <code>${esc(active.base_url)}</code>.`
+      : 'No proxy is active — requests go directly to the Anthropic API.';
+    modeNote.className = `flex items-start gap-3 max-w-2xl mt-4 px-4 py-3 border rounded-lg ${tone}`;
+    modeNote.innerHTML = `<span class="relative flex shrink-0 w-2.5 h-2.5 mt-1.5" aria-hidden="true">
+        ${active ? `<span class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping ${dot}"></span>` : ''}
+        <span class="relative inline-flex w-2.5 h-2.5 rounded-full ${dot}"></span>
+      </span>
+      <div>
+        <p class="text-sm font-semibold text-fg">${esc(title)}</p>
+        <p class="text-xs text-fg-muted mt-0.5">${detail}</p>
+      </div>`;
   }
 
   /** Fetches the integrations and renders their cards, or an error when the fetch fails. */
@@ -100,30 +131,56 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
     try {
       integrations = await getJSON('/api/proxy-integrations');
     } catch (err) {
-      modeNote.textContent = '';
+      renderModeNote(null, true);
       cardsEl.innerHTML = errorBlock(err.message);
       return;
     }
     integrationsById.clear();
     integrations.forEach((p) => integrationsById.set(String(p.id), p));
     const active = integrations.find((p) => p.active);
-    modeNote.textContent = active
-      ? `Requests are routed through ${active.name}.`
-      : 'No proxy is active — requests go directly to the Anthropic API.';
+    renderModeNote(active);
     cardsEl.innerHTML = integrations.length
       ? integrations.map(buildCard).join('')
       : '<p class="text-center text-fg-subtle py-8">No proxy integrations available.</p>';
   }
 
   /**
-   * Shows an error under a card's form, or hides it when text is empty.
+   * Fades in a green check beside a card's Save button, then fades it out after a short delay.
    * @param {HTMLElement} card - The card element.
-   * @param {string} text - Error message.
    */
-  function setCardMessage(card, text) {
+  function flashSaved(card) {
     const el = card.querySelector('.card-message');
+    setCardMessage(card, 'Saved', false);
+    el.innerHTML = CHECK_ICON;
+    el.setAttribute('aria-label', 'Saved');
+    const icon = el.firstElementChild;
+    icon.getBoundingClientRect();
+    icon.classList.remove('opacity-0');
+    messageTimers.set(el, setTimeout(() => {
+      icon.classList.add('opacity-0');
+      messageTimers.set(el, setTimeout(() => {
+        setCardMessage(card, '');
+        el.removeAttribute('aria-label');
+      }, SAVED_FADE_MS));
+    }, SAVED_FLASH_MS));
+  }
+
+  /**
+   * Shows a status line beside a card's Save button, or hides it when text is empty.
+   * @param {HTMLElement} card - The card element.
+   * @param {string} text - Message to show.
+   * @param {boolean} [isError=true] - Whether to style and announce it as an error.
+   */
+  function setCardMessage(card, text, isError = true) {
+    const el = card.querySelector('.card-message');
+    clearTimeout(messageTimers.get(el));
     el.textContent = text;
+    el.setAttribute('role', isError ? 'alert' : 'status');
     el.classList.toggle('hidden', !text);
+    el.classList.toggle('text-red-700', isError);
+    el.classList.toggle('dark:text-red-400', isError);
+    el.classList.toggle('text-emerald-700', !isError);
+    el.classList.toggle('dark:text-emerald-400', !isError);
   }
 
   /**
@@ -157,7 +214,9 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
         setCardMessage(card, await extractErrorMessage(res, 'Failed to save integration.'));
         return;
       }
-      loadIntegrations();
+      await loadIntegrations();
+      const savedCard = cardsEl.querySelector(`.proxy-card[data-id="${card.dataset.id}"]`);
+      if (savedCard) flashSaved(savedCard);
     });
   });
 
