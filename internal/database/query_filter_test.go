@@ -20,11 +20,11 @@ func TestCompileExchangeFilter_Valid(t *testing.T) {
 		{"number gt", `cost > 0.5`, "cost > ?", []any{0.5}},
 		{"number no spaces", `cost>=0.5`, "cost >= ?", []any{0.5}},
 		{"negative number", `id != -1`, "id != ?", []any{-1.0}},
-		{"session maps to two columns", `session = "abc"`, "(exchanges.session_id = ? OR sn.name = ?)", []any{"abc", "abc"}},
-		{"session like maps to two columns", `session like abc`, `(exchanges.session_id LIKE ? ESCAPE '\' OR sn.name LIKE ? ESCAPE '\')`, []any{"%abc%", "%abc%"}},
+		{"session maps to two columns", `session = "abc"`, "(exchanges.session_id = ? OR sessions.name = ?)", []any{"abc", "abc"}},
+		{"session like maps to two columns", `session like abc`, `(exchanges.session_id LIKE ? ESCAPE '\' OR sessions.name LIKE ? ESCAPE '\')`, []any{"%abc%", "%abc%"}},
 		{"bool true", `stream = true`, "is_streaming = ?", []any{1}},
 		{"bool false", `stream = false`, "is_streaming = ?", []any{0}},
-		{"date", `date >= 2026-08-01`, "timestamp >= ?", nil}, // arg checked separately (depends on local tz)
+		{"date", `date >= 2026-08-01`, "created_at >= ?", nil}, // arg checked separately (depends on local tz)
 		{
 			"and",
 			`model = sonnet AND cost > 0.5`,
@@ -127,32 +127,6 @@ func TestCompileExchangeFilter_Errors(t *testing.T) {
 			_, _, err := CompileExchangeFilter(tt.query)
 			if err == nil {
 				t.Fatalf("CompileExchangeFilter(%q): expected error, got nil", tt.query)
-			}
-		})
-	}
-}
-
-func TestExtractExactSession(t *testing.T) {
-	tests := []struct {
-		name   string
-		query  string
-		wantID string
-		wantOK bool
-	}{
-		{"exact session equals", `session = "abc-123"`, "abc-123", true},
-		{"unquoted value", `session = abc-123`, "abc-123", true},
-		{"session like is not exact", `session like abc`, "", false},
-		{"session anded with something else", `session = "abc" AND cost > 1`, "", false},
-		{"session ored with something else", `session = "abc" OR cost > 1`, "", false},
-		{"wrong field", `model = "abc"`, "", false},
-		{"empty query", ``, "", false},
-		{"malformed query", `session = `, "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			id, ok := ExtractExactSession(tt.query)
-			if id != tt.wantID || ok != tt.wantOK {
-				t.Errorf("ExtractExactSession(%q) = (%q, %v), want (%q, %v)", tt.query, id, ok, tt.wantID, tt.wantOK)
 			}
 		})
 	}

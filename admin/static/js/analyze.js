@@ -1,6 +1,6 @@
-import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, initNavPolling, jsonViewerTheme } from './app.js';
-
 'use strict';
+
+import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, initNavPolling, jsonViewerTheme } from './app.js';
 
 (() => {
   let loaded = null; // { rawText: string, payload: object, sourceLabel: string }

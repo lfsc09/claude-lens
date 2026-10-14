@@ -119,3 +119,21 @@ func TestFetchModelPrices_NonOKStatusIsAnError(t *testing.T) {
 		t.Fatal("expected an error for a 404 response (e.g. a non-LiteLLM upstream)")
 	}
 }
+
+func TestFetchModelPrices_SkipsModelsWithoutInputAndOutputPrice(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[
+			{"model_name":"claude-unpriced","model_info":{}},
+			{"model_name":"claude-input-only","model_info":{"input_cost_per_token":0.000001}},
+			{"model_name":"claude-good","model_info":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}]}`))
+	}))
+	defer srv.Close()
+
+	prices, err := NewClient().FetchModelPrices(context.Background(), srv.URL, "")
+	if err != nil {
+		t.Fatalf("FetchModelPrices: %v", err)
+	}
+	if len(prices) != 1 || prices[0].ModelName != "claude-good" {
+		t.Fatalf("got %+v, want only claude-good", prices)
+	}
+}

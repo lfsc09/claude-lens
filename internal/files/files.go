@@ -4,14 +4,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
+var claudeSessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// IsClaudeSessionID reports whether id has the UUID shape of a Claude Code
+// session id, the only ids whose files TryDeleteClaudeSession will remove.
+func IsClaudeSessionID(id string) bool {
+	return claudeSessionID.MatchString(id)
+}
+
 // TryDeleteClaudeSession attempts to delete the Claude session files and folders for the given session ID.
-// It returns the number of deleted files or directories and an error, if any.
+// It returns the number of deleted files or directories and an error, if any. Ids that are not
+// Claude Code session UUIDs are rejected so a crafted id cannot match unrelated files under ~/.claude.
 func TryDeleteClaudeSession(sessionID string) (int, error) {
-	if sessionID == "" {
-		return 0, fmt.Errorf("session_id is required")
+	if !IsClaudeSessionID(sessionID) {
+		return 0, fmt.Errorf("session_id %q is not a Claude session id", sessionID)
 	}
 
 	claudeDir, err := getDefaultClaudeProjectsDir()

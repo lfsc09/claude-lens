@@ -83,7 +83,7 @@ func TestSSEStream_PushesOnConnectThenOnlyOnChange(t *testing.T) {
 
 	s, db, st, fresh, limitersFresh := newTestServerWithStatus(t)
 	if err := db.SaveExchange(context.Background(), database.Exchange{
-		SessionID: "s1", Path: "/p", Timestamp: float64(time.Now().Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/p", CreatedAt: float64(time.Now().Unix()), RawRequest: "{}", RawResponse: "{}",
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
@@ -209,13 +209,13 @@ func TestBuildSSEPayload_RangeFiltersTotals(t *testing.T) {
 	recentTok, midOldTok := 111, 222
 	now := time.Now()
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "recent", Path: "/p", Timestamp: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "recent", Path: "/p", CreatedAt: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &recentTok,
 	}); err != nil {
 		t.Fatalf("SaveExchange(recent): %v", err)
 	}
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "mid-old", Path: "/p", Timestamp: float64(now.AddDate(0, 0, -50).Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "mid-old", Path: "/p", CreatedAt: float64(now.AddDate(0, 0, -50).Unix()), RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &midOldTok,
 	}); err != nil {
 		t.Fatalf("SaveExchange(mid-old): %v", err)

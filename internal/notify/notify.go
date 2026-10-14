@@ -15,9 +15,7 @@ type Client struct {
 	http *http.Client
 }
 
-// NewClient builds a Client with a 5s request timeout — generous for
-// Slack's webhook endpoint without risking a stuck request piling up behind
-// proxied traffic, since callers always dispatch Send in its own goroutine.
+// NewClient builds a Client with a 5s request timeout.
 func NewClient() *Client {
 	return &Client{http: &http.Client{Timeout: 5 * time.Second}}
 }

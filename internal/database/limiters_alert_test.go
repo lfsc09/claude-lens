@@ -49,25 +49,57 @@ func assertNoMoreAlerts(t *testing.T, got *atomic.Int32, want int32) {
 	}
 }
 
+// addNotification registers an active Slack integration posting to url and
+// returns its id.
+func addNotification(t *testing.T, db *DB, url string) int64 {
+	t.Helper()
+	now := float64(time.Now().Unix())
+	id, err := db.CreateNotificationIntegration(context.Background(), NotificationIntegration{
+		Type: NotificationTypeSlack, Name: url, WebhookURL: url, Active: true, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("CreateNotificationIntegration: %v", err)
+	}
+	return id
+}
+
+// alertLimiter builds an active limiter for sessionID whose window ends in an
+// hour, linked to the given notification links.
+func alertLimiter(sessionID string, limit float64, links ...LimiterNotification) Limiter {
+	now := time.Now()
+	return Limiter{
+		SessionID:     sessionID,
+		LimitAmount:   limit,
+		RefreshValue:  60,
+		RefreshUnit:   "minutes",
+		NextRefreshAt: float64(now.Add(time.Hour).Unix()),
+		IsActive:      true,
+		CreatedAt:     float64(now.Unix()),
+		UpdatedAt:     float64(now.Unix()),
+		Notifications: links,
+	}
+}
+
+func firstLinkAlertSent(t *testing.T, db *DB, id int64) bool {
+	t.Helper()
+	got, err := db.GetLimiter(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetLimiter: %v", err)
+	}
+	if len(got.Notifications) != 1 {
+		t.Fatalf("got %d notification links, want 1", len(got.Notifications))
+	}
+	return got.Notifications[0].AlertSent
+}
+
 func TestAccrueLimiterCost_BudgetAlertFiresOnceOnThresholdCross(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	now := time.Now()
 	server, count := newAlertServer(t)
 	db.SetNotifications(notify.NewClient())
 
-	id, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:         "sess_alert",
-		LimitAmount:       1.0,
-		RefreshValue:      60,
-		RefreshUnit:       "minutes",
-		NextRefreshAt:     float64(now.Add(time.Hour).Unix()),
-		IsActive:          true,
-		CreatedAt:         float64(now.Unix()),
-		UpdatedAt:         float64(now.Unix()),
-		AlertThresholdPct: intPtr(80),
-		SlackWebhookURL:   server.URL,
-	})
+	id, err := db.CreateLimiter(ctx, alertLimiter("sess_alert", 1.0,
+		LimiterNotification{NotificationID: addNotification(t, db, server.URL), ThresholdPct: intPtr(80)}))
 	if err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
@@ -79,12 +111,7 @@ func TestAccrueLimiterCost_BudgetAlertFiresOnceOnThresholdCross(t *testing.T) {
 	// Crosses 80% of the $1.00 budget: exactly one alert fires.
 	saveExchangeWithCost(t, db, "sess_alert", 0.05)
 	waitForCount(t, count, 1)
-
-	got, err := db.GetLimiter(ctx, id)
-	if err != nil {
-		t.Fatalf("GetLimiter: %v", err)
-	}
-	if !got.AlertSent {
+	if !firstLinkAlertSent(t, db, id) {
 		t.Error("AlertSent = false after crossing threshold, want true")
 	}
 
@@ -94,27 +121,17 @@ func TestAccrueLimiterCost_BudgetAlertFiresOnceOnThresholdCross(t *testing.T) {
 }
 
 // TestAccrueLimiterCost_BudgetAlertResetsOnRefresh confirms AlertSent is
-// cleared by refreshIfDue, so a limiter that crosses its threshold again in
-// a later window gets a fresh alert instead of staying silenced forever.
+// cleared when the window refreshes, so a limiter that crosses its threshold
+// again in a later window gets a fresh alert instead of staying silenced
+// forever.
 func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	now := time.Now()
 	server, count := newAlertServer(t)
 	db.SetNotifications(notify.NewClient())
 
-	id, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:         "sess_reset",
-		LimitAmount:       1.0,
-		RefreshValue:      60,
-		RefreshUnit:       "minutes",
-		NextRefreshAt:     float64(now.Add(time.Hour).Unix()),
-		IsActive:          true,
-		CreatedAt:         float64(now.Unix()),
-		UpdatedAt:         float64(now.Unix()),
-		AlertThresholdPct: intPtr(50),
-		SlackWebhookURL:   server.URL,
-	})
+	id, err := db.CreateLimiter(ctx, alertLimiter("sess_reset", 1.0,
+		LimiterNotification{NotificationID: addNotification(t, db, server.URL), ThresholdPct: intPtr(50)}))
 	if err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
@@ -122,17 +139,15 @@ func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 	// First window: crosses 50% and alerts once.
 	saveExchangeWithCost(t, db, "sess_reset", 0.60)
 	waitForCount(t, count, 1)
+	if !firstLinkAlertSent(t, db, id) {
+		t.Fatal("AlertSent = false after crossing threshold, want true")
+	}
 
+	// Force the window due again (as if its refresh boundary had passed).
 	got, err := db.GetLimiter(ctx, id)
 	if err != nil {
 		t.Fatalf("GetLimiter: %v", err)
 	}
-	if !got.AlertSent {
-		t.Fatal("AlertSent = false after crossing threshold, want true")
-	}
-
-	// Force the window due again (as if its refresh boundary had passed)
-	// without touching AlertSent — that's refreshIfDue's job, not ours.
 	got.NextRefreshAt = float64(time.Now().Add(-time.Minute).Unix())
 	if err := db.UpdateLimiter(ctx, *got); err != nil {
 		t.Fatalf("UpdateLimiter: %v", err)
@@ -147,7 +162,7 @@ func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLimiter: %v", err)
 	}
-	if !final.AlertSent {
+	if !final.Notifications[0].AlertSent {
 		t.Error("AlertSent = false after re-crossing threshold in the new window, want true")
 	}
 	if final.CurrentCost != 0.60 {
@@ -155,25 +170,13 @@ func TestAccrueLimiterCost_BudgetAlertResetsOnRefresh(t *testing.T) {
 	}
 }
 
-func TestAccrueLimiterCost_NoAlertWhenThresholdUnset(t *testing.T) {
+func TestAccrueLimiterCost_NoAlertWithoutLinks(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	now := time.Now()
-	server, count := newAlertServer(t)
+	_, count := newAlertServer(t)
 	db.SetNotifications(notify.NewClient())
 
-	if _, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:       "sess_no_alert",
-		LimitAmount:     1.0,
-		RefreshValue:    60,
-		RefreshUnit:     "minutes",
-		NextRefreshAt:   float64(now.Add(time.Hour).Unix()),
-		IsActive:        true,
-		CreatedAt:       float64(now.Unix()),
-		UpdatedAt:       float64(now.Unix()),
-		SlackWebhookURL: server.URL,
-		// AlertThresholdPct/AlertRequestCostUSD left nil: alerting disabled.
-	}); err != nil {
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_no_alert", 1.0)); err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
 
@@ -182,28 +185,17 @@ func TestAccrueLimiterCost_NoAlertWhenThresholdUnset(t *testing.T) {
 }
 
 // TestAccrueLimiterCost_RequestSpikeAlertFiresOverThreshold confirms a
-// single exchange costing at least AlertRequestCostUSD fires an alert, with
-// no "already sent" gating — unlike the budget alert, this is expected to
-// fire on every qualifying request.
+// single exchange costing at least RequestCostUSD fires an alert, with no
+// "already sent" gating — unlike the budget alert, this is expected to fire
+// on every qualifying request.
 func TestAccrueLimiterCost_RequestSpikeAlertFiresOverThreshold(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	now := time.Now()
 	server, count := newAlertServer(t)
 	db.SetNotifications(notify.NewClient())
 
-	if _, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:           "sess_spike",
-		LimitAmount:         100.0,
-		RefreshValue:        60,
-		RefreshUnit:         "minutes",
-		NextRefreshAt:       float64(now.Add(time.Hour).Unix()),
-		IsActive:            true,
-		CreatedAt:           float64(now.Unix()),
-		UpdatedAt:           float64(now.Unix()),
-		AlertRequestCostUSD: floatPtr(1.0),
-		SlackWebhookURL:     server.URL,
-	}); err != nil {
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_spike", 100.0,
+		LimiterNotification{NotificationID: addNotification(t, db, server.URL), RequestCostUSD: floatPtr(1.0)})); err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
 
@@ -215,80 +207,129 @@ func TestAccrueLimiterCost_RequestSpikeAlertFiresOverThreshold(t *testing.T) {
 	saveExchangeWithCost(t, db, "sess_spike", 1.0)
 	waitForCount(t, count, 1)
 
-	// Fires again on a second qualifying request in the same window — no
-	// "already sent" gating like the budget alert has.
+	// Fires again on a second qualifying request in the same window.
 	saveExchangeWithCost(t, db, "sess_spike", 2.0)
 	waitForCount(t, count, 2)
 }
 
-// TestAccrueLimiterCost_NoRequestSpikeAlertWhenUnsetOrInactive confirms the
-// request-spike alert respects both AlertRequestCostUSD being unset and the
-// same is-active/in-window gate the budget alert uses.
-func TestAccrueLimiterCost_NoRequestSpikeAlertWhenUnsetOrInactive(t *testing.T) {
+// TestAccrueLimiterCost_NoAlertWhenLimiterInactiveOrIntegrationInactive
+// confirms alerts respect both the limiter's is-active gate and the
+// notification integration's own active flag.
+func TestAccrueLimiterCost_NoAlertWhenLimiterInactiveOrIntegrationInactive(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	now := time.Now()
 	server, count := newAlertServer(t)
 	db.SetNotifications(notify.NewClient())
 
-	if _, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:       "sess_spike_unset",
-		LimitAmount:     100.0,
-		RefreshValue:    60,
-		RefreshUnit:     "minutes",
-		NextRefreshAt:   float64(now.Add(time.Hour).Unix()),
-		IsActive:        true,
-		CreatedAt:       float64(now.Unix()),
-		UpdatedAt:       float64(now.Unix()),
-		SlackWebhookURL: server.URL,
-		// AlertRequestCostUSD left nil.
-	}); err != nil {
-		t.Fatalf("CreateLimiter: %v", err)
-	}
-	saveExchangeWithCost(t, db, "sess_spike_unset", 50.0)
-	assertNoMoreAlerts(t, count, 0)
-
-	if _, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:           "sess_spike_inactive",
-		LimitAmount:         100.0,
-		RefreshValue:        60,
-		RefreshUnit:         "minutes",
-		NextRefreshAt:       float64(now.Add(time.Hour).Unix()),
-		IsActive:            false,
-		CreatedAt:           float64(now.Unix()),
-		UpdatedAt:           float64(now.Unix()),
-		AlertRequestCostUSD: floatPtr(1.0),
-		SlackWebhookURL:     server.URL,
-	}); err != nil {
+	inactive := alertLimiter("sess_spike_inactive", 100.0,
+		LimiterNotification{NotificationID: addNotification(t, db, server.URL+"/a"), RequestCostUSD: floatPtr(1.0)})
+	inactive.IsActive = false
+	if _, err := db.CreateLimiter(ctx, inactive); err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
 	saveExchangeWithCost(t, db, "sess_spike_inactive", 50.0)
 	assertNoMoreAlerts(t, count, 0)
+
+	muted := addNotification(t, db, server.URL+"/b")
+	if err := db.SetNotificationIntegrationActive(ctx, muted, false, float64(time.Now().Unix())); err != nil {
+		t.Fatalf("SetNotificationIntegrationActive: %v", err)
+	}
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_muted", 100.0,
+		LimiterNotification{NotificationID: muted, RequestCostUSD: floatPtr(1.0)})); err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+	saveExchangeWithCost(t, db, "sess_muted", 50.0)
+	assertNoMoreAlerts(t, count, 0)
+}
+
+// TestAccrueLimiterCost_EachLinkAlertsIndependently confirms two links on
+// one limiter each fire on their own threshold.
+func TestAccrueLimiterCost_EachLinkAlertsIndependently(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	serverA, countA := newAlertServer(t)
+	serverB, countB := newAlertServer(t)
+	db.SetNotifications(notify.NewClient())
+
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_links", 1.0,
+		LimiterNotification{NotificationID: addNotification(t, db, serverA.URL), ThresholdPct: intPtr(50)},
+		LimiterNotification{NotificationID: addNotification(t, db, serverB.URL), ThresholdPct: intPtr(90)})); err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+
+	saveExchangeWithCost(t, db, "sess_links", 0.60)
+	waitForCount(t, countA, 1)
+	assertNoMoreAlerts(t, countB, 0)
+
+	saveExchangeWithCost(t, db, "sess_links", 0.35)
+	waitForCount(t, countB, 1)
+	assertNoMoreAlerts(t, countA, 1)
+}
+
+func TestDeleteNotificationIntegration_CascadesToLimiterLinks(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	nid := addNotification(t, db, "https://hooks.example.test/x")
+
+	id, err := db.CreateLimiter(ctx, alertLimiter("sess_cascade", 1.0,
+		LimiterNotification{NotificationID: nid, ThresholdPct: intPtr(50)}))
+	if err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+	if err := db.DeleteNotificationIntegration(ctx, nid); err != nil {
+		t.Fatalf("DeleteNotificationIntegration: %v", err)
+	}
+
+	got, err := db.GetLimiter(ctx, id)
+	if err != nil {
+		t.Fatalf("GetLimiter: %v", err)
+	}
+	if len(got.Notifications) != 0 {
+		t.Errorf("got %d links after deleting the integration, want 0", len(got.Notifications))
+	}
+}
+
+func TestUpdateLimiter_ReplacesNotificationLinks(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	a := addNotification(t, db, "https://hooks.example.test/a")
+	b := addNotification(t, db, "https://hooks.example.test/b")
+
+	id, err := db.CreateLimiter(ctx, alertLimiter("sess_replace", 1.0,
+		LimiterNotification{NotificationID: a, ThresholdPct: intPtr(50)}))
+	if err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+	l, err := db.GetLimiter(ctx, id)
+	if err != nil {
+		t.Fatalf("GetLimiter: %v", err)
+	}
+	l.Notifications = []LimiterNotification{{NotificationID: b, RequestCostUSD: floatPtr(2)}}
+	if err := db.UpdateLimiter(ctx, *l); err != nil {
+		t.Fatalf("UpdateLimiter: %v", err)
+	}
+
+	got, err := db.GetLimiter(ctx, id)
+	if err != nil {
+		t.Fatalf("GetLimiter: %v", err)
+	}
+	if len(got.Notifications) != 1 || got.Notifications[0].NotificationID != b || got.Notifications[0].ThresholdPct != nil {
+		t.Errorf("got %+v, want only the link to integration %d", got.Notifications, b)
+	}
 }
 
 // TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert drives
 // accrueLimiterCost from many goroutines whose combined cost crosses the
-// budget threshold, and asserts exactly one Slack alert is sent — guarding
-// against the read-check-write race on AlertSent. Run with -race.
+// budget threshold, and asserts exactly one alert is sent — guarding against
+// the read-check-write race on AlertSent. Run with -race.
 func TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
-	now := time.Now()
 	server, count := newAlertServer(t)
 	db.SetNotifications(notify.NewClient())
 
-	if _, err := db.CreateLimiter(ctx, Limiter{
-		SessionID:         "sess_concurrent",
-		LimitAmount:       1.0,
-		RefreshValue:      60,
-		RefreshUnit:       "minutes",
-		NextRefreshAt:     float64(now.Add(time.Hour).Unix()),
-		IsActive:          true,
-		CreatedAt:         float64(now.Unix()),
-		UpdatedAt:         float64(now.Unix()),
-		AlertThresholdPct: intPtr(50),
-		SlackWebhookURL:   server.URL,
-	}); err != nil {
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_concurrent", 1.0,
+		LimiterNotification{NotificationID: addNotification(t, db, server.URL), ThresholdPct: intPtr(50)})); err != nil {
 		t.Fatalf("CreateLimiter: %v", err)
 	}
 
@@ -305,7 +346,7 @@ func TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert(t *testi
 			if err := db.SaveExchange(ctx, Exchange{
 				SessionID:   "sess_concurrent",
 				Path:        "/v1/messages",
-				Timestamp:   float64(time.Now().Unix()),
+				CreatedAt:   float64(time.Now().Unix()),
 				RawRequest:  "{}",
 				RawResponse: "{}",
 				InputCost:   floatPtr(0.60),
@@ -321,4 +362,32 @@ func TestAccrueLimiterCost_ConcurrentCrossingsSendExactlyOneBudgetAlert(t *testi
 
 	waitForCount(t, count, 1)
 	assertNoMoreAlerts(t, count, 1)
+}
+
+func TestApplicableLimiters_FlagsLimitersWithLinks(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	server, _ := newAlertServer(t)
+	webhookID := addNotification(t, db, server.URL)
+
+	pct := 50
+	if _, err := db.CreateLimiter(ctx, alertLimiter("sess_linked", 1.0, LimiterNotification{NotificationID: webhookID, ThresholdPct: &pct})); err != nil {
+		t.Fatalf("CreateLimiter linked: %v", err)
+	}
+	if _, err := db.CreateLimiter(ctx, alertLimiter("", 1.0)); err != nil {
+		t.Fatalf("CreateLimiter global: %v", err)
+	}
+
+	limiters, err := db.applicableLimiters(ctx, "sess_linked")
+	if err != nil {
+		t.Fatalf("applicableLimiters: %v", err)
+	}
+	if len(limiters) != 2 {
+		t.Fatalf("got %d limiters, want 2", len(limiters))
+	}
+	for _, l := range limiters {
+		if want := l.SessionID == "sess_linked"; l.hasLinks != want {
+			t.Errorf("limiter %q hasLinks = %v, want %v", l.SessionID, l.hasLinks, want)
+		}
+	}
 }

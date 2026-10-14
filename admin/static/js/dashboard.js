@@ -1,6 +1,6 @@
-import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON } from './app.js';
-
 'use strict';
+
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON, withPending } from './app.js';
 
 (() => {
   const RANGES = ['today', 'this-week', 'this-month', 'last-7-days', 'last-15-days', 'last-30-days', 'last-60-days'];
@@ -118,12 +118,21 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
 
   // Session IDs checked for bulk delete among the rows on the current page.
   let selectedSessionIds = new Set();
-  const ACTIVE_SESSION_WINDOW_SECONDS = 30 * 60;
 
   function sessionLimiterCell(session) {
     const l = limitersBySession.get(session.session_id);
     if (!l) return '<span class="text-fg-subtle">—</span>';
     return `${progressBar(l)}<p class="text-xs text-fg-subtle mt-1">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</p>`;
+  }
+
+  /**
+   * Returns the user-chosen name of a session, or '' while it still shows its
+   * session id as the default name.
+   * @param {?{session_id: string, session_name: string}} session - Session stats row.
+   * @returns {string} The custom name, or an empty string.
+   */
+  function customSessionName(session) {
+    return session?.session_name === session?.session_id ? '' : session.session_name;
   }
 
   function buildSessionRow(session) {
@@ -160,10 +169,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
       cache_read_tokens: session.context_cache_read_tokens,
     };
     const sessionQuery = 'session = ' + JSON.stringify(session.session_id);
+    const customName = customSessionName(session);
     const isEditing = session.session_id === editingSessionId;
     const nameHtml = isEditing
       ? `<input type="text" class="w-full max-w-56 text-sm px-1.5 py-0.5 border border-emerald-400 dark:border-emerald-600 rounded focus:outline-none focus:ring-1 focus:ring-emerald-400 session-name-input" value="${esc(editingDraft)}" maxlength="200">`
-      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 dark:text-emerald-400 font-medium hover:underline">${esc(session.session_name || fmtSessionId(session.session_id, 24))}</a>${session.session_name ? `<span class="block text-xs text-fg-subtle font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
+      : `<a href="/exchanges?q=${encodeURIComponent(sessionQuery)}" class="text-emerald-600 dark:text-emerald-400 font-medium hover:underline">${esc(customName || fmtSessionId(session.session_id, 24))}</a>${customName ? `<span class="block text-xs text-fg-subtle font-mono">${esc(fmtSessionId(session.session_id, 24))}</span>` : ''}`;
     return `<tr class="hover:bg-surface-hover">
       <td class="h-px">
         <label class="flex h-full cursor-pointer items-center px-4 py-2">
@@ -216,7 +226,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   function startEditingSession(sessionId) {
     const session = lastSessionRows.find((r) => r.session_id === sessionId);
     editingSessionId = sessionId;
-    editingDraft = session?.session_name || '';
+    editingDraft = customSessionName(session);
     renderSessionRows();
   }
 
@@ -238,7 +248,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     const sessionId = editingSessionId;
     const name = input.value.trim();
     const session = lastSessionRows.find((r) => r.session_id === sessionId);
-    if (name === (session?.session_name || '')) {
+    if (name === customSessionName(session)) {
       stopEditingSession();
       return;
     }
@@ -329,11 +339,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     });
   }
 
-  const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message', {
-    warning: ['text-amber-700 dark:text-amber-400', 'bg-amber-50 dark:bg-amber-500/15', 'border-amber-200 dark:border-amber-800'],
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-    success: ['text-emerald-700 dark:text-emerald-400', 'bg-emerald-50 dark:bg-emerald-500/15', 'border-emerald-200 dark:border-emerald-800'],
-  });
+  const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message');
 
   if (bulkDeleteBtn) {
     bulkDeleteBtn.onclick = () => {
@@ -343,29 +349,13 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
       if (checkbox) checkbox.checked = false;
       setBulkDeleteMessage(null, '');
       if (countEl) countEl.textContent = String(selectedSessionIds.size);
-
-      function updateActiveWarning() {
-        if (!checkbox?.checked) {
-          setBulkDeleteMessage(null, '');
-          return;
-        }
-        const anyActive = [...selectedSessionIds].some((id) => {
-          const row = lastSessionRows.find((r) => r.session_id === id);
-          return row && (Date.now() / 1000 - row.last_updated) < ACTIVE_SESSION_WINDOW_SECONDS;
-        });
-        setBulkDeleteMessage(anyActive ? 'warning' : null, anyActive
-          ? 'One or more of the selected sessions had Claude Code activity in the last 30 minutes and may still be open in a terminal. Deleting their files now could corrupt or lose data from those sessions.'
-          : '');
-      }
-      if (checkbox) checkbox.onchange = updateActiveWarning;
-
       dialog?.showModal();
     };
   }
 
   const submitBulkDeleteBtn = document.getElementById('submit-bulk-delete-btn');
   if (submitBulkDeleteBtn) {
-    submitBulkDeleteBtn.onclick = async () => {
+    submitBulkDeleteBtn.onclick = () => withPending(submitBulkDeleteBtn, async () => {
       const checkbox = document.getElementById('bulk-delete-also-delete-claude-session');
       const res = await postJSON('/api/exchanges/bulk-delete', {
         session_ids: [...selectedSessionIds],
@@ -375,15 +365,12 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         setBulkDeleteMessage('error', await extractErrorMessage(res, res.statusText || 'Failed to delete selected sessions.'));
         return;
       }
-      setBulkDeleteMessage('success', 'Selected sessions deleted.');
-      setTimeout(() => {
-        document.getElementById('bulk-delete-dialog')?.close();
-        clearSelection();
-        refreshSessionStats();
-        fetchTotals(range);
-        refreshDailyCosts();
-      }, 800);
-    };
+      document.getElementById('bulk-delete-dialog')?.close();
+      clearSelection();
+      refreshSessionStats();
+      fetchTotals(range);
+      refreshDailyCosts();
+    });
   }
 
   function renderSessionPagination() {
@@ -437,24 +424,31 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
   // delta, so a fresh call of either kind cancels a still in-flight call of
   // the other instead of letting a slower, superseded response win.
   const refreshSessionStatsTask = makeAbortable(async (signal, sinceID) => {
-    const searchParams = new URLSearchParams();
     if (sinceID != null) {
-      searchParams.set('since_id', sinceID);
-    } else {
-      searchParams.set('limit', sessionPageSize);
-      searchParams.set('offset', (sessionPage - 1) * sessionPageSize);
-    }
-    const res = await fetch('/api/session-stats?' + searchParams.toString(), { signal });
-    if (!res.ok) return;
-    const data = await res.json();
-    if (sinceID != null) {
+      const res = await fetch(`/api/session-stats?since_id=${sinceID}`, { signal });
+      if (!res.ok) return;
+      const data = await res.json();
       applySessionDelta(data.rows, data.total);
-    } else {
-      lastSessionRows = data.rows;
-      sessionTotal = data.total;
-      renderSessionRows();
-      renderSessionPagination();
+      return;
     }
+    let data;
+    do {
+      const searchParams = new URLSearchParams({
+        limit: sessionPageSize,
+        offset: (sessionPage - 1) * sessionPageSize,
+      });
+      const res = await fetch('/api/session-stats?' + searchParams.toString(), { signal });
+      if (!res.ok) return;
+      data = await res.json();
+      if (data.rows.length === 0 && data.total > 0 && sessionPage > 1) {
+        sessionPage = Math.ceil(data.total / sessionPageSize);
+        data = null;
+      }
+    } while (!data);
+    lastSessionRows = data.rows;
+    sessionTotal = data.total;
+    renderSessionRows();
+    renderSessionPagination();
   });
   const refreshSessionStats = () => refreshSessionStatsTask();
   const refreshSessionStatsSince = (sinceID) => refreshSessionStatsTask(sinceID);

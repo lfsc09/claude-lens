@@ -1,3 +1,5 @@
+'use strict';
+
 (() => {
   const stored = localStorage.getItem('theme');
   const dark = stored ? stored === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;

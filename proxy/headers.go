@@ -1,45 +1,9 @@
 package proxy
 
 import (
-	"fmt"
-	"net/http"
 	"regexp"
 	"strings"
 )
-
-// ParseCustomHeaders parses CLENS_PROXY_CUSTOM_HEADERS: newline-separated
-// "Header-Name: value" lines. Blank lines are skipped. A malformed line (no
-// colon, or an empty name/value) is an error — this only ever runs once at
-// startup against operator-supplied config, so failing loudly beats silently
-// dropping a header the operator expected to be forwarded.
-func ParseCustomHeaders(raw string) (map[string]string, error) {
-	headers := make(map[string]string)
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		name, value, ok := strings.Cut(line, ":")
-		if !ok {
-			return nil, fmt.Errorf("CLENS_PROXY_CUSTOM_HEADERS must use 'Header-Name: value' format (bad line: %q)", line)
-		}
-		name = strings.TrimSpace(name)
-		value = strings.TrimSpace(value)
-		if name == "" || value == "" {
-			return nil, fmt.Errorf("CLENS_PROXY_CUSTOM_HEADERS contains an empty header name or value (bad line: %q)", line)
-		}
-		headers[name] = value
-	}
-	return headers, nil
-}
-
-// SetHeader sets key to value, replacing any existing value under that
-// (case-insensitive) header name. http.Header already stores keys under
-// their canonical MIME form, so this is exactly http.Header.Set, named
-// here so the proxy's header-mutation call sites read consistently.
-func SetHeader(headers http.Header, key, value string) {
-	headers.Set(key, value)
-}
 
 var schemePrefix = regexp.MustCompile(`^[A-Za-z]+\s+`)
 

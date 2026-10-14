@@ -11,9 +11,7 @@ import (
 	"github.com/lfsc09/claude-lens/internal/status"
 )
 
-// sseInterval is how often /stream pushes a new payload. It's a package
-// var (not a const) purely so tests can shrink it instead of waiting on
-// the real 3-second cadence.
+// sseInterval is how often /stream pushes a new payload.
 var sseInterval = 3 * time.Second
 
 type ssePayload struct {

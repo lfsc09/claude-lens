@@ -29,8 +29,8 @@ import (
 // totalTokensExpr and cacheTokensExpr are the shared SQL expressions for the
 // "total_tokens"/"cache_tokens" filter fields, matching the NULL-safe
 // total_tokens column computed in GetExchanges (a plain "+" across nullable
-// columns would collapse to NULL if any single column — e.g. a pre-cache-
-// tracking historical row's cache_creation_tokens — is NULL).
+// columns would collapse to NULL if any single column — e.g. an unpriced
+// exchange's cache_creation_tokens — is NULL).
 const totalTokensExpr = `CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_creation_tokens IS NULL AND cache_read_tokens IS NULL THEN NULL ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0) END`
 const cacheTokensExpr = `(COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0))`
 
@@ -45,8 +45,8 @@ const (
 
 // filterField describes one FIELD name accepted by the query language: which
 // SQL expression(s) it reads from (more than one for "session", which
-// matches either the exchange's session_id or its session_names.name, via
-// GetExchanges/CountExchanges' LEFT JOIN session_names sn), its value kind,
+// matches either the exchange's session_id or its sessions.name, via
+// GetExchanges/CountExchanges' JOIN sessions), its value kind,
 // and which operators are valid for it.
 type filterField struct {
 	kind  filterFieldKind
@@ -55,10 +55,10 @@ type filterField struct {
 
 var filterFields = map[string]filterField{
 	"id":            {kind: fieldNumber, exprs: []string{"id"}},
-	"session":       {kind: fieldText, exprs: []string{"exchanges.session_id", "sn.name"}},
+	"session":       {kind: fieldText, exprs: []string{"exchanges.session_id", "sessions.name"}},
 	"model":         {kind: fieldText, exprs: []string{"model"}},
 	"path":          {kind: fieldText, exprs: []string{"path"}},
-	"date":          {kind: fieldDate, exprs: []string{"timestamp"}},
+	"date":          {kind: fieldDate, exprs: []string{"created_at"}},
 	"input_tokens":  {kind: fieldNumber, exprs: []string{"input_tokens"}},
 	"output_tokens": {kind: fieldNumber, exprs: []string{"output_tokens"}},
 	"cache_tokens":  {kind: fieldNumber, exprs: []string{cacheTokensExpr}},
@@ -315,7 +315,7 @@ func (p *filterParser) parseCond() (filterExpr, error) {
 // ---- Value parsing -------------------------------------------------------
 
 // filterDateLayouts are tried in order; dates are interpreted in local time,
-// matching fmtTime's rendering of the timestamp column.
+// matching fmtTime's rendering of the created_at column.
 var filterDateLayouts = []string{
 	"2006-01-02T15:04:05",
 	"2006-01-02 15:04:05",
@@ -443,8 +443,7 @@ func compileFilterExpr(e filterExpr) (string, []any, error) {
 	}
 }
 
-// parseFilterQuery is the shared entry point for both Compile and
-// ExtractExactSession: it lexes/parses q and, for a blank query, reports
+// parseFilterQuery lexes and parses q and, for a blank query, reports
 // (nil, nil) rather than an error so callers can treat "no filter" as a
 // distinct, valid case.
 func parseFilterQuery(q string) (filterExpr, error) {
@@ -480,25 +479,4 @@ func CompileExchangeFilter(q string) (string, []any, error) {
 		return "", nil, nil
 	}
 	return compileFilterExpr(expr)
-}
-
-// ExtractExactSession reports whether q is exactly one top-level
-// `session = "..."` condition (no AND/OR, no "like"), returning the session
-// id/name value if so. Used to decide whether the Exchanges page's "Clear
-// session" (vs. "Clear all") delete action applies — deliberately narrow so
-// a multi-condition filter never turns into an implicit "delete everything
-// matching this filter" action.
-func ExtractExactSession(q string) (string, bool) {
-	expr, err := parseFilterQuery(q)
-	if err != nil || expr == nil {
-		return "", false
-	}
-	cond, ok := expr.(*filterCond)
-	if !ok {
-		return "", false
-	}
-	if strings.ToLower(cond.field) != "session" || cond.op != "=" {
-		return "", false
-	}
-	return cond.value, true
 }

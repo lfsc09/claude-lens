@@ -3,7 +3,10 @@ package database
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
+
+	"github.com/lfsc09/claude-lens/internal/priceprovider"
 )
 
 // Price is a row of the model_prices table: USD per million tokens for a
@@ -163,39 +166,51 @@ func (db *DB) DeletePrice(ctx context.Context, id int64) error {
 	return err
 }
 
-// UpsertPriceFromSync writes prefix's base rates from an external source
-// (see internal/litellm), creating the row if it doesn't exist yet. The
-// four base rates always overwrite; an above-200k override is only
-// overwritten when the sync supplies a non-nil value for it, so a manually
-// configured override survives a sync that doesn't report that tier.
-func (db *DB) UpsertPriceFromSync(ctx context.Context, prefix string, inputPerM, outputPerM, cacheWritePerM, cacheReadPerM float64, inputAbove200k, outputAbove200k, cacheWriteAbove200k, cacheReadAbove200k *float64, now float64) (created bool, err error) {
-	existing, err := db.GetPriceByPrefix(ctx, prefix)
+// UpsertPricesFromSync writes prices from an external source (see
+// internal/priceprovider) in one transaction, creating rows that don't exist
+// yet, and reports how many were created and updated. The four base rates
+// always overwrite; an above-200k override is only overwritten when the sync
+// supplies a non-nil value for it, so a manually configured override
+// survives a sync that doesn't report that tier.
+func (db *DB) UpsertPricesFromSync(ctx context.Context, prices []priceprovider.ModelPrice, now float64) (created, updated int, err error) {
+	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return 0, 0, err
 	}
+	defer tx.Rollback()
 
-	_, err = db.sql.ExecContext(ctx,
-		`INSERT INTO model_prices
-		    (model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m,
-		     input_per_m_above_200k, output_per_m_above_200k, cache_write_per_m_above_200k, cache_read_per_m_above_200k,
-		     created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(model_prefix) DO UPDATE SET
-		    input_per_m = excluded.input_per_m,
-		    output_per_m = excluded.output_per_m,
-		    cache_write_per_m = excluded.cache_write_per_m,
-		    cache_read_per_m = excluded.cache_read_per_m,
-		    input_per_m_above_200k = COALESCE(excluded.input_per_m_above_200k, model_prices.input_per_m_above_200k),
-		    output_per_m_above_200k = COALESCE(excluded.output_per_m_above_200k, model_prices.output_per_m_above_200k),
-		    cache_write_per_m_above_200k = COALESCE(excluded.cache_write_per_m_above_200k, model_prices.cache_write_per_m_above_200k),
-		    cache_read_per_m_above_200k = COALESCE(excluded.cache_read_per_m_above_200k, model_prices.cache_read_per_m_above_200k),
-		    updated_at = excluded.updated_at`,
-		prefix, inputPerM, outputPerM, cacheWritePerM, cacheReadPerM,
-		inputAbove200k, outputAbove200k, cacheWriteAbove200k, cacheReadAbove200k,
-		now, now,
-	)
-	if err != nil {
-		return false, err
+	for _, p := range prices {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM model_prices WHERE model_prefix = ?)`, p.ModelName).Scan(&exists); err != nil {
+			return 0, 0, fmt.Errorf("look up %s: %w", p.ModelName, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO model_prices
+			    (model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m,
+			     input_per_m_above_200k, output_per_m_above_200k, cache_write_per_m_above_200k, cache_read_per_m_above_200k,
+			     created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(model_prefix) DO UPDATE SET
+			    input_per_m = excluded.input_per_m,
+			    output_per_m = excluded.output_per_m,
+			    cache_write_per_m = excluded.cache_write_per_m,
+			    cache_read_per_m = excluded.cache_read_per_m,
+			    input_per_m_above_200k = COALESCE(excluded.input_per_m_above_200k, model_prices.input_per_m_above_200k),
+			    output_per_m_above_200k = COALESCE(excluded.output_per_m_above_200k, model_prices.output_per_m_above_200k),
+			    cache_write_per_m_above_200k = COALESCE(excluded.cache_write_per_m_above_200k, model_prices.cache_write_per_m_above_200k),
+			    cache_read_per_m_above_200k = COALESCE(excluded.cache_read_per_m_above_200k, model_prices.cache_read_per_m_above_200k),
+			    updated_at = excluded.updated_at`,
+			p.ModelName, p.InputPerM, p.OutputPerM, p.CacheWritePerM, p.CacheReadPerM,
+			p.InputPerMAbove200k, p.OutputPerMAbove200k, p.CacheWritePerMAbove200k, p.CacheReadPerMAbove200k,
+			now, now,
+		); err != nil {
+			return 0, 0, fmt.Errorf("upsert %s: %w", p.ModelName, err)
+		}
+		if exists {
+			updated++
+		} else {
+			created++
+		}
 	}
-	return existing == nil, nil
+	return created, updated, tx.Commit()
 }

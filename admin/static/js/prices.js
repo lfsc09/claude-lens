@@ -1,6 +1,6 @@
-import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogMessage, postJSON, putJSON } from './app.js';
-
 'use strict';
+
+import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
@@ -20,6 +20,11 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     ['cache_read_per_m_above_200k', 'Cache read'],
   ];
 
+  /**
+   * Renders the above-200k-token rates of a price, when it has any.
+   * @param {object} p - Model price from the API.
+   * @returns {string} Section markup, or '' when no tier is set.
+   */
   function above200kSectionHtml(p) {
     const rows = TIER_FIELDS
       .filter(([field]) => p[field] != null)
@@ -32,6 +37,11 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     </div>`;
   }
 
+  /**
+   * Renders one model price as a card.
+   * @param {object} p - Model price from the API.
+   * @returns {string} Card markup.
+   */
   function buildCard(p) {
     return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border border-line" data-id="${p.id}">
       <div class="flex items-start justify-between gap-2">
@@ -58,15 +68,24 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     </article>`;
   }
 
+  /**
+   * Deletes a model price after confirmation and reloads the grid.
+   * @param {object} p - Model price from the API.
+   */
   async function deletePrice(p) {
     if (!confirm(`Delete the price for ${p.model_prefix}?`)) return;
-    await fetch(`/api/prices/${p.id}`, { method: 'DELETE' });
-    loadPrices();
+    if (await runAction(fetch(`/api/prices/${p.id}`, { method: 'DELETE' }), 'Failed to delete price.')) loadPrices();
   }
 
+  /** Fetches the prices and renders them, or an error when the fetch fails. */
   async function loadPrices() {
-    const res = await fetch('/api/prices');
-    const prices = res.ok ? await res.json() : [];
+    let prices;
+    try {
+      prices = await getJSON('/api/prices');
+    } catch (err) {
+      grid.innerHTML = errorBlock(err.message);
+      return;
+    }
 
     pricesById.clear();
     if (!prices.length) {
@@ -92,10 +111,12 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
   });
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
-  const setDialogMessage = makeDialogMessage('price-dialog-message', {
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-  });
+  const setDialogMessage = makeDialogMessage('price-dialog-message');
 
+  /**
+   * Fills the dialog with a price for editing.
+   * @param {object} p - Model price from the API.
+   */
   function startEdit(p) {
     editingId = p.id;
     dialogTitle.textContent = 'Edit model price';
@@ -112,6 +133,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     });
   }
 
+  /** Returns the dialog to its empty "add" state. */
   function resetDialog() {
     editingId = null;
     dialogTitle.textContent = 'Add a model price';
@@ -140,120 +162,85 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
       payload[field] = raw ? parseFloat(raw) : null;
     });
 
-    const res = editingId ? await putJSON(`/api/prices/${editingId}`, payload) : await postJSON('/api/prices', payload);
-    if (!res.ok) {
-      setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update price.' : 'Failed to add price.'));
-      return;
-    }
-    dialog.close();
-    loadPrices();
+    await withPending(submitBtn, async () => {
+      const res = editingId ? await putJSON(`/api/prices/${editingId}`, payload) : await postJSON('/api/prices', payload);
+      if (!res.ok) {
+        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update price.' : 'Failed to add price.'));
+        return;
+      }
+      dialog.close();
+      loadPrices();
+    });
   });
 
-  // ── Sync from LiteLLM ─────────────────────────────────────────────────
-  const syncMenu = document.getElementById('sync-litellm-menu');
-  const syncToggle = document.getElementById('sync-litellm-toggle');
-  const syncPanel = document.getElementById('sync-litellm-panel');
-  const syncChevron = document.getElementById('sync-litellm-chevron');
-  const syncBtn = document.getElementById('sync-litellm-btn');
-  const syncMessageEl = document.getElementById('litellm-sync-message');
+  // ── Sync prices from the active proxy integration ────────────────────
+  const syncBtn = document.getElementById('sync-prices-btn');
+  const syncBtnWrap = document.getElementById('sync-btn-wrap');
+  const syncMessageEl = document.getElementById('sync-message');
 
-  function toggleSyncPanel(open = syncPanel.classList.contains('hidden')) {
-    syncPanel.classList.toggle('hidden', !open);
-    syncToggle.setAttribute('aria-expanded', String(open));
-    syncChevron.classList.toggle('rotate-180', open);
-  }
-
-  syncToggle?.addEventListener('click', () => toggleSyncPanel());
-  document.addEventListener('click', (e) => {
-    if (!syncPanel.classList.contains('hidden') && !syncMenu.contains(e.target)) toggleSyncPanel(false);
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !syncPanel.classList.contains('hidden')) toggleSyncPanel(false);
-  });
-
-  function setSyncMessage(text, isError) {
-    if (!syncMessageEl) return;
-    syncMessageEl.textContent = text || '';
-    syncMessageEl.classList.toggle('text-red-600', !!isError);
-    syncMessageEl.classList.toggle('dark:text-red-400', !!isError);
+  /**
+   * Shows a status line next to the sync button.
+   * @param {string} text - Message to show; empty clears it.
+   * @param {boolean} [isError=false] - Whether to style it as an error.
+   */
+  function setSyncMessage(text, isError = false) {
+    syncMessageEl.textContent = text;
+    syncMessageEl.classList.toggle('text-red-600', isError);
+    syncMessageEl.classList.toggle('dark:text-red-400', isError);
     syncMessageEl.classList.toggle('text-fg-muted', !isError);
   }
 
-  // ── Auto-sync interval (persisted in the DB, not an env var, so it
-  // applies live — see internal/pricesync.RunLoop) ──────────────────────
-  const syncIntervalInput = document.getElementById('litellm-sync-interval');
-  let lastSyncedAt = 0;
-
-  function syncMessageWithLastSynced(text, isError) {
-    const suffix = lastSyncedAt ? ` (last synced ${fmtTime(lastSyncedAt)})` : '';
-    setSyncMessage(`${text}${suffix}`, isError);
-  }
-
-  // Grays out the manual button once we *know* this upstream can't sync —
-  // driven by the last real attempt's outcome (manual or background, see
-  // database.MarkLiteLLMSyncFailed), not a separate capability probe. The
-  // interval input is deliberately never disabled here: RunLoop keeps
-  // retrying on schedule regardless, so it self-heals the button the next
-  // time settings are loaded, and the input stays a manual escape hatch
-  // (set a short interval to force a fresh attempt soon) even while the
-  // button itself is greyed out.
-  function applyLiteLLMAvailability(errorMsg) {
-    if (!syncBtn) return;
-    syncBtn.disabled = !!errorMsg;
-    if (errorMsg) {
-      syncMessageWithLastSynced(`LiteLLM sync unavailable: ${errorMsg}`, true);
-    } else {
-      syncMessageWithLastSynced('', false);
-    }
-  }
-
-  async function loadSettings() {
-    const res = await fetch('/api/settings');
-    if (!res.ok || !syncIntervalInput) return;
-    const settings = await res.json();
-    syncIntervalInput.value = settings.litellm_sync_interval_minutes;
-    lastSyncedAt = settings.litellm_last_synced_at;
-    applyLiteLLMAvailability(settings.litellm_last_sync_error);
-  }
-
-  syncIntervalInput?.addEventListener('change', async () => {
-    const minutes = parseInt(syncIntervalInput.value, 10);
-    if (Number.isNaN(minutes) || minutes < 0) {
-      setSyncMessage('Enter a whole number of minutes (0 or more).', true);
-      return;
-    }
-    const res = await putJSON('/api/settings', { litellm_sync_interval_minutes: minutes });
-    if (!res.ok) {
-      setSyncMessage(await extractErrorMessage(res, 'Failed to save interval.'), true);
-      return;
-    }
-    setSyncMessage(minutes === 0 ? 'Auto-sync disabled.' : `Auto-syncing every ${minutes} min.`, false);
-  });
-
-  syncBtn?.addEventListener('click', async () => {
-    syncBtn.disabled = true;
-    setSyncMessage('Syncing…', false);
-    // Only a 502 (see admin.syncPricesFromLiteLLM) means "this upstream
-    // isn't a LiteLLM proxy" — any other failure (e.g. a DB error) isn't a
-    // capability signal, so the button stays usable for an immediate retry.
-    let keepDisabled = false;
+  /**
+   * Fetches the currently active proxy integration.
+   * @returns {Promise<?object>} The active integration, or null when none is active.
+   */
+  async function loadActiveProxy() {
     try {
-      const res = await postJSON('/api/prices/sync-litellm', {});
+      const integrations = await getJSON('/api/proxy-integrations');
+      return integrations.find((p) => p.active) ?? null;
+    } catch (err) {
+      notifyError(err.message);
+      return null;
+    }
+  }
+
+  /** Enables the sync button only while an active proxy integration can sync; otherwise its wrapper shows a tooltip with the reason. */
+  async function refreshSyncAvailability() {
+    const proxy = await loadActiveProxy();
+    const lastSynced = proxy?.price_synced_at ? ` (last synced ${fmtTime(proxy.price_synced_at)})` : '';
+    const reason = !proxy
+      ? 'Price sync needs an active proxy integration.'
+      : proxy.price_sync_error && `${proxy.name} sync unavailable: ${proxy.price_sync_error}${lastSynced}`;
+    syncBtn.disabled = !!reason;
+    if (reason) syncBtnWrap.dataset.tip = esc(reason);
+    else syncBtnWrap.removeAttribute('data-tip');
+    setSyncMessage(reason ? '' : `Syncing from ${proxy.name}${lastSynced}.`);
+    return proxy;
+  }
+
+  syncBtn.addEventListener('click', async () => {
+    const proxy = await loadActiveProxy();
+    if (!proxy) {
+      refreshSyncAvailability();
+      return;
+    }
+    setSyncMessage('Syncing…');
+    let outcome;
+    await withPending(syncBtn, async () => {
+      const res = await postJSON(`/api/proxy-integrations/${proxy.id}/sync-prices`, {});
       if (!res.ok) {
-        setSyncMessage(await extractErrorMessage(res, 'Sync failed.'), true);
-        keepDisabled = res.status === 502;
+        outcome = { text: await extractErrorMessage(res, 'Sync failed.'), isError: true };
         return;
       }
       const data = await res.json();
-      lastSyncedAt = Math.floor(Date.now() / 1000);
-      syncMessageWithLastSynced(`Synced ${data.models.length} model(s): ${data.created} created, ${data.updated} updated.`, false);
+      outcome = { text: `Synced ${data.models.length} model(s) from ${proxy.name}: ${data.created} created, ${data.updated} updated.`, isError: false };
       loadPrices();
-    } finally {
-      syncBtn.disabled = keepDisabled;
-    }
+    });
+    await refreshSyncAvailability();
+    if (!(outcome.isError && syncBtn.disabled)) setSyncMessage(outcome.text, outcome.isError);
   });
 
   loadPrices();
-  loadSettings();
+  refreshSyncAvailability();
   initNavPolling();
 })();

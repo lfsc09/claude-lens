@@ -20,9 +20,8 @@ var dashboardRanges = map[string]bool{
 	"last-60-days": true,
 }
 
-// normalizeDashboardRange returns key if it's a recognized range, else the
-// default — so a missing or tampered-with ?range= value falls back safely
-// instead of erroring or (worse) silently querying unbounded all-time data.
+// normalizeDashboardRange returns key if it is a recognized range, else the
+// default range.
 func normalizeDashboardRange(key string) string {
 	if dashboardRanges[key] {
 		return key
@@ -31,7 +30,7 @@ func normalizeDashboardRange(key string) string {
 }
 
 // sinceForRange resolves a dashboard range key to a Unix-seconds lower bound
-// for a "timestamp >= since" totals query, computed against `now` in local
+// for a "created_at >= since" totals query, computed against `now` in local
 // time (matching fmtTime's local rendering elsewhere in the admin UI). Every
 // range's upper bound is implicitly "now" — the picker has no way to choose
 // a past end date — so a single lower bound is enough; no upper-bound param

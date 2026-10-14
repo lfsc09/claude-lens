@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"path/filepath"
+	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/lfsc09/claude-lens/internal/config"
-	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
 )
@@ -28,11 +26,7 @@ func freePort(t *testing.T) string {
 }
 
 func TestServer_HealthAndGracefulShutdown(t *testing.T) {
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("database.Open: %v", err)
-	}
-	defer db.Close()
+	db := openTestDB(t)
 	est := pricing.New(db)
 	_ = est.Refresh(context.Background())
 
@@ -41,11 +35,8 @@ func TestServer_HealthAndGracefulShutdown(t *testing.T) {
 		t.Errorf("initial status = %q, want %q", st.Get(), status.Unreachable)
 	}
 
-	cfg := config.Config{AnthropicBaseURL: "http://127.0.0.1:1"}
-	server, err := NewServer(cfg, db, est, st, status.NewFresh(), status.NewFresh())
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
+	reg := newTestRegistry(t, db, "http://127.0.0.1:1", "token", nil)
+	server := NewServer(reg, db, est, st, status.NewFresh(), status.NewFresh())
 
 	addr := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -98,4 +89,30 @@ func waitForListening(t *testing.T, addr string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("server never started listening on %s", addr)
+}
+
+func TestRejectBrowserRequests(t *testing.T) {
+	handler := rejectBrowserRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"api client", nil, http.StatusNoContent},
+		{"with origin", map[string]string{"Origin": "http://evil.test"}, http.StatusForbidden},
+		{"with fetch metadata", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		for name, value := range tc.headers {
+			req.Header.Set(name, value)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status = %d, want %d", tc.name, rec.Code, tc.want)
+		}
+	}
 }

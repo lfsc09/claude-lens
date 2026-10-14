@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -13,7 +14,7 @@ func saveExchangeWithCost(t *testing.T, db *DB, sessionID string, cost float64) 
 	if err := db.SaveExchange(context.Background(), Exchange{
 		SessionID:   sessionID,
 		Path:        "/v1/messages",
-		Timestamp:   float64(time.Now().Unix()),
+		CreatedAt:   float64(time.Now().Unix()),
 		RawRequest:  "{}",
 		RawResponse: "{}",
 		InputCost:   floatPtr(cost),
@@ -347,5 +348,53 @@ func TestTimeUntilNextMinute(t *testing.T) {
 				t.Errorf("timeUntilNextMinute(%v) = %v, want %v", tt.now, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAccrueLimiterCost_ConcurrentAccrualsAndRefreshLoseNothing(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	id, err := db.CreateLimiter(ctx, Limiter{
+		LimitAmount:   1000,
+		CurrentCost:   5,
+		RefreshValue:  60,
+		RefreshUnit:   "minutes",
+		NextRefreshAt: float64(now.Add(-time.Minute).Unix()),
+		IsActive:      true,
+		CreatedAt:     float64(now.Unix()),
+		UpdatedAt:     float64(now.Unix()),
+	})
+	if err != nil {
+		t.Fatalf("CreateLimiter: %v", err)
+	}
+
+	const accruals = 40
+	const cost = 0.25
+	var wg sync.WaitGroup
+	for range accruals {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := db.accrueLimiterCost(ctx, "sess", cost, nil); err != nil {
+				t.Errorf("accrueLimiterCost: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := db.RefreshDueLimiters(ctx); err != nil {
+				t.Errorf("RefreshDueLimiters: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	l, err := db.GetLimiter(ctx, id)
+	if err != nil || l == nil {
+		t.Fatalf("GetLimiter: %v, %v", l, err)
+	}
+	if want := accruals * cost; l.CurrentCost != want {
+		t.Errorf("CurrentCost = %v, want %v (refresh must happen once, before any accrual)", l.CurrentCost, want)
 	}
 }

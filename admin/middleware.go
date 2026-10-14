@@ -2,8 +2,14 @@ package admin
 
 import (
 	"log/slog"
+	"mime"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
+
+	"github.com/lfsc09/claude-lens/internal/config"
 )
 
 // middleware wraps an http.Handler with cross-cutting behavior.
@@ -71,4 +77,70 @@ func loggingMiddleware(logger *slog.Logger) middleware {
 			)
 		})
 	}
+}
+
+// guardMiddleware rejects requests a web page could send to the local admin
+// server on a visitor's behalf. Unless allowAnyHost is set, the Host header
+// must name a loopback address, which blocks DNS rebinding. State-changing
+// requests must be same-origin and, when they carry a body, declare it as
+// JSON, which blocks cross-site form and text/plain posts.
+func guardMiddleware(allowAnyHost bool) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !allowAnyHost && !config.IsLoopbackHost(hostWithoutPort(r.Host)) {
+				writeError(w, http.StatusForbidden, "forbidden host")
+				return
+			}
+			if isStateChanging(r.Method) {
+				if !isSameOrigin(r) {
+					writeError(w, http.StatusForbidden, "cross-origin request rejected")
+					return
+				}
+				if r.ContentLength != 0 && !hasJSONContentType(r) {
+					writeError(w, http.StatusUnsupportedMediaType, "content type must be application/json")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// hostWithoutPort strips an optional port and IPv6 brackets from a Host
+// header value.
+func hostWithoutPort(hostport string) string {
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return host
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+func isStateChanging(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	return true
+}
+
+// isSameOrigin reports whether r carries no cross-site browser signals: its
+// Sec-Fetch-Site is absent, same-origin or none, and its Origin, if any,
+// names the request's own host.
+func isSameOrigin(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && u.Host == r.Host
+}
+
+func hasJSONContentType(r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mediaType == "application/json"
 }

@@ -15,35 +15,60 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
-func newTestHandler(t *testing.T, upstreamURL string) (*Handler, *database.DB) {
-	t.Helper()
-	return newTestHandlerWithConfig(t, config.Config{AnthropicBaseURL: upstreamURL})
-}
-
-func newTestHandlerWithConfig(t *testing.T, cfg config.Config) (*Handler, *database.DB) {
+// openTestDB opens a throwaway database with raw payload saving enabled.
+func openTestDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("database.Open: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if err := db.SetSaveRawPayloads(context.Background(), true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
+	return db
+}
 
+// newTestRegistry activates the seeded LiteLLM proxy integration pointing at
+// baseURL with the given token and custom headers, and returns a Registry
+// resolving to it.
+func newTestRegistry(t *testing.T, db *database.DB, baseURL, token string, headers map[string]string) *upstream.Registry {
+	t.Helper()
+	ctx := context.Background()
+	list, err := db.ListProxyIntegrations(ctx)
+	if err != nil {
+		t.Fatalf("ListProxyIntegrations: %v", err)
+	}
+	p := list[0]
+	p.BaseURL, p.AuthToken, p.CustomHeaders = baseURL, token, headers
+	if err := db.UpdateProxyIntegration(ctx, p); err != nil {
+		t.Fatalf("UpdateProxyIntegration: %v", err)
+	}
+	if err := db.ActivateProxyIntegration(ctx, p.ID, 1); err != nil {
+		t.Fatalf("ActivateProxyIntegration: %v", err)
+	}
+	reg, err := upstream.NewRegistry(ctx, db)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	return reg
+}
+
+func newTestHandler(t *testing.T, upstreamURL string) (*Handler, *database.DB) {
+	t.Helper()
+	db := openTestDB(t)
 	est := pricing.New(db)
 	if err := est.Refresh(context.Background()); err != nil {
 		t.Fatalf("Refresh: %v", err)
 	}
-
-	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh(), status.NewFresh())
-	if err != nil {
-		t.Fatalf("NewHandler: %v", err)
-	}
-	return h, db
+	reg := newTestRegistry(t, db, upstreamURL, "test-token", nil)
+	return NewHandler(reg, db, est, status.New(), status.NewFresh(), status.NewFresh()), db
 }
 
 // TestStreaming_NotBatched proves the plan's §6 gotcha is actually handled:
@@ -398,31 +423,18 @@ func TestGetRequest_PassesThroughWithoutRecording(t *testing.T) {
 
 func TestAuthTokenAndCustomHeaders_AreInjectedUpstream(t *testing.T) {
 	var gotAuth, gotCustom string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotCustom = r.Header.Get("X-Team")
 		fmt.Fprint(w, `{}`)
 	}))
-	defer upstream.Close()
+	defer gateway.Close()
 
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("database.Open: %v", err)
-	}
-	defer db.Close()
+	db := openTestDB(t)
 	est := pricing.New(db)
 	_ = est.Refresh(context.Background())
-
-	cfg := config.Config{
-		AnthropicBaseURL:       upstream.URL,
-		AnthropicAuthToken:     "sk-test-token",
-		AnthropicCustomHeaders: "X-Team: platform",
-	}
-	h, err := NewHandler(cfg, db, est, status.New(), status.NewFresh(), status.NewFresh())
-	if err != nil {
-		t.Fatalf("NewHandler: %v", err)
-	}
-	server := httptest.NewServer(h)
+	reg := newTestRegistry(t, db, gateway.URL, "sk-test-token", map[string]string{"X-Team": "platform"})
+	server := httptest.NewServer(NewHandler(reg, db, est, status.New(), status.NewFresh(), status.NewFresh()))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/v1/models")
@@ -439,23 +451,56 @@ func TestAuthTokenAndCustomHeaders_AreInjectedUpstream(t *testing.T) {
 	}
 }
 
-func TestUpstreamUnreachable_Returns502(t *testing.T) {
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("database.Open: %v", err)
+func TestIntegrationChange_AppliesToNextRequestWithoutRestart(t *testing.T) {
+	var firstHits, secondHits int
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { firstHits++; fmt.Fprint(w, `{}`) }))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { secondHits++; fmt.Fprint(w, `{}`) }))
+	defer second.Close()
+
+	db := openTestDB(t)
+	est := pricing.New(db)
+	_ = est.Refresh(context.Background())
+	reg := newTestRegistry(t, db, first.URL, "token", nil)
+	server := httptest.NewServer(NewHandler(reg, db, est, status.New(), status.NewFresh(), status.NewFresh()))
+	defer server.Close()
+
+	get := func() {
+		resp, err := http.Get(server.URL + "/v1/models")
+		if err != nil {
+			t.Fatalf("GET failed: %v", err)
+		}
+		resp.Body.Close()
 	}
-	defer db.Close()
+	get()
+
+	active, err := db.GetActiveProxyIntegration(context.Background())
+	if err != nil || active == nil {
+		t.Fatalf("GetActiveProxyIntegration: %v, %v", active, err)
+	}
+	active.BaseURL = second.URL
+	if err := db.UpdateProxyIntegration(context.Background(), *active); err != nil {
+		t.Fatalf("UpdateProxyIntegration: %v", err)
+	}
+	if err := reg.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	get()
+
+	if firstHits != 1 || secondHits != 1 {
+		t.Errorf("hits = (%d, %d), want (1, 1)", firstHits, secondHits)
+	}
+}
+
+func TestUpstreamUnreachable_Returns502(t *testing.T) {
+	db := openTestDB(t)
 	est := pricing.New(db)
 	_ = est.Refresh(context.Background())
 
 	st := status.New()
 	// Port 1 is not something a fake upstream will ever be listening on.
-	cfg := config.Config{AnthropicBaseURL: "http://127.0.0.1:1"}
-	h, err := NewHandler(cfg, db, est, st, status.NewFresh(), status.NewFresh())
-	if err != nil {
-		t.Fatalf("NewHandler: %v", err)
-	}
-	server := httptest.NewServer(h)
+	reg := newTestRegistry(t, db, "http://127.0.0.1:1", "token", nil)
+	server := httptest.NewServer(NewHandler(reg, db, est, st, status.NewFresh(), status.NewFresh()))
 	defer server.Close()
 
 	resp, err := http.Get(server.URL + "/v1/models")
