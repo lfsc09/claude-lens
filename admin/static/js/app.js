@@ -437,11 +437,44 @@ export function tokensTooltip(row) {
   window.addEventListener('resize', hideTip);
 })();
 
+/**
+ * Opens the live-stream SSE connection and keeps it open only while the page
+ * is visible, so hidden tabs and pages parked in the back/forward cache never
+ * hold one of the browser's few per-origin HTTP/1.1 connections.
+ * @param {?string} range - Dashboard range key to scope totals to, or null.
+ * @param {Function} onMessage - Called with each parsed payload, or `{proxy_status: 'unreachable'}` on connection errors.
+ * @returns {{close: Function}} Handle that permanently closes the connection.
+ */
 export function connectSSE(range, onMessage) {
-  const eventSource = new EventSource('/api/stream' + (range ? `?range=${encodeURIComponent(range)}` : ''));
-  eventSource.onmessage = (e) => onMessage(JSON.parse(e.data));
-  eventSource.onerror = () => onMessage({ proxy_status: 'unreachable' });
-  return eventSource;
+  const url = '/api/stream' + (range ? `?range=${encodeURIComponent(range)}` : '');
+  const lifecycle = new AbortController();
+  let eventSource = null;
+
+  function open() {
+    if (eventSource) return;
+    eventSource = new EventSource(url);
+    eventSource.onmessage = (e) => onMessage(JSON.parse(e.data));
+    eventSource.onerror = () => onMessage({ proxy_status: 'unreachable' });
+  }
+
+  function suspend() {
+    eventSource?.close();
+    eventSource = null;
+  }
+
+  const syncWithVisibility = () => (document.hidden ? suspend() : open());
+  const { signal } = lifecycle;
+  document.addEventListener('visibilitychange', syncWithVisibility, { signal });
+  window.addEventListener('pageshow', syncWithVisibility, { signal });
+  window.addEventListener('pagehide', suspend, { signal });
+  syncWithVisibility();
+
+  return {
+    close() {
+      lifecycle.abort();
+      suspend();
+    },
+  };
 }
 
 /**
@@ -467,7 +500,7 @@ export function updateProxyStatusBadge(statusValue) {
  * their own dedup bookkeeping.
  * @param {?string} range - Dashboard range key to scope totals to, or null.
  * @param {{onTotals?: Function, onNewExchange?: Function, onLimitersChanged?: Function}} [handlers] - Optional event callbacks.
- * @returns {EventSource} The underlying SSE connection, for closing on range change.
+ * @returns {{close: Function}} The SSE connection handle, for closing on range change.
  */
 export function initNav(range, handlers = {}) {
   const { onTotals, onNewExchange, onLimitersChanged } = handlers;
