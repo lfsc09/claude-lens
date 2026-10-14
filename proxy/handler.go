@@ -11,79 +11,58 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/lfsc09/claude-lens/internal/config"
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/parsing"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
-// exchangeMeta carries per-request state from Director to ModifyResponse —
-// httputil.ReverseProxy gives no other hook for passing data between the
-// two, so it rides the outbound request's context (resp.Request is the same
-// *http.Request Director mutated, per net/http.Transport's contract of
-// setting Response.Request to the request it sent).
+// exchangeMeta carries per-request state from the director to modifyResponse
+// through the outbound request's context.
 type exchangeMeta struct {
-	intercept     bool
-	sessionID     string
-	path          string
-	timestamp     float64
-	rawRequest    string
-	inputMessages *string
-	isStreaming   bool
-	model         *string
+	intercept   bool
+	sessionID   string
+	path        string
+	createdAt   float64
+	rawRequest  string
+	isStreaming bool
+	model       *string
 }
 
 type metaKey struct{}
 
-// Handler is an http.Handler that reverse-proxies to the configured
-// Anthropic base URL, intercepting POST requests to record an exchange.
+// Handler is an http.Handler that reverse-proxies to the current upstream
+// target (see upstream.Registry), intercepting POST requests to record an exchange.
 type Handler struct {
-	cfg           config.Config
+	upstream      *upstream.Registry
 	db            *database.DB
 	estimator     *pricing.Estimator
 	status        *status.Flag
 	fresh         *status.Fresh
 	limitersFresh *status.Fresh
-	customHeaders map[string]string
-	target        *url.URL
 	rp            *httputil.ReverseProxy
 	logger        *slog.Logger
 
-	// saveWG tracks saveExchange goroutines still writing to the database,
-	// so Server.Run can drain them before the process exits instead of
-	// dropping the last exchange of a request that completed right as
-	// shutdown began.
+	// saveWG tracks saveExchange goroutines still writing to the database;
+	// Server.Run drains it on shutdown.
 	saveWG sync.WaitGroup
 }
 
-// NewHandler builds a Handler. It fails only if
-// CLENS_PROXY_CUSTOM_HEADERS or CLENS_PROXY_BASE_URL is malformed.
-func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) (*Handler, error) {
-	customHeaders, err := ParseCustomHeaders(cfg.AnthropicCustomHeaders)
-	if err != nil {
-		return nil, err
-	}
-
-	target, err := url.Parse(cfg.AnthropicBaseURL)
-	if err != nil {
-		return nil, err
-	}
-
+// NewHandler builds a Handler that forwards to whatever target reg currently
+// resolves to.
+func NewHandler(reg *upstream.Registry, db *database.DB, estimator *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh) *Handler {
 	h := &Handler{
-		cfg:           cfg,
+		upstream:      reg,
 		db:            db,
 		estimator:     estimator,
 		status:        st,
 		fresh:         fr,
 		limitersFresh: limitersFresh,
-		customHeaders: customHeaders,
-		target:        target,
 		logger:        slog.Default().With("component", "proxy"),
 	}
 
@@ -99,14 +78,11 @@ func NewHandler(cfg config.Config, db *database.DB, estimator *pricing.Estimator
 		ModifyResponse: h.modifyResponse,
 		ErrorHandler:   h.errorHandler,
 		Transport:      transport,
-		// Flush after every write, unconditionally — Anthropic's streaming
-		// responses are SSE, but don't rely on ReverseProxy's default
-		// content-type sniff to catch that; a buffered stream defeats the
-		// entire point of this proxy.
+		// Flushes after every write so streamed responses are not buffered.
 		FlushInterval: -1,
 	}
 
-	return h, nil
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -133,9 +109,7 @@ func sessionIDFromRequest(r *http.Request) string {
 	))
 }
 
-// writeLimiterBlocked writes an Anthropic-shaped 429 error body so Claude
-// Code's existing error display renders it, instead of a generic
-// connection failure.
+// writeLimiterBlocked writes an Anthropic-shaped 429 error body.
 func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
 	scope := "global"
 	if by.SessionID != "" {
@@ -159,26 +133,21 @@ func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
 func (h *Handler) director(r *http.Request) {
 	originalPath := r.URL.Path
 
-	r.URL.Scheme = h.target.Scheme
-	r.URL.Host = h.target.Host
-	r.URL.Path = h.target.Path + originalPath
-	r.Host = h.target.Host
+	target := h.upstream.Current()
+	r.URL.Scheme = target.BaseURL.Scheme
+	r.URL.Host = target.BaseURL.Host
+	r.URL.Path = target.BaseURL.Path + originalPath
+	r.Host = target.BaseURL.Host
 
-	// The client's Accept-Encoding (Claude Code asks for gzip/br) would
-	// otherwise ride straight through to upstream. http.Transport only
-	// auto-decompresses gzip when it picks the encoding itself — if this
-	// header survives, Anthropic replies compressed (often brotli, which
-	// Go never decodes) and every downstream read, including the
-	// tee'd copy used for parsing tokens/output text, gets raw compressed
-	// bytes instead of text. Stripping it lets Transport negotiate and
-	// transparently undo gzip on its own.
+	// Dropping Accept-Encoding lets http.Transport negotiate gzip itself and
+	// decompress it, so the recorded body is always plain text.
 	r.Header.Del("Accept-Encoding")
 
-	if h.cfg.AnthropicAuthToken != "" {
-		SetHeader(r.Header, "Authorization", FormatAuthHeader(h.cfg.AnthropicAuthToken))
+	if target.AuthToken != "" {
+		r.Header.Set("Authorization", FormatAuthHeader(target.AuthToken))
 	}
-	for name, value := range h.customHeaders {
-		SetHeader(r.Header, name, value)
+	for name, value := range target.Headers {
+		r.Header.Set(name, value)
 	}
 
 	meta := &exchangeMeta{path: originalPath}
@@ -186,7 +155,7 @@ func (h *Handler) director(r *http.Request) {
 	if r.Method == http.MethodPost {
 		meta.intercept = true
 		meta.sessionID = sessionIDFromRequest(r)
-		meta.timestamp = float64(time.Now().UnixNano()) / 1e9
+		meta.createdAt = float64(time.Now().UnixNano()) / 1e9
 
 		body, err := io.ReadAll(r.Body)
 		r.Body.Close()
@@ -197,7 +166,7 @@ func (h *Handler) director(r *http.Request) {
 		} else {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			meta.rawRequest = string(body)
-			meta.inputMessages, meta.isStreaming, meta.model = parsing.ExtractRequestFields(body)
+			meta.isStreaming, meta.model = parsing.ExtractRequestFields(body)
 		}
 	}
 
@@ -223,8 +192,7 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 }
 
 // waitForSaves blocks until every in-flight saveExchange goroutine has
-// finished, or timeout elapses first — bounded so a stuck database write
-// (past SQLite's own busy_timeout) can't hang shutdown forever.
+// finished or timeout elapses.
 func (h *Handler) waitForSaves(timeout time.Duration) {
 	done := make(chan struct{})
 	go func() {
@@ -241,7 +209,7 @@ func (h *Handler) waitForSaves(timeout time.Duration) {
 func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
-	outputText, usage := parsing.ExtractResponseFields(rawResponse, meta.isStreaming)
+	usage := parsing.ExtractUsage(rawResponse, meta.isStreaming)
 
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
 	var matchedPrice *string
@@ -277,12 +245,10 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	err := h.db.SaveExchange(ctx, database.Exchange{
 		SessionID:           meta.sessionID,
 		Path:                meta.path,
-		Timestamp:           meta.timestamp,
+		CreatedAt:           meta.createdAt,
 		IsStreaming:         meta.isStreaming,
-		InputMessages:       meta.inputMessages,
 		RawRequest:          meta.rawRequest,
 		RawResponse:         strings.ToValidUTF8(string(rawResponse), "�"),
-		OutputText:          outputText,
 		InputTokens:         usage.InputTokens,
 		OutputTokens:        usage.OutputTokens,
 		CacheCreationTokens: usage.CacheCreationTokens,

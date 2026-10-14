@@ -2,14 +2,9 @@
 set -e
 
 SERVICE_NAME="claude-lens"
-DEFAULT_INSTALL_DIR="/usr/local/bin"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-CONFIG_DIR="/etc/claude-lens"
-ENV_FILE="${CONFIG_DIR}/claude-lens.env"
 DOWNLOAD_URL="https://github.com/lfsc09/claude-lens/releases/latest/download/claude-lens-linux-amd64"
 CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
-SERVICE_USER="claude-lens"
-SERVICE_GROUP="claude-lens"
 
 SCRIPT_NAME="install_linux.sh"
 _COLOR_YELLOW=$'\033[33m'
@@ -30,6 +25,14 @@ log() {
   esac
 }
 
+tmp_files=()
+
+# cleanup removes every temp file registered in tmp_files.
+cleanup() {
+  rm -f "${tmp_files[@]}"
+}
+trap cleanup EXIT
+
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -48,7 +51,37 @@ normalize_port() {
       exit 1
       ;;
   esac
+  if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    log error "${flag} must be between 1 and 65535, got '${2}'."
+    exit 1
+  fi
   printf '%s' "$port"
+}
+
+# validate_bind_host exits with an error unless value looks like a hostname
+# or IP address.
+validate_bind_host() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._:-]*)
+      log error "--bind must be a hostname or IP address (e.g. 127.0.0.1), got '${1}'."
+      exit 1
+      ;;
+  esac
+}
+
+# listen_addr prints host:port, bracketing IPv6 hosts.
+listen_addr() {
+  case "$1" in
+    *:*) printf '[%s]:%s' "$1" "$2" ;;
+    *) printf '%s:%s' "$1" "$2" ;;
+  esac
+}
+
+# saved_value prints the last value stored for key in the env file from a
+# previous install. The file is parsed, never sourced: it lives in a
+# user-writable directory and this script runs as root.
+saved_value() {
+  sed -n "s/^$1=\"\(.*\)\"\$/\1/p" "$ENV_FILE" | tail -n 1
 }
 
 usage() {
@@ -59,126 +92,120 @@ Safe to re-run at any time to update the binary and/or reconfigure the
 service. Any option you omit keeps whatever was set on a previous run
 (or the default shown, on a first install).
 
-  --proxy-base-url URL      Upstream API URL (default: https://api.anthropic.com)
-  --proxy-auth-token TOKEN  Authorization value forwarded upstream
-  --proxy-custom-header "H: v"  Extra header forwarded upstream (repeatable)
   --proxy-addr PORT         Proxy listen port (default: 7801)
   --admin-addr PORT         Admin listen port (default: 7802)
-  --install-dir PATH        Base directory for the binary (default: /usr/local/bin)
-  --data-dir PATH           SQLite database directory (default: /var/lib/claude-lens,
-                             or {--install-dir}/data if --install-dir is set)
-  --log-dir PATH            Log directory (default: /var/log/claude-lens,
-                             or {--install-dir}/logs if --install-dir is set)
+  --bind HOST               Interface both servers listen on (default: 127.0.0.1, this
+                             machine only). Anything else exposes the admin UI and the
+                             proxy, which have no authentication, to your network.
+  --install-dir PATH        Directory holding the binary, data/ and logs/ (default: ~/.claude-lens)
   --as-service              Configure and start claude-lens as a systemd service
                              (default: off - just downloads/updates the binary)
   -h, --help                Show this help
 USAGE
 }
 
-# ── Defaults ──────────────────────────────────────────────────────────
-CLENS_PROXY_BASE_URL="https://api.anthropic.com"
-CLENS_PROXY_AUTH_TOKEN=""
-CLENS_PROXY_ADDR="7801"
-CLENS_ADMIN_ADDR="7802"
-CLENS_INSTALL_DIR=""
-CLENS_DATA_DIR=""
-CLENS_LOG_DIR=""
-CLENS_AS_SERVICE="false"
-_CLENS_CUSTOM_HEADERS_ESCAPED=""
-
-# ── Carry forward settings from a previous install, if any ─────────────
-if [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-fi
-
-# ── Parse flags (override persisted values/defaults) ────────────────────
-PROXY_CUSTOM_HEADERS_ARR=()
+# ── Parse flags ───────────────────────────────────────────────────────
+flag_proxy_addr=""
+flag_admin_addr=""
+flag_bind=""
+flag_install_dir=""
+flag_as_service=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --proxy-base-url) CLENS_PROXY_BASE_URL="$2"; shift 2 ;;
-    --proxy-base-url=*) CLENS_PROXY_BASE_URL="${1#*=}"; shift ;;
-    --proxy-auth-token) CLENS_PROXY_AUTH_TOKEN="$2"; shift 2 ;;
-    --proxy-auth-token=*) CLENS_PROXY_AUTH_TOKEN="${1#*=}"; shift ;;
-    --proxy-custom-header) PROXY_CUSTOM_HEADERS_ARR+=("$2"); shift 2 ;;
-    --proxy-custom-header=*) PROXY_CUSTOM_HEADERS_ARR+=("${1#*=}"); shift ;;
-    --proxy-addr) CLENS_PROXY_ADDR="$2"; shift 2 ;;
-    --proxy-addr=*) CLENS_PROXY_ADDR="${1#*=}"; shift ;;
-    --admin-addr) CLENS_ADMIN_ADDR="$2"; shift 2 ;;
-    --admin-addr=*) CLENS_ADMIN_ADDR="${1#*=}"; shift ;;
-    --install-dir) CLENS_INSTALL_DIR="$2"; shift 2 ;;
-    --install-dir=*) CLENS_INSTALL_DIR="${1#*=}"; shift ;;
-    --data-dir) CLENS_DATA_DIR="$2"; shift 2 ;;
-    --data-dir=*) CLENS_DATA_DIR="${1#*=}"; shift ;;
-    --log-dir) CLENS_LOG_DIR="$2"; shift 2 ;;
-    --log-dir=*) CLENS_LOG_DIR="${1#*=}"; shift ;;
-    --as-service) CLENS_AS_SERVICE="true"; shift ;;
+    --proxy-addr) flag_proxy_addr="$2"; shift 2 ;;
+    --proxy-addr=*) flag_proxy_addr="${1#*=}"; shift ;;
+    --admin-addr) flag_admin_addr="$2"; shift 2 ;;
+    --admin-addr=*) flag_admin_addr="${1#*=}"; shift ;;
+    --bind) flag_bind="$2"; shift 2 ;;
+    --bind=*) flag_bind="${1#*=}"; shift ;;
+    --install-dir) flag_install_dir="$2"; shift 2 ;;
+    --install-dir=*) flag_install_dir="${1#*=}"; shift ;;
+    --as-service) flag_as_service="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) log error "Unknown option: $1"; usage; exit 1 ;;
   esac
 done
-
-# --proxy-addr/--admin-addr accept a bare port number; normalized here to
-# the ":port" form CLENS_PROXY_ADDR/CLENS_ADMIN_ADDR carry at runtime.
-CLENS_PROXY_ADDR=":$(normalize_port --proxy-addr "$CLENS_PROXY_ADDR")"
-CLENS_ADMIN_ADDR=":$(normalize_port --admin-addr "$CLENS_ADMIN_ADDR")"
-
-# Only replace the persisted custom headers if --proxy-custom-header was passed
-# at least once this run. Stored pre-escaped (literal "\n" between
-# entries) so it round-trips through `source` unambiguously and can be
-# dropped straight into the unit file's Environment= line, whose own
-# quoting rules (unlike EnvironmentFile's) reliably turn \n into a real
-# newline regardless of systemd version.
-if [ ${#PROXY_CUSTOM_HEADERS_ARR[@]} -gt 0 ]; then
-  headers_escaped=""
-  for h in "${PROXY_CUSTOM_HEADERS_ARR[@]}"; do
-    if [ -z "$headers_escaped" ]; then
-      headers_escaped="$h"
-    else
-      headers_escaped="${headers_escaped}\\n${h}"
-    fi
-  done
-  _CLENS_CUSTOM_HEADERS_ESCAPED="$headers_escaped"
-fi
-
-# ── Resolve install/data/log directories ─────────────────────────────────
-# --install-dir only changes the fallback for --data-dir/--log-dir when
-# those are left unset; an explicit --data-dir/--log-dir always wins.
-INSTALL_DIR="${CLENS_INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-if [ -z "$CLENS_DATA_DIR" ]; then
-  if [ -n "$CLENS_INSTALL_DIR" ]; then
-    CLENS_DATA_DIR="${INSTALL_DIR}/data"
-  else
-    CLENS_DATA_DIR="/var/lib/claude-lens"
-  fi
-fi
-if [ -z "$CLENS_LOG_DIR" ]; then
-  if [ -n "$CLENS_INSTALL_DIR" ]; then
-    CLENS_LOG_DIR="${INSTALL_DIR}/logs"
-  else
-    CLENS_LOG_DIR="/var/log/claude-lens"
-  fi
-fi
 
 if [ "$EUID" -ne 0 ]; then
   log error "Please run as root (e.g., sudo ./install_linux.sh)"
   exit 1
 fi
 
-# ── Configure ANTHROPIC_BASE_URL via Claude Code's settings.json ───────
-# claude-lens never sees this variable - Claude Code does, by reading the
-# `env` block of its own ~/.claude/settings.json. We only touch that file,
-# for the port this install's proxy listens on.
-proxy_port="${CLENS_PROXY_ADDR##*:}"
-expected_anthropic_url="http://localhost:${proxy_port}"
+if [ "$(uname -m)" != "x86_64" ]; then
+  log error "Unsupported architecture: $(uname -m) (only linux-amd64 builds are published)."
+  exit 1
+fi
 
 # sudo resets HOME to root's, so resolve the invoking user's real home to
-# find their ~/.claude, not root's.
+# find their ~/.claude and default install dir, not root's.
 target_home="$HOME"
 if [ -n "${SUDO_USER:-}" ]; then
   sudo_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
   target_home="${sudo_home:-$target_home}"
 fi
+
+# ── Resolve install/data/log directories ─────────────────────────────────
+CLENS_INSTALL_DIR="${flag_install_dir:-${target_home}/.claude-lens}"
+case "$CLENS_INSTALL_DIR" in
+  "~"|"~/"*) CLENS_INSTALL_DIR="${target_home}${CLENS_INSTALL_DIR#\~}" ;;
+esac
+case "$CLENS_INSTALL_DIR" in
+  /*) ;;
+  *) log error "--install-dir must be an absolute path, got '${CLENS_INSTALL_DIR}'."; exit 1 ;;
+esac
+CLENS_DATA_DIR="${CLENS_INSTALL_DIR}/data"
+CLENS_LOG_DIR="${CLENS_INSTALL_DIR}/logs"
+ENV_FILE="${CLENS_INSTALL_DIR}/claude-lens.env"
+
+# ── Defaults, then settings carried forward from a previous install ────
+saved_proxy_port=""
+saved_admin_port=""
+saved_bind=""
+saved_as_service=""
+if [ -f "$ENV_FILE" ]; then
+  saved_proxy_addr="$(saved_value CLENS_PROXY_ADDR)"
+  saved_admin_addr="$(saved_value CLENS_ADMIN_ADDR)"
+  saved_as_service="$(saved_value CLENS_AS_SERVICE)"
+  saved_proxy_port="${saved_proxy_addr##*:}"
+  saved_admin_port="${saved_admin_addr##*:}"
+  case "$saved_admin_addr" in
+    *:*)
+      saved_bind="${saved_admin_addr%:*}"
+      saved_bind="${saved_bind#[}"
+      saved_bind="${saved_bind%]}"
+      ;;
+  esac
+fi
+
+# ── Flags override persisted values, which override defaults ───────────
+proxy_port="$(normalize_port --proxy-addr "${flag_proxy_addr:-${saved_proxy_port:-7801}}")"
+admin_port="$(normalize_port --admin-addr "${flag_admin_addr:-${saved_admin_port:-7802}}")"
+CLENS_BIND_HOST="${flag_bind:-${saved_bind:-127.0.0.1}}"
+CLENS_AS_SERVICE="${flag_as_service:-${saved_as_service:-false}}"
+
+validate_bind_host "$CLENS_BIND_HOST"
+CLENS_PROXY_ADDR="$(listen_addr "$CLENS_BIND_HOST" "$proxy_port")"
+CLENS_ADMIN_ADDR="$(listen_addr "$CLENS_BIND_HOST" "$admin_port")"
+if [ "$proxy_port" = "$admin_port" ]; then
+  log error "--proxy-addr and --admin-addr must differ, both are '${proxy_port}'."
+  exit 1
+fi
+case "$CLENS_BIND_HOST" in
+  127.*|localhost|::1) ;;
+  *) log warn "Binding to '${CLENS_BIND_HOST}' exposes the admin UI and the proxy, which have no authentication, to your network." ;;
+esac
+
+# The service runs as the invoking user so it can reach the data and log
+# directories under their home.
+RUN_USER="${SUDO_USER:-root}"
+RUN_GROUP="$(id -gn "$RUN_USER")"
+
+# ── Configure ANTHROPIC_BASE_URL via Claude Code's settings.json ───────
+# claude-lens never sees this variable - Claude Code does, by reading the
+# `env` block of its own ~/.claude/settings.json. We only touch that file,
+# for the port this install's proxy listens on.
+expected_anthropic_url="http://localhost:${proxy_port}"
+
 claude_dir="${target_home}/.claude"
 settings_file="${claude_dir}/settings.json"
 
@@ -198,71 +225,86 @@ if [ ! -d "$claude_dir" ]; then
   exit 1
 fi
 
-if [ ! -f "$settings_file" ]; then
-  log info "Creating ${settings_file}..."
-  cat <<EOF > "$settings_file"
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "${expected_anthropic_url}"
-  }
-}
-EOF
-  if [ -n "${SUDO_USER:-}" ]; then
-    sudo_group="$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")"
-    chown "${SUDO_USER}:${sudo_group}" "$settings_file"
+settings_action=""
+
+# check_claude_settings validates ${settings_file} without changing it and
+# sets settings_action to create, update or none, so a problem is reported
+# before anything is installed.
+check_claude_settings() {
+  if [ ! -f "$settings_file" ]; then
+    settings_action="create"
+    return
   fi
-  log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
-else
   if ! command -v jq >/dev/null 2>&1; then
     log error "'${settings_file}' already exists and jq is required to safely read/update it, but jq is not installed."
     log error "Install jq (sudo apt-get install -y jq) and re-run this installer, or add this yourself:"
     log error "$settings_json_snippet"
     exit 1
   fi
-
   if ! current_url="$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$settings_file" 2>/dev/null)"; then
     log error "'${settings_file}' exists but isn't valid JSON. Fix it manually, then re-run this installer. It should include:"
     log error "$settings_json_snippet"
     exit 1
   fi
   if [ -z "$current_url" ]; then
-    orig_mode="$(stat -c '%a' "$settings_file")"
-    orig_owner="$(stat -c '%U:%G' "$settings_file")"
-    tmp_settings="$(mktemp)"
-    trap 'rm -f "$tmp_settings"' EXIT
-    jq --arg url "$expected_anthropic_url" '.env.ANTHROPIC_BASE_URL = $url' "$settings_file" > "$tmp_settings"
-    chmod "$orig_mode" "$tmp_settings"
-    chown "$orig_owner" "$tmp_settings" 2>/dev/null || true
-    mv "$tmp_settings" "$settings_file"
-    log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+    settings_action="update"
   elif [ "$current_url" != "$expected_anthropic_url" ]; then
     log error "ANTHROPIC_BASE_URL is already set to '${current_url}' in ${settings_file}, but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
     log error "Edit it manually to match, or re-run this installer with --proxy-addr matching the existing value."
     exit 1
   else
-    log info "ANTHROPIC_BASE_URL already set to ${expected_anthropic_url} in ${settings_file} - good."
+    settings_action="none"
   fi
+}
+
+# apply_claude_settings points Claude Code at this install's proxy by setting
+# ANTHROPIC_BASE_URL in settings.json, leaving other keys untouched.
+apply_claude_settings() {
+  case "$settings_action" in
+    create)
+      log info "Creating ${settings_file}..."
+      printf '%s\n' "$settings_json_snippet" > "$settings_file"
+      chown "${RUN_USER}:${RUN_GROUP}" "$settings_file"
+      log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+      ;;
+    update)
+      orig_mode="$(stat -c '%a' "$settings_file")"
+      orig_owner="$(stat -c '%U:%G' "$settings_file")"
+      tmp_settings="$(mktemp)"
+      tmp_files+=("$tmp_settings")
+      jq --arg url "$expected_anthropic_url" '.env.ANTHROPIC_BASE_URL = $url' "$settings_file" > "$tmp_settings"
+      chmod "$orig_mode" "$tmp_settings"
+      chown "$orig_owner" "$tmp_settings" 2>/dev/null || true
+      mv "$tmp_settings" "$settings_file"
+      log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+      ;;
+    none)
+      log info "ANTHROPIC_BASE_URL already set to ${expected_anthropic_url} in ${settings_file} - good."
+      ;;
+  esac
+}
+
+check_claude_settings
+
+if [ "$CLENS_AS_SERVICE" = "true" ] && ! command -v systemctl >/dev/null 2>&1; then
+  log error "--as-service needs systemd (systemctl not found). Re-run without --as-service to only install the binary."
+  exit 1
 fi
 
-# ── Stop and disable if already running/installed ───────────────────────
-if [ "$CLENS_AS_SERVICE" = "true" ]; then
-  if systemctl is-active --quiet "$SERVICE_NAME" || systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
-    log info "Existing ${SERVICE_NAME} service detected. Stopping service..."
-    systemctl stop "$SERVICE_NAME" || true
-    systemctl disable "$SERVICE_NAME" || true
-  fi
-
-  if [ -f "$SERVICE_FILE" ]; then
-    log info "Removing existing service file..."
-    rm -f "$SERVICE_FILE"
-    systemctl daemon-reload
-  fi
-fi
+# The temp files live in the install dir so the final mv is an atomic rename,
+# which also replaces a binary that is currently running.
+install_dir_existed=false
+[ -d "$CLENS_INSTALL_DIR" ] && install_dir_existed=true
+mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+$install_dir_existed || chown "${RUN_USER}:${RUN_GROUP}" "$CLENS_INSTALL_DIR"
+chown "${RUN_USER}:${RUN_GROUP}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+chmod 700 "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+$install_dir_existed || chmod 700 "$CLENS_INSTALL_DIR"
 
 log info "Downloading latest ${SERVICE_NAME} binary and checksum..."
-tmp_bin="$(mktemp)"
+tmp_bin="$(mktemp "${CLENS_INSTALL_DIR}/.${SERVICE_NAME}.XXXXXX")"
 tmp_sha="$(mktemp)"
-trap 'rm -f "$tmp_bin" "$tmp_sha"' EXIT
+tmp_files+=("$tmp_bin" "$tmp_sha")
 curl -fsSL "$DOWNLOAD_URL" -o "$tmp_bin"
 curl -fsSL "$CHECKSUM_URL" -o "$tmp_sha"
 
@@ -274,51 +316,25 @@ if [ "$expected_sha" != "$actual_sha" ]; then
   exit 1
 fi
 
-mkdir -p "$INSTALL_DIR"
-mv "$tmp_bin" "${INSTALL_DIR}/${SERVICE_NAME}"
-chmod +x "${INSTALL_DIR}/${SERVICE_NAME}"
-
-if [ "$CLENS_AS_SERVICE" = "true" ]; then
-  nologin_shell="$(command -v nologin || echo /usr/sbin/nologin)"
-  if ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
-    log info "Creating system group ${SERVICE_GROUP}..."
-    groupadd --system "$SERVICE_GROUP"
-  fi
-  if ! getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
-    log info "Creating system user ${SERVICE_USER}..."
-    useradd --system --no-create-home --shell "$nologin_shell" --gid "$SERVICE_GROUP" "$SERVICE_USER"
-  fi
-fi
-
-log info "Preparing data/log directories..."
-mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR" "$CONFIG_DIR"
-if [ "$CLENS_AS_SERVICE" = "true" ]; then
-  chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
-else
-  chown -R "${SUDO_USER:-root}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
-fi
+chown "${RUN_USER}:${RUN_GROUP}" "$tmp_bin"
+chmod 755 "$tmp_bin"
+mv "$tmp_bin" "${CLENS_INSTALL_DIR}/${SERVICE_NAME}"
 
 log info "Writing ${ENV_FILE}..."
-cat <<EOF > "$ENV_FILE"
-CLENS_PROXY_BASE_URL="${CLENS_PROXY_BASE_URL}"
-CLENS_PROXY_AUTH_TOKEN="${CLENS_PROXY_AUTH_TOKEN}"
+tmp_env="$(mktemp "${CLENS_INSTALL_DIR}/.${SERVICE_NAME}.env.XXXXXX")"
+tmp_files+=("$tmp_env")
+cat <<EOF > "$tmp_env"
 CLENS_PROXY_ADDR="${CLENS_PROXY_ADDR}"
 CLENS_ADMIN_ADDR="${CLENS_ADMIN_ADDR}"
-CLENS_INSTALL_DIR="${CLENS_INSTALL_DIR}"
 CLENS_DATA_DIR="${CLENS_DATA_DIR}"
 CLENS_LOG_DIR="${CLENS_LOG_DIR}"
 CLENS_AS_SERVICE="${CLENS_AS_SERVICE}"
-_CLENS_CUSTOM_HEADERS_ESCAPED="${_CLENS_CUSTOM_HEADERS_ESCAPED}"
 EOF
-chmod 600 "$ENV_FILE"
-chown root:root "$ENV_FILE"
+chmod 600 "$tmp_env"
+chown "${RUN_USER}:${RUN_GROUP}" "$tmp_env"
+mv "$tmp_env" "$ENV_FILE"
 
 if [ "$CLENS_AS_SERVICE" = "true" ]; then
-  headers_env_line=""
-  if [ -n "$_CLENS_CUSTOM_HEADERS_ESCAPED" ]; then
-    headers_env_line="Environment=\"CLENS_PROXY_CUSTOM_HEADERS=${_CLENS_CUSTOM_HEADERS_ESCAPED}\""
-  fi
-
   log info "Creating systemd service unit..."
   cat <<EOF > "$SERVICE_FILE"
 [Unit]
@@ -327,14 +343,13 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${INSTALL_DIR}/${SERVICE_NAME}
+ExecStart=${CLENS_INSTALL_DIR}/${SERVICE_NAME}
 EnvironmentFile=-${ENV_FILE}
-${headers_env_line}
 WorkingDirectory=${CLENS_DATA_DIR}
 Restart=always
 RestartSec=5
-User=${SERVICE_USER}
-Group=${SERVICE_GROUP}
+User=${RUN_USER}
+Group=${RUN_GROUP}
 
 [Install]
 WantedBy=multi-user.target
@@ -343,13 +358,20 @@ EOF
   log info "Reloading systemd, enabling, and starting service..."
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME"
-  systemctl start "$SERVICE_NAME"
+  systemctl restart "$SERVICE_NAME"
+  sleep 2
+  if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    log error "${SERVICE_NAME} did not stay running. Inspect it with: journalctl -u ${SERVICE_NAME} -n 50"
+    exit 1
+  fi
 
   log info "${SERVICE_NAME} installed/updated and started as a systemd service!"
   log info "Proxy listening on ${CLENS_PROXY_ADDR}, admin UI on ${CLENS_ADMIN_ADDR}."
-  log info "Config saved to ${ENV_FILE} - editing the simple values there and running 'systemctl restart ${SERVICE_NAME}' applies them (custom headers need a re-run of this installer)."
+  log info "Config saved to ${ENV_FILE} - editing the simple values there and running 'systemctl restart ${SERVICE_NAME}' applies them."
 else
-  log info "${SERVICE_NAME} binary installed/updated at ${INSTALL_DIR}/${SERVICE_NAME}."
+  log info "${SERVICE_NAME} binary installed/updated at ${CLENS_INSTALL_DIR}/${SERVICE_NAME}."
   log info "Config saved to ${ENV_FILE}."
   log info "Re-run this installer with --as-service to configure and start it as a systemd service."
 fi
+
+apply_claude_settings

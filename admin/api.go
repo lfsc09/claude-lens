@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +14,10 @@ import (
 
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/files"
-	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 // parsePageParams reads limit/offset query params, defaulting limit to
@@ -49,12 +51,10 @@ type handlers struct {
 	dbPath        string
 	logPath       string
 
-	// litellmClient/proxyBaseURL/proxyAuthToken back syncPricesFromLiteLLM.
-	// proxyBaseURL/proxyAuthToken are the same upstream claude-lens' proxy
-	// forwards to — only meaningful when that upstream is a LiteLLM proxy.
-	litellmClient  *litellm.Client
-	proxyBaseURL   string
-	proxyAuthToken string
+	// registry is refreshed after every proxy integration change so the
+	// proxy picks it up live; fetchers back the manual price sync.
+	registry *upstream.Registry
+	fetchers pricesync.Fetchers
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -67,6 +67,37 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// unixNow returns the current time as Unix seconds, the unit of every
+// timestamp column.
+func unixNow() float64 {
+	return float64(time.Now().Unix())
+}
+
+// pathID parses the {id} path value, answering 404 when it is not an integer.
+func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return 0, false
+	}
+	return id, true
+}
+
+// getOr404 loads the row id with get, answering 500 on a lookup error and 404
+// when the row does not exist.
+func getOr404[T any](w http.ResponseWriter, r *http.Request, id int64, get func(context.Context, int64) (*T, error)) (*T, bool) {
+	row, err := get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if row == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return nil, false
+	}
+	return row, true
 }
 
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
@@ -110,22 +141,62 @@ func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not found")
+	id, ok := pathID(w, r)
+	if !ok {
 		return
 	}
+	row, ok := getOr404(w, r, id, h.db.GetExchangeDetail)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, row)
+}
 
-	row, err := h.db.GetExchangeDetail(r.Context(), id)
+// createExchangeRequest is the payload for POST /api/exchanges.
+type createExchangeRequest struct {
+	SessionID           string   `json:"session_id"`
+	Path                string   `json:"path"`
+	CreatedAt           float64  `json:"created_at"`
+	IsStreaming         bool     `json:"is_streaming"`
+	RawRequest          string   `json:"raw_request"`
+	RawResponse         string   `json:"raw_response"`
+	InputTokens         *int     `json:"input_tokens"`
+	OutputTokens        *int     `json:"output_tokens"`
+	CacheCreationTokens *int     `json:"cache_creation_tokens"`
+	CacheReadTokens     *int     `json:"cache_read_tokens"`
+	Model               *string  `json:"model"`
+	InputCost           *float64 `json:"input_cost"`
+	OutputCost          *float64 `json:"output_cost"`
+	CacheCreationCost   *float64 `json:"cache_creation_cost"`
+	CacheReadCost       *float64 `json:"cache_read_cost"`
+	MatchedPrice        *string  `json:"matched_price"`
+}
+
+// createExchange stores one exchange exactly as the proxy would, defaulting
+// created_at to now. It exists so development
+// data can be generated through the running service.
+func (h *handlers) createExchange(w http.ResponseWriter, r *http.Request) {
+	var req createExchangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.SessionID == "" || req.Path == "" {
+		writeError(w, http.StatusBadRequest, "session_id and path are required")
+		return
+	}
+	if req.MatchedPrice != nil && !json.Valid([]byte(*req.MatchedPrice)) {
+		writeError(w, http.StatusBadRequest, "matched_price must be a JSON object")
+		return
+	}
+	if req.CreatedAt == 0 {
+		req.CreatedAt = float64(time.Now().UnixNano()) / 1e9
+	}
+
+	err := h.db.SaveExchange(r.Context(), database.Exchange(req))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if row == nil {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, row)
+	h.fresh.Bump()
+	h.limitersFresh.Bump()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // bulkDeleteExchangesRequest is the payload for POST /api/exchanges/bulk-delete.
@@ -141,7 +212,7 @@ type bulkDeleteExchangesRequest struct {
 // bulkDeleteExchanges deletes exchanges for the given sessions, or every
 // exchange when session_ids is empty and confirm_all is set. When
 // also_delete_claude_session is set, it also removes each affected
-// session's on-disk Claude Code files and its session_names entry;
+// session's on-disk Claude Code files and its sessions row;
 // failures there are logged but never fail the request, since the
 // exchanges delete has already committed by that point.
 func (h *handlers) bulkDeleteExchanges(w http.ResponseWriter, r *http.Request) {
@@ -164,14 +235,17 @@ func (h *handlers) bulkDeleteExchanges(w http.ResponseWriter, r *http.Request) {
 	var deletedFiles int
 	if req.AlsoDeleteClaudeSession {
 		for _, sessionID := range affectedSessions {
+			if !files.IsClaudeSessionID(sessionID) {
+				continue
+			}
 			n, err := files.TryDeleteClaudeSession(sessionID)
 			deletedFiles += n
 			if err != nil {
 				h.logger.Error("failed to delete Claude session", "error", err, "session_id", sessionID, "deleted", n)
 			}
 		}
-		if err := h.db.DeleteSessionNames(r.Context(), affectedSessions); err != nil {
-			h.logger.Error("failed to delete session names", "error", err, "session_ids", affectedSessions)
+		if err := h.db.DeleteSessions(r.Context(), affectedSessions); err != nil {
+			h.logger.Error("failed to delete sessions", "error", err, "session_ids", affectedSessions)
 		}
 	}
 
@@ -265,7 +339,7 @@ type sessionNameRequest struct {
 }
 
 // setSessionName sets or clears a session's display name. An empty (or
-// whitespace-only) name clears it back to showing the raw session id.
+// whitespace-only) name resets it to the raw session id.
 func (h *handlers) setSessionName(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("sessionID")
 	if sessionID == "" {
@@ -289,11 +363,7 @@ func (h *handlers) setSessionName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{"session_id": sessionID, "session_name": nil}
-	if name != "" {
-		resp["session_name"] = name
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]string{"session_id": sessionID, "session_name": cmp.Or(name, sessionID)})
 }
 
 // dailyCosts powers the dashboard's spending heatmap. ?days= defaults to 60
@@ -366,7 +436,7 @@ func (h *handlers) createPrice(w http.ResponseWriter, r *http.Request) {
 		cacheReadPerM = *req.CacheReadPerM
 	}
 
-	now := float64(time.Now().Unix())
+	now := unixNow()
 	p := database.Price{
 		Prefix:                  req.Prefix,
 		InputPerM:               *req.InputPerM,
@@ -397,29 +467,6 @@ func (h *handlers) createPrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
-// syncPricesFromLiteLLM triggers an on-demand internal/pricesync.Sync — the
-// same sync also run periodically in the background (see main.go) — and
-// reports what it did so the admin UI can show a meaningful summary instead
-// of a bare "ok".
-//
-// Status code distinguishes the failure kind: 502 specifically means the
-// upstream isn't a LiteLLM proxy (see pricesync.ErrUpstreamUnavailable),
-// which the Prices page's JS uses to grey out the manual sync button —
-// anything else (e.g. a DB write error) isn't a capability signal, so it
-// stays a plain 500 and the button stays usable for an immediate retry.
-func (h *handlers) syncPricesFromLiteLLM(w http.ResponseWriter, r *http.Request) {
-	result, err := pricesync.Sync(r.Context(), h.db, h.est, h.litellmClient, h.proxyBaseURL, h.proxyAuthToken)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, pricesync.ErrUpstreamUnavailable) {
-			status = http.StatusBadGateway
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
 type updatePriceRequest struct {
 	InputPerM               *float64 `json:"input_per_m"`
 	OutputPerM              *float64 `json:"output_per_m"`
@@ -448,13 +495,8 @@ func (h *handlers) updatePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.db.GetPrice(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	existing, ok := getOr404(w, r, id, h.db.GetPrice)
+	if !ok {
 		return
 	}
 
@@ -466,7 +508,7 @@ func (h *handlers) updatePrice(w http.ResponseWriter, r *http.Request) {
 		cacheReadPerM = *req.CacheReadPerM
 	}
 
-	updatedAt := float64(time.Now().Unix())
+	updatedAt := unixNow()
 	p := database.Price{
 		InputPerM:               *req.InputPerM,
 		OutputPerM:              *req.OutputPerM,
@@ -524,21 +566,22 @@ func (h *handlers) listLimiters(w http.ResponseWriter, r *http.Request) {
 }
 
 type limiterRequest struct {
-	SessionID       string   `json:"session_id"`
-	LimitAmount     *float64 `json:"limit_amount"`
-	RefreshValue    *int     `json:"refresh_value"`
-	RefreshUnit     string   `json:"refresh_unit"`
-	RefreshAligned  bool     `json:"refresh_aligned"`
-	ActiveStartHour *int     `json:"active_start_hour"`
-	ActiveEndHour   *int     `json:"active_end_hour"`
-	SlackWebhookURL string   `json:"slack_webhook_url"`
-	// AlertThresholdPct fires a one-shot Slack alert the first time the
-	// limiter's spend reaches this percentage of its budget within the
-	// current refresh window. Nil disables the alert.
-	AlertThresholdPct *int `json:"alert_threshold_pct"`
-	// AlertRequestCostUSD fires a Slack alert every time a single exchange
-	// governed by this limiter costs at least this much. Nil disables it.
-	AlertRequestCostUSD *float64 `json:"alert_request_cost_usd"`
+	SessionID       string                `json:"session_id"`
+	LimitAmount     *float64              `json:"limit_amount"`
+	RefreshValue    *int                  `json:"refresh_value"`
+	RefreshUnit     string                `json:"refresh_unit"`
+	RefreshAligned  bool                  `json:"refresh_aligned"`
+	ActiveStartHour *int                  `json:"active_start_hour"`
+	ActiveEndHour   *int                  `json:"active_end_hour"`
+	Notifications   []limiterNotification `json:"notifications"`
+}
+
+// limiterNotification is one alert destination of a limiter, with the alert
+// rules that apply to it.
+type limiterNotification struct {
+	NotificationID int64    `json:"notification_id"`
+	ThresholdPct   *int     `json:"threshold_pct"`
+	RequestCostUSD *float64 `json:"request_cost_usd"`
 }
 
 var limiterRefreshUnits = map[string]bool{"minutes": true, "hours": true, "days": true, "months": true}
@@ -565,17 +608,21 @@ func validateLimiterRequest(req limiterRequest) string {
 	if req.ActiveStartHour != nil && (*req.ActiveStartHour < 0 || *req.ActiveStartHour > 23 || *req.ActiveEndHour < 0 || *req.ActiveEndHour > 23) {
 		return "active_start_hour and active_end_hour must be between 0 and 23"
 	}
-	if req.AlertThresholdPct != nil && (*req.AlertThresholdPct < 1 || *req.AlertThresholdPct > 100) {
-		return "alert_threshold_pct must be between 1 and 100"
-	}
-	if req.AlertRequestCostUSD != nil && *req.AlertRequestCostUSD <= 0 {
-		return "alert_request_cost_usd must be a positive number"
-	}
-	if req.SlackWebhookURL != "" && !strings.HasPrefix(req.SlackWebhookURL, "https://") {
-		return "slack_webhook_url must be a https:// URL"
-	}
-	if req.SlackWebhookURL == "" && (req.AlertThresholdPct != nil || req.AlertRequestCostUSD != nil) {
-		return "slack_webhook_url is required when an alert is configured"
+	seen := make(map[int64]struct{}, len(req.Notifications))
+	for _, n := range req.Notifications {
+		if _, dup := seen[n.NotificationID]; dup {
+			return "each notification integration can be linked only once"
+		}
+		seen[n.NotificationID] = struct{}{}
+		if n.ThresholdPct == nil && n.RequestCostUSD == nil {
+			return "each notification needs a threshold_pct or a request_cost_usd"
+		}
+		if n.ThresholdPct != nil && (*n.ThresholdPct < 1 || *n.ThresholdPct > 100) {
+			return "threshold_pct must be between 1 and 100"
+		}
+		if n.RequestCostUSD != nil && *n.RequestCostUSD <= 0 {
+			return "request_cost_usd must be a positive number"
+		}
 	}
 	return ""
 }
@@ -612,6 +659,34 @@ func (h *handlers) resolveLimiterScope(w http.ResponseWriter, r *http.Request, r
 	return sessionID, true
 }
 
+// newLimiterNotifications converts the request's links to their stored form,
+// carrying over AlertSent from previous for a link whose threshold is
+// unchanged so editing a limiter doesn't re-arm an alert already fired in
+// the current window.
+func newLimiterNotifications(links []limiterNotification, previous []database.LimiterNotification) []database.LimiterNotification {
+	out := make([]database.LimiterNotification, 0, len(links))
+	for _, n := range links {
+		link := database.LimiterNotification{NotificationID: n.NotificationID, ThresholdPct: n.ThresholdPct, RequestCostUSD: n.RequestCostUSD}
+		for _, p := range previous {
+			if p.NotificationID == n.NotificationID && p.ThresholdPct != nil && n.ThresholdPct != nil && *p.ThresholdPct == *n.ThresholdPct {
+				link.AlertSent = p.AlertSent
+			}
+		}
+		out = append(out, link)
+	}
+	return out
+}
+
+// writeLimiterWriteError maps a limiter write failure to a response: a
+// notification_id that names no integration is the client's mistake.
+func writeLimiterWriteError(w http.ResponseWriter, err error) {
+	if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		writeError(w, http.StatusBadRequest, "unknown notification integration")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
 // createLimiter adds a new limiter. An empty session_id scopes it globally.
 // Rejects an active period that overlaps another limiter already covering
 // the same session_id (see database.FindOverlappingLimiter).
@@ -633,24 +708,22 @@ func (h *handlers) createLimiter(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	l := database.Limiter{
-		SessionID:           sessionID,
-		LimitAmount:         *req.LimitAmount,
-		RefreshValue:        *req.RefreshValue,
-		RefreshUnit:         req.RefreshUnit,
-		RefreshAligned:      req.RefreshAligned,
-		NextRefreshAt:       float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
-		ActiveStartHour:     req.ActiveStartHour,
-		ActiveEndHour:       req.ActiveEndHour,
-		IsActive:            true,
-		CreatedAt:           float64(now.Unix()),
-		UpdatedAt:           float64(now.Unix()),
-		SlackWebhookURL:     strings.TrimSpace(req.SlackWebhookURL),
-		AlertThresholdPct:   req.AlertThresholdPct,
-		AlertRequestCostUSD: req.AlertRequestCostUSD,
+		SessionID:       sessionID,
+		LimitAmount:     *req.LimitAmount,
+		RefreshValue:    *req.RefreshValue,
+		RefreshUnit:     req.RefreshUnit,
+		RefreshAligned:  req.RefreshAligned,
+		NextRefreshAt:   float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix()),
+		ActiveStartHour: req.ActiveStartHour,
+		ActiveEndHour:   req.ActiveEndHour,
+		IsActive:        true,
+		CreatedAt:       float64(now.Unix()),
+		UpdatedAt:       float64(now.Unix()),
+		Notifications:   newLimiterNotifications(req.Notifications, nil),
 	}
 	id, err := h.db.CreateLimiter(r.Context(), l)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLimiterWriteError(w, err)
 		return
 	}
 	l.ID = id
@@ -683,13 +756,8 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.db.GetLimiter(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	existing, ok := getOr404(w, r, id, h.db.GetLimiter)
+	if !ok {
 		return
 	}
 
@@ -711,17 +779,18 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 	existing.ActiveStartHour = req.ActiveStartHour
 	existing.ActiveEndHour = req.ActiveEndHour
 	existing.UpdatedAt = float64(now.Unix())
-	existing.SlackWebhookURL = strings.TrimSpace(req.SlackWebhookURL)
-	existing.AlertThresholdPct = req.AlertThresholdPct
-	existing.AlertRequestCostUSD = req.AlertRequestCostUSD
+	var previous []database.LimiterNotification
+	if !scheduleChanged {
+		previous = existing.Notifications
+	}
+	existing.Notifications = newLimiterNotifications(req.Notifications, previous)
 	if scheduleChanged {
 		existing.CurrentCost = 0
-		existing.AlertSent = false
 		existing.NextRefreshAt = float64(database.ComputeNextRefresh(now, req.RefreshUnit, *req.RefreshValue, req.RefreshAligned).Unix())
 	}
 
 	if err := h.db.UpdateLimiter(r.Context(), *existing); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLimiterWriteError(w, err)
 		return
 	}
 	existing.WithinActivePeriod = database.WithinActivePeriodNow(*existing)
@@ -747,12 +816,45 @@ func (h *handlers) setLimiterActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updatedAt := float64(time.Now().Unix())
+	updatedAt := unixNow()
 	if err := h.db.SetLimiterActive(r.Context(), id, *req.IsActive, updatedAt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"is_active": *req.IsActive})
+}
+
+// getSettings returns the global settings.
+func (h *handlers) getSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.db.GetSettings(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// updateSettingsRequest is the payload for PATCH /api/settings; nil fields
+// are left unchanged.
+type updateSettingsRequest struct {
+	SaveRawPayloads *bool `json:"save_raw_payloads"`
+}
+
+// updateSettings applies the provided fields and returns the resulting
+// settings.
+func (h *handlers) updateSettings(w http.ResponseWriter, r *http.Request) {
+	var req updateSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.SaveRawPayloads != nil {
+		if err := h.db.SetSaveRawPayloads(r.Context(), *req.SaveRawPayloads); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	h.getSettings(w, r)
 }
 
 func (h *handlers) deleteLimiter(w http.ResponseWriter, r *http.Request) {

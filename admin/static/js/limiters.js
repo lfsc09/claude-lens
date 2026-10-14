@@ -1,6 +1,6 @@
-import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, makeDialogMessage, pad, postJSON, progressBar, putJSON, fmtSessionId, fmtActivePeriod } from './app.js';
-
 'use strict';
+
+import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fmtCountdown, fmtSessionId, fmtTime, getJSON, initNav, makeDialogMessage, notifyError, pad, postJSON, progressBar, putJSON, runAction, switchToggle, withPending } from './app.js';
 
 (() => {
   const tbody = document.getElementById('limiters-tbody');
@@ -21,10 +21,15 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   const alwaysActiveCheckbox = document.getElementById('limiter-always-active');
   const startHourSelect = document.getElementById('limiter-active-start-hour');
   const endHourSelect = document.getElementById('limiter-active-end-hour');
-  const alertThresholdPctInput = document.getElementById('limiter-alert-threshold-pct');
-  const alertRequestCostUsdInput = document.getElementById('limiter-alert-request-cost-usd');
-  const slackWebhookUrlInput = document.getElementById('limiter-slack-webhook-url');
+  const notificationsEl = document.getElementById('limiter-notifications');
+  const notificationsEmptyEl = document.getElementById('limiter-notifications-empty');
+  const addNotificationBtn = document.getElementById('add-limiter-notification-btn');
+  let notificationIntegrations = [];
 
+  /**
+   * Fills a select with one option per hour of the day.
+   * @param {HTMLSelectElement} select - Select to populate.
+   */
   function populateHourSelect(select) {
     select.innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${pad(h)}:00</option>`).join('');
   }
@@ -33,40 +38,167 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   startHourSelect.value = '0';
   endHourSelect.value = '23';
 
+  /**
+   * Singularizes a refresh unit for a value of 1.
+   * @param {number} value - Refresh interval length.
+   * @param {string} unit - Plural unit name.
+   * @returns {string} Unit label.
+   */
   function unitLabel(value, unit) {
     return value === 1 ? unit.slice(0, -1) : unit;
   }
 
+  /**
+   * Describes a limiter's refresh interval, e.g. "1 hour (aligned)".
+   * @param {object} l - Limiter from the API.
+   * @returns {string} Interval text.
+   */
   function fmtRefresh(l) {
     const base = `${l.refresh_value} ${unitLabel(l.refresh_value, l.refresh_unit)}`;
     return l.refresh_aligned ? `${base} (aligned)` : base;
   }
 
+  /**
+   * Renders a limiter's scope label followed by its alert indicator.
+   * @param {object} l - Limiter from the API.
+   * @returns {string} Badge markup.
+   */
   function scopeBadge(l) {
-    const badge = !l.session_id
-      ? '<span class="text-blue-700 dark:text-blue-400 font-medium px-1.5 py-0.5 bg-blue-50 dark:bg-blue-500/15 rounded">Global</span>'
-      : `<span class="text-emerald-700 dark:text-emerald-400 font-medium px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-500/15 rounded">${esc(fmtSessionId(l.session_id))}</span>`;
-    return `${badge}${alertBadge(l)}`;
+    const scope = l.session_id ? badge('emerald', esc(fmtSessionId(l.session_id))) : badge('blue', 'Global');
+    return `${scope}${alertBadge(l)}`;
   }
 
-  // Small bell indicator shown next to the scope badge when either Slack
-  // alert is armed for this limiter, with the details in a tooltip.
+  /**
+   * Renders the bell shown next to the scope label when a limiter has
+   * notification links, listing each link's trigger in a tooltip.
+   * @param {object} l - Limiter from the API.
+   * @returns {string} Bell markup, or '' when the limiter has no links.
+   */
   function alertBadge(l) {
-    if (!l.alert_threshold_pct && !l.alert_request_cost_usd) return '';
-    const lines = [];
-    if (l.alert_threshold_pct) lines.push(`At ${l.alert_threshold_pct}% of budget${l.alert_sent ? ' (already sent this window)' : ''}`);
-    if (l.alert_request_cost_usd) lines.push(`On a single request over ${fmtCost(l.alert_request_cost_usd)}`);
-    const tip = `Slack alert:\n${lines.join('\n')}`;
+    if (!l.notifications?.length) return '';
+    const lines = l.notifications.map((n) => {
+      const triggers = [];
+      if (n.threshold_pct) triggers.push(`at ${n.threshold_pct}% of budget${n.alert_sent ? ' (already sent this window)' : ''}`);
+      if (n.request_cost_usd) triggers.push(`on a single request over ${fmtCost(n.request_cost_usd)}`);
+      return `${integrationName(n.notification_id)}: ${triggers.join(', ')}`;
+    });
+    const tip = `Alerts:\n${lines.join('\n')}`;
     return ` <span data-tip="${esc(tip)}" class="text-amber-500 cursor-default" aria-label="${esc(tip)}">🔔</span>`;
   }
 
-  function statusToggle(l) {
-    return `<button type="button" class="toggle-active-btn inline-flex items-center relative h-5 w-9 rounded-full transition-colors ${l.is_active ? 'bg-emerald-600' : 'bg-surface-strong'}"
-      data-id="${l.id}" data-active="${l.is_active}" aria-pressed="${l.is_active}" aria-label="Toggle limiter active">
-      <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-surface transition-transform ${l.is_active ? 'translate-x-5' : 'translate-x-0.5'}"></span>
-    </button>`;
+  /**
+   * Looks up a notification integration's display name.
+   * @param {number} id - Notification integration id.
+   * @returns {string} Its name, or "#id" when unknown.
+   */
+  function integrationName(id) {
+    return notificationIntegrations.find((n) => n.id === id)?.name ?? `#${id}`;
   }
 
+  // ── Notification link rows ──────────────────────────────────────────
+  const NOTIFICATION_LABEL = 'block text-xs text-fg-muted uppercase tracking-wide';
+  const NOTIFICATION_FIELD = 'w-full text-sm normal-case tracking-normal mt-1 px-2 py-1.5 border border-line-strong rounded focus:outline-none focus:ring-1 focus:ring-emerald-500';
+
+  /**
+   * Renders one notification link as a card with labelled fields.
+   * @param {{notification_id?: number, threshold_pct?: ?number, request_cost_usd?: ?number}} [link] - Link to prefill.
+   * @returns {string} Row markup.
+   */
+  function notificationRow(link = {}) {
+    const options = notificationIntegrations.map((n) => {
+      const label = n.active ? n.name : `${n.name} (inactive)`;
+      return `<option value="${n.id}" ${n.id === link.notification_id ? 'selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+    return `<div class="notification-row flex flex-col gap-3 p-3 bg-surface-hover border border-line rounded-md">
+      <div class="flex items-end gap-2">
+        <label class="${NOTIFICATION_LABEL} flex-1 min-w-0">Integration
+          <select class="notification-id ${NOTIFICATION_FIELD}">${options}</select>
+        </label>
+        <button type="button" class="remove-notification-btn shrink-0 text-sm text-fg-subtle px-2 py-1.5 hover:text-red-600 dark:hover:text-red-400" aria-label="Remove notification">Remove</button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="${NOTIFICATION_LABEL}">At % of budget
+          <input type="number" step="1" min="1" max="100" placeholder="80" value="${link.threshold_pct ?? ''}" class="notification-threshold ${NOTIFICATION_FIELD}">
+        </label>
+        <label class="${NOTIFICATION_LABEL}">On request over ($)
+          <input type="number" step="0.01" min="0.01" placeholder="5.00" value="${link.request_cost_usd ?? ''}" class="notification-cost ${NOTIFICATION_FIELD}">
+        </label>
+      </div>
+    </div>`;
+  }
+
+  /** Hides, in each row's select, the integrations already chosen in other rows, and disables "Add" once every integration is linked. */
+  function syncNotificationOptions() {
+    const selects = [...notificationsEl.querySelectorAll('.notification-id')];
+    const chosen = selects.map((select) => select.value);
+    selects.forEach((select) => {
+      const takenElsewhere = new Set(chosen.filter((_, i) => selects[i] !== select));
+      select.querySelectorAll('option').forEach((option) => {
+        option.hidden = option.disabled = takenElsewhere.has(option.value);
+      });
+    });
+    notificationsEmptyEl.classList.toggle('hidden', selects.length > 0);
+    notificationsEmptyEl.innerHTML = notificationIntegrations.length
+      ? 'No alerts — this limiter won\'t notify anyone.'
+      : 'No notification integrations yet. <a href="/integrations/notifications" class="underline hover:text-fg">Create one</a> first.';
+    addNotificationBtn.disabled = selects.length >= notificationIntegrations.length;
+  }
+
+  /**
+   * Replaces the dialog's notification link rows.
+   * @param {object[]} links - Links to render.
+   */
+  function renderNotificationRows(links) {
+    notificationsEl.innerHTML = links.map(notificationRow).join('');
+    syncNotificationOptions();
+  }
+
+  /**
+   * Reads the dialog's notification link rows.
+   * @returns {{notification_id: number, threshold_pct: ?number, request_cost_usd: ?number}[]} Links as sent to the API.
+   */
+  function readNotificationRows() {
+    return [...notificationsEl.querySelectorAll('.notification-row')].map((row) => {
+      const threshold = row.querySelector('.notification-threshold').value.trim();
+      const cost = row.querySelector('.notification-cost').value.trim();
+      return {
+        notification_id: parseInt(row.querySelector('.notification-id').value, 10),
+        threshold_pct: threshold ? parseInt(threshold, 10) : null,
+        request_cost_usd: cost ? parseFloat(cost) : null,
+      };
+    });
+  }
+
+  /** Reloads the notification integrations and re-renders the dialog's link rows, keeping what is already entered. */
+  async function refreshNotificationIntegrations() {
+    try {
+      notificationIntegrations = await getJSON('/api/notification-integrations');
+    } catch (err) {
+      notifyError(err.message);
+    }
+    renderNotificationRows(readNotificationRows());
+  }
+
+  addNotificationBtn.addEventListener('click', () => {
+    const linked = new Set(readNotificationRows().map((n) => n.notification_id));
+    const available = notificationIntegrations.filter((n) => !linked.has(n.id));
+    const next = available.find((n) => n.active) ?? available[0];
+    notificationsEl.insertAdjacentHTML('beforeend', notificationRow({ notification_id: next?.id }));
+    syncNotificationOptions();
+  });
+  notificationsEl.addEventListener('click', (e) => {
+    e.target.closest('.remove-notification-btn')?.closest('.notification-row').remove();
+    syncNotificationOptions();
+  });
+  notificationsEl.addEventListener('change', (e) => {
+    if (e.target.matches('.notification-id')) syncNotificationOptions();
+  });
+
+  /**
+   * Renders one limiter as a table row.
+   * @param {object} l - Limiter from the API.
+   * @returns {string} Row markup.
+   */
   function buildRow(l) {
     return `<tr class="hover:bg-surface-hover transition-colors" data-id="${l.id}">
       <td class="px-4 py-2">${scopeBadge(l)}</td>
@@ -77,7 +209,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
         <div class="text-xs text-fg-subtle" data-countdown="${l.id}">${esc(fmtCountdown(l.within_active_period && l.is_active ? l.next_refresh_at : null))}</div>
       </td>
       <td class="whitespace-nowrap px-4 py-2">${fmtActivePeriod(l)}</td>
-      <td class="px-4 py-2">${statusToggle(l)}</td>
+      <td class="px-4 py-2">${switchToggle(l.is_active, 'Toggle limiter active')}</td>
       <td class="text-fg-muted whitespace-nowrap px-4 py-2">${fmtTime(l.updated_at)}</td>
       <td class="text-right whitespace-nowrap px-4 py-2">
         <button type="button" command="show-modal" commandfor="limiter-dialog" class="edit-btn text-sm text-fg-subtle mr-3 hover:text-fg">Edit</button>
@@ -86,9 +218,15 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     </tr>`;
   }
 
+  /** Fetches the limiters and renders them, or an error row when the fetch fails. */
   async function loadLimiters() {
-    const res = await fetch('/api/limiters');
-    const limiters = res.ok ? await res.json() : [];
+    let limiters;
+    try {
+      limiters = await getJSON('/api/limiters');
+    } catch (err) {
+      tbody.innerHTML = errorRow(8, err.message);
+      return;
+    }
 
     limitersById.clear();
     if (!limiters.length) {
@@ -100,9 +238,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     tbody.innerHTML = limiters.map(buildRow).join('');
   }
 
-  // Recomputes just the countdown text every 30s from already-fetched data,
-  // so it visibly ticks down between actual data changes without a refetch
-  // or a full-table re-render.
+  /** Recomputes each row's refresh countdown from the already-fetched limiters. */
   function tickCountdowns() {
     tbody.querySelectorAll('[data-countdown]').forEach((el) => {
       const l = limitersById.get(el.dataset.countdown);
@@ -110,20 +246,27 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     });
   }
 
+  /**
+   * Flips a limiter's master switch and reloads the table.
+   * @param {object} l - Limiter from the API.
+   */
   async function toggleActive(l) {
-    await fetch(`/api/limiters/${l.id}/active`, {
+    const request = fetch(`/api/limiters/${l.id}/active`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_active: !l.is_active }),
     });
-    loadLimiters();
+    if (await runAction(request, 'Failed to change limiter status.')) loadLimiters();
   }
 
+  /**
+   * Deletes a limiter after confirmation and reloads the table.
+   * @param {object} l - Limiter from the API.
+   */
   async function deleteLimiter(l) {
     const scope = l.session_id ? `session ${l.session_id}` : 'global';
     if (!confirm(`Delete the ${scope} limiter (${fmtCost(l.limit_amount)})?`)) return;
-    await fetch(`/api/limiters/${l.id}`, { method: 'DELETE' });
-    loadLimiters();
+    if (await runAction(fetch(`/api/limiters/${l.id}`, { method: 'DELETE' }), 'Failed to delete limiter.')) loadLimiters();
   }
 
   tbody.addEventListener('click', (e) => {
@@ -142,6 +285,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   });
 
   // ── Aligned-refresh availability ────────────────────────────────────
+  /** Enables the aligned-refresh checkbox only for interval combinations with a calendar boundary. */
   function updateAlignedAvailability() {
     const value = parseInt(refreshValueInput.value, 10);
     const unit = refreshUnitSelect.value;
@@ -153,6 +297,7 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   refreshUnitSelect.addEventListener('change', updateAlignedAvailability);
 
   // ── Always-active toggle ────────────────────────────────────────────
+  /** Disables the hour selects while the limiter is always active. */
   function updateActivePeriodInputs() {
     const disabled = alwaysActiveCheckbox.checked;
     startHourSelect.disabled = disabled;
@@ -161,11 +306,13 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
   alwaysActiveCheckbox.addEventListener('change', updateActivePeriodInputs);
 
   // ── Dialog message ──────────────────────────────────────────────────
-  const setDialogMessage = makeDialogMessage('limiter-dialog-message', {
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-  });
+  const setDialogMessage = makeDialogMessage('limiter-dialog-message');
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
+  /**
+   * Fills the dialog with a limiter for editing.
+   * @param {object} l - Limiter from the API.
+   */
   function startEdit(l) {
     editingId = l.id;
     dialogTitle.textContent = 'Edit limiter';
@@ -183,17 +330,18 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     endHourSelect.value = String(l.active_end_hour ?? 23);
     updateActivePeriodInputs();
 
-    alertThresholdPctInput.value = l.alert_threshold_pct ?? '';
-    alertRequestCostUsdInput.value = l.alert_request_cost_usd ?? '';
-    slackWebhookUrlInput.value = l.slack_webhook_url ?? '';
+    renderNotificationRows(l.notifications ?? []);
+    refreshNotificationIntegrations();
   }
 
+  /** Returns the dialog to its empty "add" state. */
   function resetDialog() {
     editingId = null;
     dialogTitle.textContent = 'Add a limiter';
     submitBtn.textContent = 'Add';
     setDialogMessage(null, '');
     form.reset();
+    renderNotificationRows([]);
     updateAlignedAvailability();
     updateActivePeriodInputs();
   }
@@ -203,8 +351,6 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
     e.preventDefault();
     const data = new FormData(form);
     const alwaysActive = alwaysActiveCheckbox.checked;
-    const alertThresholdPct = String(data.get('alert_threshold_pct') || '').trim();
-    const alertRequestCostUsd = String(data.get('alert_request_cost_usd') || '').trim();
 
     const payload = {
       session_id: String(data.get('session_id') || '').trim(),
@@ -214,23 +360,24 @@ import { esc, extractErrorMessage, fmtCost, fmtCountdown, fmtTime, initNav, make
       refresh_aligned: alignedCheckbox.checked && !alignedCheckbox.disabled,
       active_start_hour: alwaysActive ? null : parseInt(data.get('active_start_hour'), 10),
       active_end_hour: alwaysActive ? null : parseInt(data.get('active_end_hour'), 10),
-      slack_webhook_url: String(data.get('slack_webhook_url') || '').trim(),
-      alert_threshold_pct: alertThresholdPct ? parseInt(alertThresholdPct, 10) : null,
-      alert_request_cost_usd: alertRequestCostUsd ? parseFloat(alertRequestCostUsd) : null,
+      notifications: readNotificationRows(),
     };
 
-    const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);
-    if (!res.ok) {
-      setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update limiter.' : 'Failed to add limiter.'));
-      return;
-    }
-    dialog.close();
-    loadLimiters();
+    await withPending(submitBtn, async () => {
+      const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);
+      if (!res.ok) {
+        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update limiter.' : 'Failed to add limiter.'));
+        return;
+      }
+      dialog.close();
+      loadLimiters();
+    });
   });
 
   updateAlignedAvailability();
   updateActivePeriodInputs();
-  loadLimiters();
+  document.getElementById('add-limiter-btn').addEventListener('click', refreshNotificationIntegrations);
+  refreshNotificationIntegrations().then(loadLimiters);
   initNav(null, { onLimitersChanged: loadLimiters });
   setInterval(tickCountdowns, 30000);
 })();

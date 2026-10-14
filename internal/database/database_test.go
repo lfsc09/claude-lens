@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -109,24 +111,25 @@ func TestPricesCRUD(t *testing.T) {
 func TestSaveAndGetExchange(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
 	now := float64(time.Now().Unix())
 
 	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15}`
 	e := Exchange{
-		SessionID:     "sess-1",
-		Path:          "/v1/messages",
-		Timestamp:     now,
-		IsStreaming:   true,
-		InputMessages: strPtr(`[{"role":"user","content":"hi"}]`),
-		RawRequest:    `{"model":"claude-sonnet-5"}`,
-		RawResponse:   `{"type":"message"}`,
-		OutputText:    strPtr("hello there"),
-		InputTokens:   intPtr(100),
-		OutputTokens:  intPtr(50),
-		Model:         strPtr("claude-sonnet-5"),
-		InputCost:     floatPtr(0.0003),
-		OutputCost:    floatPtr(0.00075),
-		MatchedPrice:  &matchedPrice,
+		SessionID:    "sess-1",
+		Path:         "/v1/messages",
+		CreatedAt:    now,
+		IsStreaming:  false,
+		RawRequest:   `{"model":"claude-sonnet-5"}`,
+		RawResponse:  `{"type":"message","content":[{"type":"text","text":"hello there"}]}`,
+		InputTokens:  intPtr(100),
+		OutputTokens: intPtr(50),
+		Model:        strPtr("claude-sonnet-5"),
+		InputCost:    floatPtr(0.0003),
+		OutputCost:   floatPtr(0.00075),
+		MatchedPrice: &matchedPrice,
 	}
 	if err := db.SaveExchange(ctx, e); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -155,8 +158,11 @@ func TestSaveAndGetExchange(t *testing.T) {
 	if detail == nil {
 		t.Fatal("GetExchangeDetail returned nil for existing id")
 	}
-	if detail.RawRequest == nil || *detail.RawRequest != e.RawRequest {
-		t.Errorf("RawRequest mismatch: %+v", detail.RawRequest)
+	if detail.RawRequest != e.RawRequest || detail.RawResponse != e.RawResponse {
+		t.Errorf("raw payload mismatch: %+v", detail)
+	}
+	if detail.SessionName != "sess-1" {
+		t.Errorf("SessionName = %q, want it to default to the session id", detail.SessionName)
 	}
 	if detail.OutputText == nil || *detail.OutputText != "hello there" {
 		t.Errorf("OutputText mismatch: %+v", detail.OutputText)
@@ -172,57 +178,6 @@ func TestSaveAndGetExchange(t *testing.T) {
 	if missing != nil {
 		t.Fatalf("GetExchangeDetail(missing) = %+v, want nil", missing)
 	}
-
-	_, exchangeID, sessionID, cost := ledgerRowByExchangeID(t, db, got.ID)
-	if exchangeID == nil || *exchangeID != got.ID {
-		t.Errorf("ledger exchange_id = %v, want %d", exchangeID, got.ID)
-	}
-	if sessionID != "sess-1" {
-		t.Errorf("ledger session_id = %q, want sess-1", sessionID)
-	}
-	wantLedgerCost := 0.00105
-	if cost == nil || round4(*cost) != round4(wantLedgerCost) {
-		t.Errorf("ledger cost = %v, want ~%v", cost, wantLedgerCost)
-	}
-}
-
-// ledgerRowByExchangeID reads the sole exchanges_ledger row for exchangeID,
-// failing the test if there isn't exactly one.
-func ledgerRowByExchangeID(t *testing.T, db *DB, exchangeID int64) (ledgerID int64, gotExchangeID *int64, sessionID string, cost *float64) {
-	t.Helper()
-	rows, err := db.sql.Query(`SELECT id, exchange_id, session_id, cost FROM exchanges_ledger WHERE exchange_id = ?`, exchangeID)
-	if err != nil {
-		t.Fatalf("query exchanges_ledger: %v", err)
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		t.Fatalf("no exchanges_ledger row for exchange_id %d", exchangeID)
-	}
-	var ex sql.NullInt64
-	if err := rows.Scan(&ledgerID, &ex, &sessionID, &cost); err != nil {
-		t.Fatalf("scan exchanges_ledger row: %v", err)
-	}
-	if ex.Valid {
-		gotExchangeID = &ex.Int64
-	}
-	if rows.Next() {
-		t.Fatalf("more than one exchanges_ledger row for exchange_id %d", exchangeID)
-	}
-	return ledgerID, gotExchangeID, sessionID, cost
-}
-
-// ledgerExchangeIDByLedgerID reads exchange_id off one exchanges_ledger row
-// by its own id, returning nil if the column is NULL.
-func ledgerExchangeIDByLedgerID(t *testing.T, db *DB, ledgerID int64) *int64 {
-	t.Helper()
-	var ex sql.NullInt64
-	if err := db.sql.QueryRow(`SELECT exchange_id FROM exchanges_ledger WHERE id = ?`, ledgerID).Scan(&ex); err != nil {
-		t.Fatalf("query exchanges_ledger by id: %v", err)
-	}
-	if !ex.Valid {
-		return nil
-	}
-	return &ex.Int64
 }
 
 func TestGetExchanges_SessionFilterAndPagination(t *testing.T) {
@@ -234,7 +189,7 @@ func TestGetExchanges_SessionFilterAndPagination(t *testing.T) {
 		e := Exchange{
 			SessionID:   sess,
 			Path:        "/v1/messages",
-			Timestamp:   base + float64(i),
+			CreatedAt:   base + float64(i),
 			RawRequest:  "{}",
 			RawResponse: "{}",
 		}
@@ -251,7 +206,7 @@ func TestGetExchanges_SessionFilterAndPagination(t *testing.T) {
 		t.Fatalf("got %d, want 4", len(all))
 	}
 	// newest first
-	if all[0].Timestamp < all[len(all)-1].Timestamp {
+	if all[0].CreatedAt < all[len(all)-1].CreatedAt {
 		t.Errorf("expected newest-first ordering, got %+v", all)
 	}
 
@@ -290,7 +245,7 @@ func TestGetExchanges_FilterQuery(t *testing.T) {
 
 	seed := []Exchange{
 		{ // row 1
-			SessionID: "sess-a", Path: "/v1/messages", Timestamp: base,
+			SessionID: "sess-a", Path: "/v1/messages", CreatedAt: base,
 			RawRequest: "{}", RawResponse: "{}",
 			Model:               strPtr("claude-sonnet-4-5"),
 			InputTokens:         intPtr(100),
@@ -301,7 +256,7 @@ func TestGetExchanges_FilterQuery(t *testing.T) {
 			IsStreaming:         false,
 		},
 		{ // row 2
-			SessionID: "sess-b", Path: "/v1/messages", Timestamp: base + 100,
+			SessionID: "sess-b", Path: "/v1/messages", CreatedAt: base + 100,
 			RawRequest: "{}", RawResponse: "{}",
 			Model:        strPtr("claude-haiku-4-5"),
 			InputTokens:  intPtr(200),
@@ -310,7 +265,7 @@ func TestGetExchanges_FilterQuery(t *testing.T) {
 			IsStreaming:  true,
 		},
 		{ // row 3: no usage captured at all (e.g. a parse failure)
-			SessionID: "sess-a", Path: "/v1/complete", Timestamp: base + 200,
+			SessionID: "sess-a", Path: "/v1/complete", CreatedAt: base + 200,
 			RawRequest: "{}", RawResponse: "{}",
 			Model:       strPtr("claude-opus-4-5"),
 			IsStreaming: false,
@@ -376,11 +331,11 @@ func TestGetTokenTotals(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	rows := []Exchange{
-		{SessionID: "a", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}",
+		{SessionID: "a", Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}",
 			InputTokens: intPtr(10), OutputTokens: intPtr(20), InputCost: floatPtr(0.01), OutputCost: floatPtr(0.02)},
-		{SessionID: "a", Path: "/p", Timestamp: now + 1, RawRequest: "{}", RawResponse: "{}",
+		{SessionID: "a", Path: "/p", CreatedAt: now + 1, RawRequest: "{}", RawResponse: "{}",
 			InputTokens: intPtr(5), OutputTokens: intPtr(15), InputCost: floatPtr(0.005), OutputCost: floatPtr(0.015)},
-		{SessionID: "b", Path: "/p", Timestamp: now + 2, RawRequest: "{}", RawResponse: "{}",
+		{SessionID: "b", Path: "/p", CreatedAt: now + 2, RawRequest: "{}", RawResponse: "{}",
 			InputTokens: intPtr(1), OutputTokens: intPtr(1)},
 	}
 	for _, r := range rows {
@@ -423,8 +378,8 @@ func TestGetSessionStats(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "old", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}"})
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "new", Path: "/p", Timestamp: now + 10, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "old", Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "new", Path: "/p", CreatedAt: now + 10, RawRequest: "{}", RawResponse: "{}"})
 	if err := db.SetSessionName(ctx, "old", "Old"); err != nil {
 		t.Fatalf("SetSessionName: %v", err)
 	}
@@ -439,8 +394,8 @@ func TestGetSessionStats(t *testing.T) {
 	if stats[0].SessionID != "new" {
 		t.Errorf("expected most-recently-active session first, got %+v", stats[0])
 	}
-	if stats[1].SessionID != "old" || stats[1].SessionName == nil || *stats[1].SessionName != "Old" {
-		t.Errorf("expected session_names join to populate SessionName, got %+v", stats[1])
+	if stats[1].SessionID != "old" || stats[1].SessionName != "Old" {
+		t.Errorf("expected sessions join to populate SessionName, got %+v", stats[1])
 	}
 
 	page, err := db.GetSessionStats(ctx, 1, 0)
@@ -476,11 +431,11 @@ func TestGetSessionStats_ModelAndCacheCosts(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	rows := []Exchange{
-		{SessionID: "s", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}",
+		{SessionID: "s", Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}",
 			Model: strPtr("claude-opus"), CacheCreationCost: floatPtr(0.01), CacheReadCost: floatPtr(0.02)},
-		{SessionID: "s", Path: "/p", Timestamp: now + 1, RawRequest: "{}", RawResponse: "{}",
+		{SessionID: "s", Path: "/p", CreatedAt: now + 1, RawRequest: "{}", RawResponse: "{}",
 			Model: strPtr("claude-sonnet"), CacheCreationCost: floatPtr(0.03)},
-		{SessionID: "s", Path: "/p", Timestamp: now + 2, RawRequest: "{}", RawResponse: "{}",
+		{SessionID: "s", Path: "/p", CreatedAt: now + 2, RawRequest: "{}", RawResponse: "{}",
 			Model: strPtr("claude-sonnet"), CacheReadCost: floatPtr(0.04)},
 	}
 	for _, r := range rows {
@@ -513,7 +468,7 @@ func TestGetSessionStatsSince(t *testing.T) {
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "a", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "a", Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}"})
 	firstPage, err := db.GetExchanges(ctx, "", 1, 0)
 	if err != nil || len(firstPage) != 1 {
 		t.Fatalf("GetExchanges: rows=%+v err=%v", firstPage, err)
@@ -524,8 +479,8 @@ func TestGetSessionStatsSince(t *testing.T) {
 	// simulating two Claude Code terminals active within the same poll
 	// window — both must appear in the delta, not just the one owning the
 	// highest exchange id.
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "b", Path: "/p", Timestamp: now + 1, RawRequest: "{}", RawResponse: "{}"})
-	_ = db.SaveExchange(ctx, Exchange{SessionID: "c", Path: "/p", Timestamp: now + 2, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "b", Path: "/p", CreatedAt: now + 1, RawRequest: "{}", RawResponse: "{}"})
+	_ = db.SaveExchange(ctx, Exchange{SessionID: "c", Path: "/p", CreatedAt: now + 2, RawRequest: "{}", RawResponse: "{}"})
 
 	delta, err := db.GetSessionStatsSince(ctx, sinceID)
 	if err != nil {
@@ -546,7 +501,7 @@ func TestGetDailyCosts(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	if err := db.SaveExchange(ctx, Exchange{
-		SessionID: "a", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "a", Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}",
 		InputCost: floatPtr(0.01), OutputCost: floatPtr(0.02),
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -566,7 +521,7 @@ func TestGetDailyCosts(t *testing.T) {
 	// A tight window that excludes the row entirely.
 	oldRow := now - float64(120*24*3600)
 	if err := db.SaveExchange(ctx, Exchange{
-		SessionID: "old", Path: "/p", Timestamp: oldRow, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "old", Path: "/p", CreatedAt: oldRow, RawRequest: "{}", RawResponse: "{}",
 		InputCost: floatPtr(1), OutputCost: floatPtr(1),
 	}); err != nil {
 		t.Fatalf("SaveExchange(old): %v", err)
@@ -586,7 +541,7 @@ func TestDeleteExchanges(t *testing.T) {
 	now := float64(time.Now().Unix())
 
 	for _, sess := range []string{"a", "a", "b", "c"} {
-		if err := db.SaveExchange(ctx, Exchange{SessionID: sess, Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, Exchange{SessionID: sess, Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -629,9 +584,9 @@ func TestDeleteExchanges(t *testing.T) {
 	}
 }
 
-// TestDeleteSessionNames verifies that DeleteSessionNames removes only the
-// requested sessions' rows and no-ops on an empty ID slice.
-func TestDeleteSessionNames(t *testing.T) {
+// TestDeleteSessions verifies that DeleteSessions removes only the requested
+// sessions' rows and no-ops on an empty ID slice.
+func TestDeleteSessions(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
@@ -641,18 +596,17 @@ func TestDeleteSessionNames(t *testing.T) {
 		}
 	}
 
-	if err := db.DeleteSessionNames(ctx, nil); err != nil {
-		t.Fatalf("DeleteSessionNames(nil): %v", err)
+	if err := db.DeleteSessions(ctx, nil); err != nil {
+		t.Fatalf("DeleteSessions(nil): %v", err)
 	}
-
-	if err := db.DeleteSessionNames(ctx, []string{"a", "c"}); err != nil {
-		t.Fatalf("DeleteSessionNames([a,c]): %v", err)
+	if err := db.DeleteSessions(ctx, []string{"a", "c"}); err != nil {
+		t.Fatalf("DeleteSessions([a,c]): %v", err)
 	}
 
 	var remaining []string
-	rows, err := db.sql.QueryContext(ctx, "SELECT session_id FROM session_names ORDER BY session_id")
+	rows, err := db.sql.QueryContext(ctx, "SELECT session_id FROM sessions ORDER BY session_id")
 	if err != nil {
-		t.Fatalf("query session_names: %v", err)
+		t.Fatalf("query sessions: %v", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -663,22 +617,39 @@ func TestDeleteSessionNames(t *testing.T) {
 		remaining = append(remaining, id)
 	}
 	if !reflect.DeepEqual(remaining, []string{"b"}) {
-		t.Fatalf("remaining session_names = %v, want [b]", remaining)
+		t.Fatalf("remaining sessions = %v, want [b]", remaining)
 	}
 }
 
-// TestDeleteExchanges_LedgerSurvives verifies that DeleteExchanges only
-// removes exchanges rows: the mirrored exchanges_ledger rows stay behind
-// (with exchange_id nulled out by the FK's ON DELETE SET NULL), so global
-// history (GetTokenTotals, GetDailyCosts) keeps counting a purged session
-// even though it drops out of the exchange list.
-func TestDeleteExchanges_LedgerSurvives(t *testing.T) {
+// TestSetSessionName_BlankResetsToSessionID verifies a blank name falls back
+// to the session id instead of removing the row.
+func TestSetSessionName_BlankResetsToSessionID(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	if err := db.SetSessionName(ctx, "s1", "Custom"); err != nil {
+		t.Fatalf("SetSessionName: %v", err)
+	}
+	if err := db.SetSessionName(ctx, "s1", "   "); err != nil {
+		t.Fatalf("SetSessionName(blank): %v", err)
+	}
+	name, ok, err := db.SessionName(ctx, "s1")
+	if err != nil || !ok || name != "s1" {
+		t.Fatalf("SessionName = %q ok=%v err=%v, want %q true nil", name, ok, err, "s1")
+	}
+}
+
+// TestDeleteExchanges_SoftDeletes verifies that DeleteExchanges hides the
+// exchanges and drops their exchange_data, while the exchanges rows stay
+// behind so global history (GetTokenTotals, GetDailyCosts) keeps counting a
+// purged session.
+func TestDeleteExchanges_SoftDeletes(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
 	purged := Exchange{
-		SessionID: "purge-me", Path: "/p", Timestamp: now, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "purge-me", Path: "/p", CreatedAt: now, RawRequest: "{}", RawResponse: "{}",
 		InputTokens: intPtr(10), OutputTokens: intPtr(5),
 		InputCost: floatPtr(0.01), OutputCost: floatPtr(0.02),
 	}
@@ -689,7 +660,7 @@ func TestDeleteExchanges_LedgerSurvives(t *testing.T) {
 	if err != nil || len(list) != 1 {
 		t.Fatalf("GetExchanges before delete: %v, %+v", err, list)
 	}
-	ledgerID, _, _, _ := ledgerRowByExchangeID(t, db, list[0].ID)
+	exchangeID := list[0].ID
 
 	beforeTotals, err := db.GetTokenTotals(ctx, "", nil)
 	if err != nil {
@@ -705,7 +676,30 @@ func TestDeleteExchanges_LedgerSurvives(t *testing.T) {
 		t.Fatalf("GetExchanges after delete: %v", err)
 	}
 	if len(remaining) != 0 {
-		t.Fatalf("exchanges row survived delete: %+v", remaining)
+		t.Fatalf("deleted exchange still listed: %+v", remaining)
+	}
+	if total, err := db.CountExchanges(ctx, ""); err != nil || total != 0 {
+		t.Fatalf("CountExchanges after delete = %d, %v, want 0", total, err)
+	}
+	if detail, err := db.GetExchangeDetail(ctx, exchangeID); err != nil || detail != nil {
+		t.Fatalf("GetExchangeDetail after delete = %+v, %v, want nil", detail, err)
+	}
+	if stats, err := db.GetSessionStats(ctx, 10, 0); err != nil || len(stats) != 0 {
+		t.Fatalf("GetSessionStats after delete = %+v, %v, want empty", stats, err)
+	}
+	if total, err := db.CountSessionStats(ctx); err != nil || total != 0 {
+		t.Fatalf("CountSessionStats after delete = %d, %v, want 0", total, err)
+	}
+
+	var rowCount, dataCount int
+	if err := db.sql.QueryRowContext(ctx, "SELECT COUNT(*) FROM exchanges WHERE deleted_at IS NOT NULL").Scan(&rowCount); err != nil {
+		t.Fatalf("count exchanges: %v", err)
+	}
+	if err := db.sql.QueryRowContext(ctx, "SELECT COUNT(*) FROM exchange_data").Scan(&dataCount); err != nil {
+		t.Fatalf("count exchange_data: %v", err)
+	}
+	if rowCount != 1 || dataCount != 0 {
+		t.Fatalf("soft-deleted exchanges = %d, exchange_data rows = %d, want 1 and 0", rowCount, dataCount)
 	}
 
 	afterTotals, err := db.GetTokenTotals(ctx, "", nil)
@@ -726,151 +720,45 @@ func TestDeleteExchanges_LedgerSurvives(t *testing.T) {
 	if len(daily) != 1 || round4(daily[0].DailyCost) != round4(0.03) {
 		t.Fatalf("GetDailyCosts after delete = %+v, want one bucket of ~0.03", daily)
 	}
-
-	if exchangeID := ledgerExchangeIDByLedgerID(t, db, ledgerID); exchangeID != nil {
-		t.Errorf("ledger exchange_id after delete = %v, want nil (ON DELETE SET NULL)", *exchangeID)
-	}
 }
 
-// TestMigrateModelPricesToUniquePrefix verifies that the tiered rule-shaped
-// model_prices table collapses to one row per prefix: a prefix with an
-// unconditional "over 0" rule keeps that row, a prefix with only
-// non-conforming tiered rules (e.g. an admin deleted the base rule but kept
-// a custom one) falls back to its smallest rule_tokens row instead of
-// losing pricing entirely, and a prefix with duplicate "over 0" rows (never
-// prevented by the old schema) still collapses to exactly one row.
-func TestMigrateModelPricesToUniquePrefix(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy-rules.db")
-
-	legacySchema := `
-CREATE TABLE model_prices (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    model_prefix      TEXT    NOT NULL,
-    rule              TEXT    NOT NULL DEFAULT 'over',
-    rule_tokens       INTEGER NOT NULL DEFAULT 0,
-    input_per_m       REAL    NOT NULL,
-    output_per_m      REAL    NOT NULL,
-    cache_write_per_m REAL    NOT NULL DEFAULT 0,
-    cache_read_per_m  REAL    NOT NULL DEFAULT 0,
-    created_at        REAL    NOT NULL,
-    updated_at        REAL    NOT NULL
-);
-INSERT INTO model_prices (model_prefix, rule, rule_tokens, input_per_m, output_per_m, created_at, updated_at)
-VALUES ('claude-sonnet-5', 'over', 0, 3.0, 15.0, 100, 100);
-INSERT INTO model_prices (model_prefix, rule, rule_tokens, input_per_m, output_per_m, created_at, updated_at)
-VALUES ('claude-sonnet-5', 'over', 200000, 6.0, 30.0, 100, 100);
-INSERT INTO model_prices (model_prefix, rule, rule_tokens, input_per_m, output_per_m, created_at, updated_at)
-VALUES ('claude-opus-5', 'under', 500000, 20.0, 100.0, 200, 200);
-INSERT INTO model_prices (model_prefix, rule, rule_tokens, input_per_m, output_per_m, created_at, updated_at)
-VALUES ('claude-opus-5', 'over', 500000, 40.0, 200.0, 200, 200);
-INSERT INTO model_prices (model_prefix, rule, rule_tokens, input_per_m, output_per_m, created_at, updated_at)
-VALUES ('claude-haiku-4', 'over', 0, 1.0, 5.0, 300, 300);
-INSERT INTO model_prices (model_prefix, rule, rule_tokens, input_per_m, output_per_m, created_at, updated_at)
-VALUES ('claude-haiku-4', 'over', 0, 2.0, 10.0, 300, 300);
-`
-	setupDB, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatalf("open legacy db: %v", err)
-	}
-	if _, err := setupDB.Exec(legacySchema); err != nil {
-		t.Fatalf("apply legacy schema: %v", err)
-	}
-	if err := setupDB.Close(); err != nil {
-		t.Fatalf("close legacy db: %v", err)
-	}
-
-	db, err := Open(context.Background(), path)
-	if err != nil {
-		t.Fatalf("Open (migration): %v", err)
-	}
-	defer db.Close()
-
-	prices, err := db.ListPrices(context.Background())
-	if err != nil {
-		t.Fatalf("ListPrices after migration: %v", err)
-	}
-
-	byPrefix := make(map[string]Price, len(prices))
-	for _, p := range prices {
-		if _, dup := byPrefix[p.Prefix]; dup {
-			t.Fatalf("prefix %q kept more than one row after migration: %+v", p.Prefix, prices)
-		}
-		byPrefix[p.Prefix] = p
-	}
-
-	sonnet, ok := byPrefix["claude-sonnet-5"]
-	if !ok {
-		t.Fatal("claude-sonnet-5 missing after migration")
-	}
-	if sonnet.InputPerM != 3.0 || sonnet.OutputPerM != 15.0 {
-		t.Errorf("claude-sonnet-5 = %+v, want the 'over 0' row (3.0/15.0)", sonnet)
-	}
-	if sonnet.InputPerMAbove200k != nil {
-		t.Errorf("claude-sonnet-5 InputPerMAbove200k = %v, want nil (discarded tiered rule)", *sonnet.InputPerMAbove200k)
-	}
-
-	opus, ok := byPrefix["claude-opus-5"]
-	if !ok {
-		t.Fatal("claude-opus-5 missing after migration")
-	}
-	if opus.InputPerM != 20.0 || opus.OutputPerM != 100.0 {
-		t.Errorf("claude-opus-5 = %+v, want the smallest-rule_tokens fallback row (20.0/100.0)", opus)
-	}
-
-	haiku, ok := byPrefix["claude-haiku-4"]
-	if !ok {
-		t.Fatal("claude-haiku-4 missing after migration")
-	}
-	if haiku.InputPerM != 1.0 || haiku.OutputPerM != 5.0 {
-		t.Errorf("claude-haiku-4 = %+v, want the lowest-id 'over 0' row (1.0/5.0) among duplicates", haiku)
-	}
-}
-
-// TestMigrateExchangesLedgerBackfill verifies that an exchanges row written
-// before exchanges_ledger existed (simulated here with a raw INSERT that
-// bypasses SaveExchange) gets a matching ledger row created on the next
-// Open, and that re-running the backfill doesn't duplicate it.
-func TestMigrateExchangesLedgerBackfill(t *testing.T) {
+// TestDeleteExchanges_SessionResurrects verifies a new exchange for a
+// previously deleted session makes it visible again without bringing back the
+// deleted exchanges.
+func TestDeleteExchanges_SessionResurrects(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 	now := float64(time.Now().Unix())
 
-	res, err := db.sql.ExecContext(ctx,
-		`INSERT INTO exchanges (session_id, path, timestamp, is_streaming, cost, input_cost, output_cost)
-		 VALUES (?, '/p', ?, 0, ?, ?, ?)`,
-		"legacy-sess", now, 0.05, 0.02, 0.03,
-	)
-	if err != nil {
-		t.Fatalf("insert legacy exchange: %v", err)
+	for i := 0; i < 2; i++ {
+		if err := db.SaveExchange(ctx, Exchange{SessionID: "s", Path: "/p", CreatedAt: now + float64(i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
+			t.Fatalf("SaveExchange: %v", err)
+		}
 	}
-	exchangeID, err := res.LastInsertId()
-	if err != nil {
-		t.Fatalf("LastInsertId: %v", err)
+	if _, _, err := db.DeleteExchanges(ctx, []string{"s"}); err != nil {
+		t.Fatalf("DeleteExchanges: %v", err)
 	}
-
-	if err := migrateExchangesLedgerBackfill(ctx, db.sql); err != nil {
-		t.Fatalf("migrateExchangesLedgerBackfill: %v", err)
-	}
-	_, gotExchangeID, sessionID, cost := ledgerRowByExchangeID(t, db, exchangeID)
-	if gotExchangeID == nil || *gotExchangeID != exchangeID {
-		t.Errorf("backfilled exchange_id = %v, want %d", gotExchangeID, exchangeID)
-	}
-	if sessionID != "legacy-sess" {
-		t.Errorf("backfilled session_id = %q, want legacy-sess", sessionID)
-	}
-	if cost == nil || round4(*cost) != round4(0.05) {
-		t.Errorf("backfilled cost = %v, want ~0.05", cost)
+	if err := db.SaveExchange(ctx, Exchange{SessionID: "s", Path: "/p", CreatedAt: now + 10, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		t.Fatalf("SaveExchange after delete: %v", err)
 	}
 
-	if err := migrateExchangesLedgerBackfill(ctx, db.sql); err != nil {
-		t.Fatalf("migrateExchangesLedgerBackfill (rerun): %v", err)
+	stats, err := db.GetSessionStats(ctx, 10, 0)
+	if err != nil || len(stats) != 1 || stats[0].ExchangeCount != 1 {
+		t.Fatalf("GetSessionStats = %+v, %v, want one session with one visible exchange", stats, err)
 	}
-	var count int
-	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM exchanges_ledger WHERE exchange_id = ?`, exchangeID).Scan(&count); err != nil {
-		t.Fatalf("count exchanges_ledger rows: %v", err)
+}
+
+// TestOpen_UsesIncrementalAutoVacuum verifies the pragma was applied before
+// the first table was created.
+func TestOpen_UsesIncrementalAutoVacuum(t *testing.T) {
+	db := openTestDB(t)
+
+	var mode int
+	if err := db.sql.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
+		t.Fatalf("PRAGMA auto_vacuum: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("backfill rerun duplicated rows: got %d, want 1", count)
+	if mode != 2 {
+		t.Fatalf("auto_vacuum = %d, want 2 (INCREMENTAL)", mode)
 	}
 }
 
@@ -890,7 +778,7 @@ func TestConcurrentWrites(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			err := db.SaveExchange(ctx, Exchange{
-				SessionID: "concurrent", Path: "/p", Timestamp: now + float64(i),
+				SessionID: "concurrent", Path: "/p", CreatedAt: now + float64(i),
 				RawRequest: "{}", RawResponse: "{}",
 			})
 			errCh <- err
@@ -917,123 +805,129 @@ func round4(f float64) float64 {
 	return float64(int(f*10000+0.5)) / 10000
 }
 
-// TestOpen_MigratesPreexistingDatabase proves that a database created before
-// the cache-token columns existed gets them added via ALTER TABLE on the
-// next Open, instead of CREATE TABLE IF NOT EXISTS silently no-op'ing and
-// leaving the columns missing.
-func TestOpen_MigratesPreexistingDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
+func TestSaveRawPayloads_DefaultsOffAndKeepsExchangeReadable(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
 
-	// Build a pre-migration schema by hand (no cache_* columns anywhere),
-	// simulating a database created by an older claude-lens binary.
-	legacySchema := `
-CREATE TABLE exchanges (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id     TEXT    NOT NULL,
-    session_name   TEXT,
-    path           TEXT    NOT NULL,
-    timestamp      REAL    NOT NULL,
-    is_streaming   INTEGER NOT NULL DEFAULT 0,
-    input_messages TEXT,
-    output_text    TEXT,
-    input_tokens   INTEGER,
-    output_tokens  INTEGER,
-    model          TEXT,
-    cost           REAL,
-    input_cost     REAL,
-    output_cost    REAL,
-    raw_request    TEXT,
-    raw_response   TEXT
-);
-CREATE TABLE model_prices (
-    model_prefix TEXT PRIMARY KEY,
-    input_per_m  REAL NOT NULL,
-    output_per_m REAL NOT NULL,
-    updated_at   REAL NOT NULL
-);
-INSERT INTO exchanges (session_id, path, timestamp, raw_request, raw_response, input_tokens, output_tokens)
-VALUES ('legacy-session', '/p', 1000, '{}', '{}', 10, 20);
-INSERT INTO model_prices (model_prefix, input_per_m, output_per_m, updated_at)
-VALUES ('legacy-model', 1.0, 2.0, 1000);
-`
-	setupDB, err := sql.Open("sqlite", "file:"+path)
+	settings, err := db.GetSettings(ctx)
 	if err != nil {
-		t.Fatalf("open legacy db: %v", err)
+		t.Fatalf("GetSettings: %v", err)
 	}
-	if _, err := setupDB.Exec(legacySchema); err != nil {
-		t.Fatalf("apply legacy schema: %v", err)
-	}
-	if err := setupDB.Close(); err != nil {
-		t.Fatalf("close legacy db: %v", err)
+	if settings.SaveRawPayloads {
+		t.Fatal("SaveRawPayloads defaults to true, want false")
 	}
 
+	e := Exchange{
+		SessionID: "s", Path: "/p", CreatedAt: 1, RawRequest: `{"a":1}`, RawResponse: `{"b":2}`,
+		InputTokens: intPtr(7), Model: strPtr("m"),
+	}
+	if err := db.SaveExchange(ctx, e); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	var rows int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM exchange_data`).Scan(&rows); err != nil {
+		t.Fatalf("count exchange_data: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("exchange_data rows = %d with setting off, want 0", rows)
+	}
+
+	list, err := db.GetExchanges(ctx, "", 10, 0)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("GetExchanges = %v, %v; want 1 exchange", list, err)
+	}
+	detail, err := db.GetExchangeDetail(ctx, list[0].ID)
+	if err != nil || detail == nil {
+		t.Fatalf("GetExchangeDetail = %v, %v; want the exchange", detail, err)
+	}
+	if detail.RawRequest != "" || detail.RawResponse != "" || detail.InputTokens == nil || *detail.InputTokens != 7 {
+		t.Errorf("unexpected detail without payloads: %+v", detail)
+	}
+
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
+	e.CreatedAt = 2
+	if err := db.SaveExchange(ctx, e); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	list, _ = db.GetExchanges(ctx, "", 10, 0)
+	detail, _ = db.GetExchangeDetail(ctx, list[0].ID)
+	if detail == nil || detail.RawRequest != e.RawRequest || detail.RawResponse != e.RawResponse {
+		t.Errorf("payloads not saved with setting on: %+v", detail)
+	}
+}
+
+func TestSaveRawPayloads_PersistsAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+	db, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
+	db.Close()
+
+	db, err = Open(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer db.Close()
+	if !db.saveRawPayloads.Load() {
+		t.Error("setting not restored into memory after reopen")
+	}
+}
+
+func TestOpen_RestrictsFileToOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	db, err := Open(context.Background(), path)
 	if err != nil {
-		t.Fatalf("Open (migration): %v", err)
+		t.Fatalf("Open: %v", err)
 	}
 	defer db.Close()
 
-	// The pre-existing rows must survive the migration untouched, with the
-	// new columns present but NULL/zero (no backfill of historical data).
-	list, err := db.GetExchanges(context.Background(), `session = "legacy-session"`, 10, 0)
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("GetExchanges after migration: %v", err)
+		t.Fatal(err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("got %d legacy exchanges, want 1", len(list))
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("database mode = %o, want 600", mode)
 	}
-	if list[0].CacheCreationTokens != nil || list[0].CacheReadTokens != nil {
-		t.Errorf("legacy row got backfilled cache tokens, want nil: %+v", list[0])
-	}
-	if list[0].InputTokens == nil || *list[0].InputTokens != 10 {
-		t.Errorf("legacy row's pre-existing input_tokens was lost: %+v", list[0])
-	}
-	// total_tokens must still reflect the real input/output tokens even
-	// though the cache columns are NULL — a naive "col+col+col+col" sum
-	// would collapse to NULL here since SQL NULL propagates through '+'.
-	if list[0].TotalTokens == nil || *list[0].TotalTokens != 10+20 {
-		t.Errorf("legacy row's total_tokens = %v, want %d (10 input + 20 output, NULL cache cols ignored)",
-			list[0].TotalTokens, 10+20)
-	}
+}
 
-	prices, err := db.ListPrices(context.Background())
+func TestOpen_ReopensCurrentSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	first, err := Open(context.Background(), path)
 	if err != nil {
-		t.Fatalf("ListPrices after migration: %v", err)
+		t.Fatalf("first Open: %v", err)
 	}
-	found := false
-	for _, p := range prices {
-		if p.Prefix == "legacy-model" {
-			found = true
-			if p.CacheWritePerM != 0 || p.CacheReadPerM != 0 {
-				t.Errorf("legacy price row got non-zero cache rates, want 0 default: %+v", p)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("legacy-model price row lost during migration")
-	}
+	first.Close()
 
-	// New writes must be able to use the newly added columns.
-	if err := db.SaveExchange(context.Background(), Exchange{
-		SessionID: "new-session", Path: "/p", Timestamp: 2000,
-		RawRequest: "{}", RawResponse: "{}",
-		CacheCreationTokens: intPtr(50), CacheReadTokens: intPtr(5),
-	}); err != nil {
-		t.Fatalf("SaveExchange after migration: %v", err)
-	}
-	detail, err := db.GetExchanges(context.Background(), `session = "new-session"`, 1, 0)
+	second, err := Open(context.Background(), path)
 	if err != nil {
-		t.Fatalf("GetExchanges(new-session): %v", err)
+		t.Fatalf("second Open: %v", err)
 	}
-	if len(detail) != 1 || detail[0].CacheCreationTokens == nil || *detail[0].CacheCreationTokens != 50 {
-		t.Fatalf("post-migration cache token write/read failed: %+v", detail)
-	}
+	second.Close()
+}
 
-	// Running Open (and thus migrateSchema) again must be a no-op, not an
-	// error from re-adding an already-present column.
-	db2, err := Open(context.Background(), path)
+func TestOpen_RejectsIncompatibleSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	legacy, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
-		t.Fatalf("re-Open after migration: %v", err)
+		t.Fatal(err)
 	}
-	db2.Close()
+	if _, err := legacy.Exec(`CREATE TABLE exchanges (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+
+	_, err = Open(context.Background(), path)
+	if !errors.Is(err, ErrIncompatibleSchema) {
+		t.Fatalf("Open error = %v, want ErrIncompatibleSchema", err)
+	}
 }

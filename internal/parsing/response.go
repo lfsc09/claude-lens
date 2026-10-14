@@ -33,8 +33,22 @@ type responseBody struct {
 // yields an all-nil Usage rather than an error, so a malformed upstream
 // body never blocks storage of the exchange.
 func ExtractResponseFields(rawResponse []byte, isStreaming bool) (outputText *string, usage Usage) {
+	return parseResponse(rawResponse, isStreaming, true)
+}
+
+// ExtractUsage extracts only the token usage from an upstream Anthropic API
+// response, skipping output text assembly. Failure behavior matches
+// ExtractResponseFields.
+func ExtractUsage(rawResponse []byte, isStreaming bool) Usage {
+	_, usage := parseResponse(rawResponse, isStreaming, false)
+	return usage
+}
+
+// parseResponse decodes a streaming or non-streaming response, assembling
+// the output text only when wantText is set.
+func parseResponse(rawResponse []byte, isStreaming, wantText bool) (outputText *string, usage Usage) {
 	if isStreaming {
-		return parseSSEResponse(rawResponse)
+		return parseSSEResponse(rawResponse, wantText)
 	}
 
 	var body responseBody
@@ -43,7 +57,7 @@ func ExtractResponseFields(rawResponse []byte, isStreaming bool) (outputText *st
 	}
 
 	for _, block := range body.Content {
-		if block.Type == "text" {
+		if wantText && block.Type == "text" {
 			t := block.Text
 			outputText = &t
 			break

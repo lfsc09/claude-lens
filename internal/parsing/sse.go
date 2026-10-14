@@ -28,8 +28,9 @@ type sseEvent struct {
 // parseSSEResponse parses a streaming (text/event-stream) response body,
 // assembling text_delta chunks and pulling token usage out of the
 // message_start (input + cache tokens) / message_delta (output tokens)
-// events, matching Anthropic's SSE event shapes for the Messages API.
-func parseSSEResponse(raw []byte) (outputText *string, usage Usage) {
+// events, matching Anthropic's SSE event shapes for the Messages API. The
+// text is assembled only when wantText is set.
+func parseSSEResponse(raw []byte, wantText bool) (outputText *string, usage Usage) {
 	var text strings.Builder
 
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -55,7 +56,7 @@ func parseSSEResponse(raw []byte) (outputText *string, usage Usage) {
 			usage.CacheCreationTokens = event.Message.Usage.CacheCreationInputTokens
 			usage.CacheReadTokens = event.Message.Usage.CacheReadInputTokens
 		case "content_block_delta":
-			if event.Delta.Type == "text_delta" {
+			if wantText && event.Delta.Type == "text_delta" {
 				text.WriteString(event.Delta.Text)
 			}
 		case "message_delta":

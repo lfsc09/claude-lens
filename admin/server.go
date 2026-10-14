@@ -14,10 +14,11 @@ import (
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
-	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/logging"
+	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 //go:embed static
@@ -30,16 +31,15 @@ type Server struct {
 }
 
 // NewServer builds a Server with the JSON API and static frontend routes
-// registered. It only fails if the embedded static filesystem can't be
-// rooted at "static" — a build-time invariant, not a runtime condition —
-// so that's treated as fatal rather than something the caller can
-// meaningfully recover from at startup.
-func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir, proxyBaseURL, proxyAuthToken string) (*Server, error) {
+// registered. allowAnyHost disables the loopback Host check, for servers
+// deliberately bound to a non-loopback address. It fails only if the embedded
+// static filesystem can't be rooted at "static".
+func NewServer(db *database.DB, est *pricing.Estimator, reg *upstream.Registry, fetchers pricesync.Fetchers, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir string, allowAnyHost bool) (*Server, error) {
 	logger := slog.Default().With("component", "admin")
 	h := &handlers{
 		db: db, est: est, status: st, fresh: fr, limitersFresh: limitersFresh, logger: logger,
 		version: version, dbPath: dbPath, logPath: logging.FilePath(logDir),
-		litellmClient: litellm.NewClient(), proxyBaseURL: proxyBaseURL, proxyAuthToken: proxyAuthToken,
+		registry: reg, fetchers: fetchers,
 	}
 
 	staticContent, err := fs.Sub(staticFS, "static")
@@ -68,6 +68,8 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /exchanges/{id}", servePage(staticContent, "exchange.html"))
 	mux.HandleFunc("GET /prices", servePage(staticContent, "prices.html"))
 	mux.HandleFunc("GET /limiters", servePage(staticContent, "limiters.html"))
+	mux.HandleFunc("GET /integrations/proxy", servePage(staticContent, "proxy-integrations.html"))
+	mux.HandleFunc("GET /integrations/notifications", servePage(staticContent, "notification-integrations.html"))
 	mux.HandleFunc("GET /about", servePage(staticContent, "about.html"))
 	mux.HandleFunc("GET /favicon.ico", servePage(staticContent, "img/favicon.ico"))
 	mux.Handle("GET /img/", fileServer)
@@ -78,6 +80,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /api/health", h.health)
 	mux.HandleFunc("GET /api/exchanges", h.listExchanges)
 	mux.HandleFunc("GET /api/exchanges/{id}", h.exchangeDetail)
+	mux.HandleFunc("POST /api/exchanges", h.createExchange)
 	mux.HandleFunc("POST /api/exchanges/bulk-delete", h.bulkDeleteExchanges)
 	mux.HandleFunc("GET /api/totals", h.totals)
 	mux.HandleFunc("GET /api/session-stats", h.sessionStats)
@@ -86,7 +89,6 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("GET /api/stream", h.sseStream)
 	mux.HandleFunc("GET /api/prices", h.listPrices)
 	mux.HandleFunc("POST /api/prices", h.createPrice)
-	mux.HandleFunc("POST /api/prices/sync-litellm", h.syncPricesFromLiteLLM)
 	mux.HandleFunc("PUT /api/prices/{id}", h.updatePrice)
 	mux.HandleFunc("DELETE /api/prices/{id}", h.deletePrice)
 	mux.HandleFunc("GET /api/limiters", h.listLimiters)
@@ -94,11 +96,22 @@ func NewServer(db *database.DB, est *pricing.Estimator, st *status.Flag, fr *sta
 	mux.HandleFunc("PUT /api/limiters/{id}", h.updateLimiter)
 	mux.HandleFunc("PATCH /api/limiters/{id}/active", h.setLimiterActive)
 	mux.HandleFunc("DELETE /api/limiters/{id}", h.deleteLimiter)
-	mux.HandleFunc("GET /api/about", h.about)
 	mux.HandleFunc("GET /api/settings", h.getSettings)
-	mux.HandleFunc("PUT /api/settings", h.updateSettings)
+	mux.HandleFunc("PATCH /api/settings", h.updateSettings)
+	mux.HandleFunc("GET /api/about", h.about)
+	mux.HandleFunc("GET /api/proxy-integrations", h.listProxyIntegrations)
+	mux.HandleFunc("PUT /api/proxy-integrations/{id}", h.updateProxyIntegration)
+	mux.HandleFunc("POST /api/proxy-integrations/{id}/activate", h.activateProxyIntegration)
+	mux.HandleFunc("POST /api/proxy-integrations/{id}/deactivate", h.deactivateProxyIntegration)
+	mux.HandleFunc("POST /api/proxy-integrations/{id}/sync-prices", h.syncProxyPrices)
+	mux.HandleFunc("GET /api/notification-integrations", h.listNotificationIntegrations)
+	mux.HandleFunc("POST /api/notification-integrations", h.createNotificationIntegration)
+	mux.HandleFunc("PUT /api/notification-integrations/{id}", h.updateNotificationIntegration)
+	mux.HandleFunc("POST /api/notification-integrations/{id}/activate", h.setNotificationIntegrationActive(true))
+	mux.HandleFunc("POST /api/notification-integrations/{id}/deactivate", h.setNotificationIntegrationActive(false))
+	mux.HandleFunc("DELETE /api/notification-integrations/{id}", h.deleteNotificationIntegration)
 
-	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger))
+	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger), guardMiddleware(allowAnyHost))
 	return &Server{handler: handler, logger: logger}, nil
 }
 

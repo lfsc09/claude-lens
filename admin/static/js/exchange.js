@@ -1,6 +1,6 @@
-import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, jsonViewerTheme, ruleText } from './app.js';
-
 'use strict';
+
+import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, jsonViewerTheme } from './app.js';
 
 (() => {
   const exchangeId = window.location.pathname.split('/').filter(Boolean).pop();
@@ -44,6 +44,20 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     return exchange;
   }
 
+  /**
+   * Renders one Request/Response tab button, selected when it is the first
+   * tab with content and disabled when its payload is empty.
+   * @param {string} name - Tab key: "request" | "response".
+   * @param {string} label - Visible tab label.
+   * @param {string} payload - Raw payload the tab reveals.
+   * @param {?string} selected - Key of the initially selected tab.
+   * @returns {string} Button markup.
+   */
+  function tabButton(name, label, payload, selected) {
+    const active = name === selected;
+    return `<button type="button" role="tab" id="${name}-tab" aria-selected="${active}" aria-controls="${name}-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${active ? 'bg-fg text-canvas' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="${name}" ${payload ? '' : 'disabled'}>${label}</button>`;
+  }
+
   const ABOVE_200K_TOKENS = 200_000;
   const ABOVE_200K_FIELDS = [
     ['input_per_m_above_200k', 'Input $/M (above 200k)'],
@@ -54,8 +68,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
 
   /**
    * Renders a row for each above-200k override present on the exchange's
-   * frozen price snapshot (absent on pre-migration snapshots, which never
-   * had tier columns). Whether the tier actually applied to this exchange
+   * frozen price snapshot (only those the price config set). Whether the tier actually applied to this exchange
    * is derived from its own token counts rather than stored on the
    * snapshot, since the 200k threshold is a fixed constant.
    * @param {object} exchange - The exchange record, including `matched_price` and `raw_request_tokens`.
@@ -71,7 +84,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
         <td class="font-medium uppercase tracking-wide text-fg-muted">${esc(label)}</td>
         <td class="font-mono text-fg break-all text-right">
           ${fmtCost(price[field])}
-          ${applied ? '<span class="text-xs font-medium align-middle ml-1.5 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 rounded">applied</span>' : ''}
+          ${applied ? badge('amber', 'applied', 'rounded text-xs align-middle ml-1.5') : ''}
         </td>
       </tr>`).join('');
   }
@@ -80,6 +93,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
     document.getElementById('page-title').textContent = `Exchange #${exchange.id} – claude-lens Admin`;
 
     const content = document.getElementById('exchange-content');
+    const firstTab = exchange.raw_request ? 'request' : exchange.raw_response ? 'response' : null;
     let html = `
       <h1 class="text-xl font-semibold">Exchange #${exchange.id}</h1>
       <section class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -141,12 +155,6 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
                   <td class="font-medium uppercase tracking-wide text-fg-muted">Prefix</td>
                   <td class="font-mono text-fg break-all text-right">${esc(exchange.matched_price.model_prefix)}</td>
                 </tr>
-                ${exchange.matched_price.rule != null ? `
-                <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-fg-muted">Rule</td>
-                  <td class="font-mono text-fg break-all text-right">${esc(ruleText(exchange.matched_price))}</td>
-                </tr>
-                ` : ``}
                 <tr class="*:p-3">
                   <td class="font-medium uppercase tracking-wide text-fg-muted">Input $/M</td>
                   <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.matched_price.input_per_m)}</td>
@@ -169,12 +177,18 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
           </div>
         ` : ``}
       </section>
+      ${firstTab ? `
       <section class="flex flex-col gap-4">
         <div class="flex w-full gap-0.5 rounded-lg shadow-xs *:text-sm" role="tablist">
-          <button type="button" role="tab" id="request-tab" aria-selected="${exchange.raw_request ? 'true' : 'false'}" aria-controls="request-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${exchange.raw_request ? 'bg-fg text-canvas' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="request" ${exchange.raw_request ? '' : 'disabled'}>Request</button>
-          <button type="button" role="tab" id="response-tab" aria-selected="false" aria-controls="response-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded bg-surface-active hover:bg-surface-strong" trigger-content-e="response" ${exchange.raw_response ? '' : 'disabled'}>Response</button>
+          ${tabButton('request', 'Request', exchange.raw_request, firstTab)}
+          ${tabButton('response', 'Response', exchange.raw_response, firstTab)}
         </div>
       </section>
+      ` : `
+      <section class="text-sm text-fg-muted p-4 bg-surface rounded-lg border border-line border-dashed" role="status">
+        No raw payload was saved for this exchange. Enable "Save raw payloads" in Settings to keep request and response bodies of new exchanges.
+      </section>
+      `}
     `;
 
     if (exchange.raw_request) {
@@ -213,7 +227,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
 
     if (exchange.raw_response) {
       html += `
-        <section class="hidden flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
+        <section class="${firstTab === 'response' ? '' : 'hidden '}flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
           <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
             <h2 class="font-semibold uppercase tracking-wide">Response</h2>
             <div class="flex flex-col items-end gap-2">

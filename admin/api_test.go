@@ -14,10 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lfsc09/claude-lens/internal/bifrost"
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/litellm"
 	"github.com/lfsc09/claude-lens/internal/pricesync"
 	"github.com/lfsc09/claude-lens/internal/pricing"
 	"github.com/lfsc09/claude-lens/internal/status"
+	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
 func newTestServer(t *testing.T) (*Server, *database.DB) {
@@ -32,14 +35,6 @@ func newTestServer(t *testing.T) (*Server, *database.DB) {
 // signals, limiter-refresh signals) directly instead of only through the
 // HTTP surface.
 func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag, *status.Fresh, *status.Fresh) {
-	t.Helper()
-	return newTestServerWithProxy(t, "https://api.anthropic.com", "")
-}
-
-// newTestServerWithProxy is newTestServerWithStatus with a caller-chosen
-// upstream, for tests (e.g. the LiteLLM sync) that need proxyBaseURL to
-// point at a local httptest.Server instead of the real Anthropic API.
-func newTestServerWithProxy(t *testing.T, proxyBaseURL, proxyAuthToken string) (*Server, *database.DB, *status.Flag, *status.Fresh, *status.Fresh) {
 	t.Helper()
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -56,7 +51,15 @@ func newTestServerWithProxy(t *testing.T, proxyBaseURL, proxyAuthToken string) (
 	fresh := status.NewFresh()
 	limitersFresh := status.NewFresh()
 	tmpDir := t.TempDir()
-	s, err := NewServer(db, est, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir, proxyBaseURL, proxyAuthToken)
+	reg, err := upstream.NewRegistry(context.Background(), db)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	fetchers := pricesync.Fetchers{
+		database.ProxyTypeLiteLLM: litellm.NewClient(),
+		database.ProxyTypeBifrost: bifrost.NewClient(),
+	}
+	s, err := NewServer(db, est, reg, fetchers, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir, true)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -140,7 +143,7 @@ func TestExchangesList_FilterPaginationAndSessionID(t *testing.T) {
 	ctx := context.Background()
 	for i, sess := range []string{"a", "a", "b"} {
 		if err := db.SaveExchange(ctx, database.Exchange{
-			SessionID: sess, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
+			SessionID: sess, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
 		}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
@@ -182,7 +185,7 @@ func TestExchangesList_NegativeLimitClamped(t *testing.T) {
 	ctx := context.Background()
 	for i, sess := range []string{"a", "b", "c"} {
 		if err := db.SaveExchange(ctx, database.Exchange{
-			SessionID: sess, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
+			SessionID: sess, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}",
 		}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
@@ -224,7 +227,7 @@ func TestExchangeDetail_Found(t *testing.T) {
 	ctx := context.Background()
 	matchedPrice := `{"id":1,"model_prefix":"claude-sonnet-5","rule":"over","rule_tokens":0,"input_per_m":3,"output_per_m":15,"cache_write_per_m":3.75,"cache_read_per_m":0.3,"created_at":1000,"updated_at":1000}`
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "s1", Path: "/v1/messages", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/v1/messages", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}",
 		MatchedPrice: &matchedPrice,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -257,7 +260,7 @@ func TestTotals(t *testing.T) {
 	inCost, outCost := 0.01, 0.02
 	inTok, outTok := 10, 20
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "s1", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &inTok, OutputTokens: &outTok, InputCost: &inCost, OutputCost: &outCost,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -279,13 +282,13 @@ func TestTotals_RangeExcludesOlderExchanges(t *testing.T) {
 	now := time.Now()
 	oldTok, newTok := 100, 5
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "old", Path: "/p", Timestamp: float64(now.AddDate(0, 0, -90).Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "old", Path: "/p", CreatedAt: float64(now.AddDate(0, 0, -90).Unix()), RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &oldTok,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "new", Path: "/p", Timestamp: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "new", Path: "/p", CreatedAt: float64(now.Unix()), RawRequest: "{}", RawResponse: "{}",
 		InputTokens: &newTok,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -304,7 +307,7 @@ func TestTotals_RangeExcludesOlderExchanges(t *testing.T) {
 func TestSessionStats(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
-	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "s1", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "s1", Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
@@ -322,7 +325,7 @@ func TestSessionStatsPagination(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for i, id := range []string{"a", "b", "c"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -344,7 +347,7 @@ func TestSessionStatsPagination_NegativeLimitClamped(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for i, id := range []string{"a", "b", "c"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", Timestamp: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: id, Path: "/p", CreatedAt: float64(1000 + i), RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -362,14 +365,14 @@ func TestSessionStatsPagination_NegativeLimitClamped(t *testing.T) {
 func TestSessionStatsSince(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
-	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "a", Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "a", Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 	firstPage, err := db.GetExchanges(ctx, "", 1, 0)
 	if err != nil || len(firstPage) != 1 {
 		t.Fatalf("GetExchanges: rows=%+v err=%v", firstPage, err)
 	}
-	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "b", Path: "/p", Timestamp: 1001, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+	if err := db.SaveExchange(ctx, database.Exchange{SessionID: "b", Path: "/p", CreatedAt: 1001, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
 	}
 
@@ -391,7 +394,7 @@ func TestDailyCosts(t *testing.T) {
 	ctx := context.Background()
 	cost := 1.5
 	if err := db.SaveExchange(ctx, database.Exchange{
-		SessionID: "s1", Path: "/p", Timestamp: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
+		SessionID: "s1", Path: "/p", CreatedAt: float64(nowUnix()), RawRequest: "{}", RawResponse: "{}",
 		InputCost: &cost,
 	}); err != nil {
 		t.Fatalf("SaveExchange: %v", err)
@@ -414,7 +417,7 @@ func TestBulkDeleteExchanges(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for _, sess := range []string{"a", "a", "b", "c"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 	}
@@ -470,14 +473,14 @@ func TestBulkDeleteExchanges(t *testing.T) {
 	}
 }
 
-// TestBulkDeleteExchanges_SessionNames verifies session_names deletion is
+// TestBulkDeleteExchanges_Sessions verifies sessions deletion is
 // conditional on also_delete_claude_session, scoped to exactly the sessions
 // that had exchange rows deleted.
-func TestBulkDeleteExchanges_SessionNames(t *testing.T) {
+func TestBulkDeleteExchanges_Sessions(t *testing.T) {
 	s, db := newTestServer(t)
 	ctx := context.Background()
 	for _, sess := range []string{"a", "b"} {
-		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", Timestamp: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
+		if err := db.SaveExchange(ctx, database.Exchange{SessionID: sess, Path: "/p", CreatedAt: 1000, RawRequest: "{}", RawResponse: "{}"}); err != nil {
 			t.Fatalf("SaveExchange: %v", err)
 		}
 		if err := db.SetSessionName(ctx, sess, "name-"+sess); err != nil {
@@ -507,7 +510,7 @@ func TestBulkDeleteExchanges_SessionNames(t *testing.T) {
 }
 
 // assertSessionNames checks that exactly the given sessions still have a
-// session_names entry (each set to "name-<id>" by the test setup) and every
+// sessions entry (each set to "name-<id>" by the test setup) and every
 // other candidate session ID does not.
 func assertSessionNames(t *testing.T, db *database.DB, present ...string) {
 	t.Helper()
@@ -643,7 +646,7 @@ func TestUpdatePrice_FullReplaceSemantics(t *testing.T) {
 	}
 }
 
-func TestSyncPricesFromLiteLLM_UpsertsAndReportsCounts(t *testing.T) {
+func TestSyncProxyPrices_UpsertsAndReportsCounts(t *testing.T) {
 	litellmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[
 			{"model_name":"claude-sonnet-5","model_info":{"input_cost_per_token":0.0000022,"output_cost_per_token":0.000011}},
@@ -652,12 +655,13 @@ func TestSyncPricesFromLiteLLM_UpsertsAndReportsCounts(t *testing.T) {
 	}))
 	defer litellmSrv.Close()
 
-	s, db, _, _, _ := newTestServerWithProxy(t, litellmSrv.URL, "sk-test")
+	s, db := newTestServer(t)
+	id := activateProxy(t, s, "litellm", litellmSrv.URL, "sk-test")
 
 	// claude-sonnet-5 already exists among the seeded defaults, so it
 	// should be updated in place; brand-new-model has no existing row, so
 	// it should be created.
-	rec := doJSON(t, s, http.MethodPost, "/api/prices/sync-litellm", nil)
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
@@ -687,29 +691,31 @@ func TestSyncPricesFromLiteLLM_UpsertsAndReportsCounts(t *testing.T) {
 	}
 }
 
-func TestSyncPricesFromLiteLLM_NonLiteLLMUpstreamIsBadGateway(t *testing.T) {
-	notLiteLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestSyncProxyPrices_UpstreamWithoutPriceRouteIsBadGateway(t *testing.T) {
+	noPrices := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
-	defer notLiteLLM.Close()
+	defer noPrices.Close()
 
-	s, _, _, _, _ := newTestServerWithProxy(t, notLiteLLM.URL, "")
-	rec := doJSON(t, s, http.MethodPost, "/api/prices/sync-litellm", nil)
+	s, _ := newTestServer(t)
+	id := activateProxy(t, s, "litellm", noPrices.URL, "sk-test")
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d for a non-LiteLLM upstream", rec.Code, http.StatusBadGateway)
+		t.Errorf("status = %d, want %d for an upstream that can't serve prices", rec.Code, http.StatusBadGateway)
 	}
 }
 
-func TestSyncPricesFromLiteLLM_InternalErrorIsNot502(t *testing.T) {
+func TestSyncProxyPrices_InternalErrorIsNot502(t *testing.T) {
 	litellmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"model_name":"m","model_info":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}]}`))
 	}))
 	defer litellmSrv.Close()
 
-	s, db, _, _, _ := newTestServerWithProxy(t, litellmSrv.URL, "")
+	s, db := newTestServer(t)
+	id := activateProxy(t, s, "litellm", litellmSrv.URL, "sk-test")
 	db.Close() // fetch succeeds, but the subsequent upsert now fails with a DB error, not a reachability one.
 
-	rec := doJSON(t, s, http.MethodPost, "/api/prices/sync-litellm", nil)
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code == http.StatusBadGateway {
 		t.Errorf("status = %d, want anything but 502 — the UI greys out its sync button on 502, "+
 			"which a mere DB error shouldn't trigger", rec.Code)
@@ -777,5 +783,145 @@ func TestStaticFrontend_UnknownPathIs404(t *testing.T) {
 	rec := doGet(t, s, "/no-such-page")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestCreateExchange_StoresExchange(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
+		"session_id": "sess-1", "path": "/v1/messages",
+		"input_tokens": 100, "output_tokens": 50,
+		"input_cost": 0.25, "output_cost": 0.25,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges", nil)
+	var list struct {
+		Total int `json:"total"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &list)
+	if list.Total != 1 {
+		t.Errorf("exchanges total = %d, want 1", list.Total)
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/totals", nil)
+	var totals database.Totals
+	json.Unmarshal(rec.Body.Bytes(), &totals)
+	if totals.TotalCost == nil || *totals.TotalCost != 0.5 {
+		t.Errorf("total cost = %v, want 0.5", totals.TotalCost)
+	}
+}
+
+func TestCreateExchange_MissingSessionIsBadRequest(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{"path": "/v1/messages"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestCreateExchange_MatchedPriceMustBeJSON(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
+		"session_id": "sess-1", "path": "/v1/messages", "matched_price": "claude-sonnet-5-5",
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("non-JSON matched_price: status = %d, want 400", rec.Code)
+	}
+
+	rec = doJSON(t, s, http.MethodPost, "/api/exchanges", map[string]any{
+		"session_id": "sess-1", "path": "/v1/messages", "matched_price": `{"model_prefix":"claude-sonnet-5-5","input_per_m":3}`,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("JSON matched_price: status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, s, http.MethodGet, "/api/exchanges/1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var detail struct {
+		MatchedPrice struct {
+			Prefix string `json:"model_prefix"`
+		} `json:"matched_price"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &detail)
+	if detail.MatchedPrice.Prefix != "claude-sonnet-5-5" {
+		t.Errorf("matched_price.model_prefix = %q", detail.MatchedPrice.Prefix)
+	}
+}
+
+func TestSetSessionName_BlankResetsToSessionID(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	for name, want := range map[string]string{"  My session ": "My session", "   ": "s1"} {
+		rec := doJSON(t, s, http.MethodPatch, "/api/sessions/s1/name", map[string]string{"name": name})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("name %q: status = %d, want 200: %s", name, rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["session_name"] != want {
+			t.Errorf("name %q: session_name = %q, want %q", name, body["session_name"], want)
+		}
+	}
+}
+
+func TestGetExchange_IncludesOutputTextAndCreatedAt(t *testing.T) {
+	s, db := newTestServer(t)
+	ctx := context.Background()
+	if err := db.SetSaveRawPayloads(ctx, true); err != nil {
+		t.Fatalf("SetSaveRawPayloads: %v", err)
+	}
+	if err := db.SaveExchange(ctx, database.Exchange{
+		SessionID: "s1", Path: "/p", CreatedAt: 1234, RawRequest: "{}",
+		RawResponse: `{"content":[{"type":"text","text":"hello"}]}`,
+	}); err != nil {
+		t.Fatalf("SaveExchange: %v", err)
+	}
+	list, _ := db.GetExchanges(ctx, "", 10, 0)
+
+	rec := doJSON(t, s, http.MethodGet, fmt.Sprintf("/api/exchanges/%d", list[0].ID), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["output_text"] != "hello" || body["created_at"] != float64(1234) {
+		t.Errorf("unexpected detail body: %v", body)
+	}
+	if _, ok := body["timestamp"]; ok {
+		t.Errorf("detail still exposes timestamp: %v", body)
+	}
+}
+
+func TestSettings_GetAndPatchSaveRawPayloads(t *testing.T) {
+	s, db := newTestServer(t)
+
+	rec := doJSON(t, s, http.MethodGet, "/api/settings", nil)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"save_raw_payloads":false}` {
+		t.Fatalf("GET = %d %s, want default false", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSON(t, s, http.MethodPatch, "/api/settings", map[string]any{"save_raw_payloads": true})
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"save_raw_payloads":true}` {
+		t.Fatalf("PATCH = %d %s, want true", rec.Code, rec.Body.String())
+	}
+	if settings, _ := db.GetSettings(context.Background()); !settings.SaveRawPayloads {
+		t.Error("PATCH did not persist")
+	}
+
+	rec = doJSON(t, s, http.MethodPatch, "/api/settings", map[string]any{})
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"save_raw_payloads":true}` {
+		t.Fatalf("empty PATCH = %d %s, want value unchanged", rec.Code, rec.Body.String())
 	}
 }
