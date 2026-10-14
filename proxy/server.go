@@ -1,7 +1,7 @@
 // Package proxy implements the reverse-proxy server: it forwards requests to
-// the active upstream (a proxy integration or the Anthropic API) and, for POSTs, records an exchange row
-// once the (possibly streamed) response has been fully delivered to the
-// client.
+// the active upstream (a proxy integration or the Anthropic API) and, for
+// POSTs, records an exchange row once the response has been fully delivered
+// to the client.
 package proxy
 
 import (
@@ -31,11 +31,23 @@ func NewServer(reg *upstream.Registry, db *database.DB, estimator *pricing.Estim
 	return &Server{handler: h, status: st, logger: slog.Default().With("component", "proxy")}
 }
 
+// rejectBrowserRequests answers 403 to requests carrying an Origin or
+// Sec-Fetch-Site header, which browsers add and API clients do not.
+func rejectBrowserRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" || r.Header.Get("Sec-Fetch-Site") != "" {
+			http.Error(w, "Forbidden: browser requests are not accepted", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Run serves on addr until ctx is done, then gracefully shuts down.
 func (s *Server) Run(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)
-	mux.Handle("/", s.handler)
+	mux.Handle("/", rejectBrowserRequests(s.handler))
 
 	srv := &http.Server{
 		Addr:    addr,

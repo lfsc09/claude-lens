@@ -6,9 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/lfsc09/claude-lens/internal/database"
 	"github.com/lfsc09/claude-lens/internal/pricesync"
@@ -33,6 +31,7 @@ type proxyIntegrationView struct {
 	AuthTokenHint string `json:"auth_token_hint"`
 }
 
+// newProxyIntegrationView masks p's auth token.
 func newProxyIntegrationView(p database.ProxyIntegration) proxyIntegrationView {
 	v := proxyIntegrationView{ProxyIntegration: p, HasAuthToken: p.AuthToken != ""}
 	if v.HasAuthToken {
@@ -48,6 +47,7 @@ type notificationIntegrationView struct {
 	WebhookHint string `json:"webhook_hint"`
 }
 
+// newNotificationIntegrationView masks n's webhook URL.
 func newNotificationIntegrationView(n database.NotificationIntegration) notificationIntegrationView {
 	hint := secretHint(n.WebhookURL)
 	if u, err := url.Parse(n.WebhookURL); err == nil {
@@ -56,15 +56,7 @@ func newNotificationIntegrationView(n database.NotificationIntegration) notifica
 	return notificationIntegrationView{NotificationIntegration: n, WebhookHint: hint}
 }
 
-func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not found")
-		return 0, false
-	}
-	return id, true
-}
-
+// listProxyIntegrations writes every proxy integration with its secrets masked.
 func (h *handlers) listProxyIntegrations(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListProxyIntegrations(r.Context())
 	if err != nil {
@@ -99,13 +91,8 @@ func (h *handlers) updateProxyIntegration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	existing, err := h.db.GetProxyIntegration(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	existing, ok := getOr404(w, r, id, h.db.GetProxyIntegration)
+	if !ok {
 		return
 	}
 
@@ -138,7 +125,7 @@ func (h *handlers) updateProxyIntegration(w http.ResponseWriter, r *http.Request
 		existing.CustomHeaders = map[string]string{}
 	}
 	existing.PriceSyncIntervalMinutes = *req.PriceSyncIntervalMinutes
-	existing.UpdatedAt = float64(time.Now().Unix())
+	existing.UpdatedAt = unixNow()
 
 	if err := h.db.UpdateProxyIntegration(r.Context(), *existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -154,7 +141,7 @@ func (h *handlers) activateProxyIntegration(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	err := h.db.ActivateProxyIntegration(r.Context(), id, float64(time.Now().Unix()))
+	err := h.db.ActivateProxyIntegration(r.Context(), id, unixNow())
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "not found")
@@ -176,7 +163,7 @@ func (h *handlers) deactivateProxyIntegration(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	if err := h.db.DeactivateProxyIntegration(r.Context(), id, float64(time.Now().Unix())); err != nil {
+	if err := h.db.DeactivateProxyIntegration(r.Context(), id, unixNow()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -190,39 +177,24 @@ func (h *handlers) respondProxyIntegration(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	p, err := h.db.GetProxyIntegration(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if p == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	p, ok := getOr404(w, r, id, h.db.GetProxyIntegration)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, newProxyIntegrationView(*p))
 }
 
-// syncProxyPrices triggers an on-demand pricesync.Sync against the active
-// integration — the same sync also run periodically in the background — and
-// reports what it did so the admin UI can show a meaningful summary.
-//
-// 409 means id isn't the active integration. 502 specifically means the
-// gateway can't serve prices (see pricesync.ErrUpstreamUnavailable), which
-// the Prices page's JS uses to grey out the manual sync button — anything
-// else (e.g. a DB write error) isn't a capability signal, so it stays a
-// plain 500 and the button stays usable for an immediate retry.
+// syncProxyPrices runs pricesync.Sync against the active integration and
+// writes the sync result. It answers 409 when id is not the active
+// integration and 502 when the gateway cannot serve prices (see
+// pricesync.ErrUpstreamUnavailable).
 func (h *handlers) syncProxyPrices(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	integration, err := h.db.GetProxyIntegration(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if integration == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	integration, ok := getOr404(w, r, id, h.db.GetProxyIntegration)
+	if !ok {
 		return
 	}
 	if !integration.Active {
@@ -242,6 +214,7 @@ func (h *handlers) syncProxyPrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// listNotificationIntegrations writes every notification integration with its webhook masked.
 func (h *handlers) listNotificationIntegrations(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListNotificationIntegrations(r.Context())
 	if err != nil {
@@ -277,6 +250,7 @@ func validateNotificationIntegrationRequest(req notificationIntegrationRequest) 
 	return ""
 }
 
+// createNotificationIntegration adds an active notification integration.
 func (h *handlers) createNotificationIntegration(w http.ResponseWriter, r *http.Request) {
 	var req notificationIntegrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -293,7 +267,7 @@ func (h *handlers) createNotificationIntegration(w http.ResponseWriter, r *http.
 		return
 	}
 
-	now := float64(time.Now().Unix())
+	now := unixNow()
 	n := database.NotificationIntegration{
 		Type: req.Type, Name: strings.TrimSpace(req.Name), WebhookURL: req.WebhookURL,
 		Active: true, CreatedAt: now, UpdatedAt: now,
@@ -325,13 +299,8 @@ func (h *handlers) updateNotificationIntegration(w http.ResponseWriter, r *http.
 		return
 	}
 
-	existing, err := h.db.GetNotificationIntegration(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	existing, ok := getOr404(w, r, id, h.db.GetNotificationIntegration)
+	if !ok {
 		return
 	}
 
@@ -340,7 +309,7 @@ func (h *handlers) updateNotificationIntegration(w http.ResponseWriter, r *http.
 	if req.WebhookURL != "" {
 		existing.WebhookURL = req.WebhookURL
 	}
-	existing.UpdatedAt = float64(time.Now().Unix())
+	existing.UpdatedAt = unixNow()
 	if err := h.db.UpdateNotificationIntegration(r.Context(), *existing); err != nil {
 		writeNotificationWriteError(w, err)
 		return
@@ -348,6 +317,7 @@ func (h *handlers) updateNotificationIntegration(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, newNotificationIntegrationView(*existing))
 }
 
+// writeNotificationWriteError answers 409 for a duplicate webhook URL and 500 otherwise.
 func writeNotificationWriteError(w http.ResponseWriter, err error) {
 	if isUniqueConstraintErr(err) {
 		writeError(w, http.StatusConflict, "a notification integration with this webhook URL already exists")
@@ -364,19 +334,19 @@ func (h *handlers) setNotificationIntegrationActive(active bool) http.HandlerFun
 		if !ok {
 			return
 		}
-		if err := h.db.SetNotificationIntegrationActive(r.Context(), id, active, float64(time.Now().Unix())); err != nil {
+		if err := h.db.SetNotificationIntegrationActive(r.Context(), id, active, unixNow()); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		n, err := h.db.GetNotificationIntegration(r.Context(), id)
-		if err != nil || n == nil {
-			writeError(w, http.StatusNotFound, "not found")
+		n, ok := getOr404(w, r, id, h.db.GetNotificationIntegration)
+		if !ok {
 			return
 		}
 		writeJSON(w, http.StatusOK, newNotificationIntegrationView(*n))
 	}
 }
 
+// deleteNotificationIntegration removes an integration and its limiter links.
 func (h *handlers) deleteNotificationIntegration(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

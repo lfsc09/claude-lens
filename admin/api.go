@@ -2,6 +2,7 @@ package admin
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,37 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// unixNow returns the current time as Unix seconds, the unit of every
+// timestamp column.
+func unixNow() float64 {
+	return float64(time.Now().Unix())
+}
+
+// pathID parses the {id} path value, answering 404 when it is not an integer.
+func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return 0, false
+	}
+	return id, true
+}
+
+// getOr404 loads the row id with get, answering 500 on a lookup error and 404
+// when the row does not exist.
+func getOr404[T any](w http.ResponseWriter, r *http.Request, id int64, get func(context.Context, int64) (*T, error)) (*T, bool) {
+	row, err := get(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if row == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return nil, false
+	}
+	return row, true
+}
+
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -109,19 +141,12 @@ func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "not found")
+	id, ok := pathID(w, r)
+	if !ok {
 		return
 	}
-
-	row, err := h.db.GetExchangeDetail(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if row == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	row, ok := getOr404(w, r, id, h.db.GetExchangeDetail)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, row)
@@ -210,6 +235,9 @@ func (h *handlers) bulkDeleteExchanges(w http.ResponseWriter, r *http.Request) {
 	var deletedFiles int
 	if req.AlsoDeleteClaudeSession {
 		for _, sessionID := range affectedSessions {
+			if !files.IsClaudeSessionID(sessionID) {
+				continue
+			}
 			n, err := files.TryDeleteClaudeSession(sessionID)
 			deletedFiles += n
 			if err != nil {
@@ -408,7 +436,7 @@ func (h *handlers) createPrice(w http.ResponseWriter, r *http.Request) {
 		cacheReadPerM = *req.CacheReadPerM
 	}
 
-	now := float64(time.Now().Unix())
+	now := unixNow()
 	p := database.Price{
 		Prefix:                  req.Prefix,
 		InputPerM:               *req.InputPerM,
@@ -467,13 +495,8 @@ func (h *handlers) updatePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.db.GetPrice(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	existing, ok := getOr404(w, r, id, h.db.GetPrice)
+	if !ok {
 		return
 	}
 
@@ -485,7 +508,7 @@ func (h *handlers) updatePrice(w http.ResponseWriter, r *http.Request) {
 		cacheReadPerM = *req.CacheReadPerM
 	}
 
-	updatedAt := float64(time.Now().Unix())
+	updatedAt := unixNow()
 	p := database.Price{
 		InputPerM:               *req.InputPerM,
 		OutputPerM:              *req.OutputPerM,
@@ -733,13 +756,8 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := h.db.GetLimiter(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if existing == nil {
-		writeError(w, http.StatusNotFound, "not found")
+	existing, ok := getOr404(w, r, id, h.db.GetLimiter)
+	if !ok {
 		return
 	}
 
@@ -798,7 +816,7 @@ func (h *handlers) setLimiterActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updatedAt := float64(time.Now().Unix())
+	updatedAt := unixNow()
 	if err := h.db.SetLimiterActive(r.Context(), id, *req.IsActive, updatedAt); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

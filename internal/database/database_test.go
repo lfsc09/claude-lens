@@ -2,6 +2,9 @@ package database
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -874,5 +877,57 @@ func TestSaveRawPayloads_PersistsAcrossReopen(t *testing.T) {
 	defer db.Close()
 	if !db.saveRawPayloads.Load() {
 		t.Error("setting not restored into memory after reopen")
+	}
+}
+
+func TestOpen_RestrictsFileToOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("database mode = %o, want 600", mode)
+	}
+}
+
+func TestOpen_ReopensCurrentSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	first, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	first.Close()
+
+	second, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	second.Close()
+}
+
+func TestOpen_RejectsIncompatibleSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	legacy, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE exchanges (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+
+	_, err = Open(context.Background(), path)
+	if !errors.Is(err, ErrIncompatibleSchema) {
+		t.Fatalf("Open error = %v, want ErrIncompatibleSchema", err)
 	}
 }

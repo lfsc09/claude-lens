@@ -1,12 +1,9 @@
-// Package litellm fetches authoritative per-model pricing from a LiteLLM
-// proxy's /model/info endpoint, so claude-lens's own price table can be kept
-// in sync with what the proxy actually bills instead of drifting from it.
+// Package litellm fetches per-model pricing from a LiteLLM proxy's
+// /model/info endpoint.
 package litellm
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/lfsc09/claude-lens/internal/priceprovider"
@@ -38,18 +35,14 @@ type modelInfoResponse struct {
 	} `json:"data"`
 }
 
-// FetchModelPrices queries baseURL's /model/info endpoint (a LiteLLM proxy
-// convention, not part of the Anthropic API) and returns per-million-token
-// rates for every model it reports with an input and output price. Only a LiteLLM upstream serves this
-// route — pointing claude-lens at api.anthropic.com directly, or any other
-// non-LiteLLM upstream, surfaces as the status-code error below.
+// FetchModelPrices queries baseURL's /model/info endpoint and returns
+// per-million-token rates for every model it reports with an input and
+// output price. A non-200 answer is returned as a *priceprovider.StatusError
+// noting the upstream may not be a LiteLLM proxy.
 func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string) ([]priceprovider.ModelPrice, error) {
 	var parsed modelInfoResponse
 	if err := priceprovider.GetJSON(ctx, c.http, baseURL+"/model/info", authToken, &parsed); err != nil {
-		if statusErr := (*priceprovider.StatusError)(nil); errors.As(err, &statusErr) {
-			return nil, fmt.Errorf("%w — is this upstream a LiteLLM proxy?", err)
-		}
-		return nil, err
+		return nil, priceprovider.WrapStatusError(err, "a LiteLLM proxy")
 	}
 
 	prices := make([]priceprovider.ModelPrice, 0, len(parsed.Data))
@@ -59,10 +52,10 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 		}
 		price := priceprovider.ModelPrice{
 			ModelName:               m.ModelName,
-			InputPerM:               priceprovider.Round6(m.ModelInfo.InputCostPerToken * 1_000_000),
-			OutputPerM:              priceprovider.Round6(m.ModelInfo.OutputCostPerToken * 1_000_000),
-			CacheWritePerM:          priceprovider.Round6(m.ModelInfo.CacheCreationInputTokenCost * 1_000_000),
-			CacheReadPerM:           priceprovider.Round6(m.ModelInfo.CacheReadInputTokenCost * 1_000_000),
+			InputPerM:               priceprovider.PerM(m.ModelInfo.InputCostPerToken),
+			OutputPerM:              priceprovider.PerM(m.ModelInfo.OutputCostPerToken),
+			CacheWritePerM:          priceprovider.PerM(m.ModelInfo.CacheCreationInputTokenCost),
+			CacheReadPerM:           priceprovider.PerM(m.ModelInfo.CacheReadInputTokenCost),
 			InputPerMAbove200k:      priceprovider.PerMPtr(m.ModelInfo.InputCostPerTokenAbove200k),
 			OutputPerMAbove200k:     priceprovider.PerMPtr(m.ModelInfo.OutputCostPerTokenAbove200k),
 			CacheWritePerMAbove200k: priceprovider.PerMPtr(m.ModelInfo.CacheCreationInputTokenCostAbove200k),

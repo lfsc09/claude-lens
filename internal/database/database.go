@@ -5,8 +5,9 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"sync"
+	"os"
 	"sync/atomic"
 
 	"github.com/lfsc09/claude-lens/internal/notify"
@@ -17,25 +18,15 @@ import (
 type DB struct {
 	sql *sql.DB
 
-	// notifier drives alert delivery from accrueLimiterCost. Unset
-	// (nil) until SetNotifications is called, in which case alert dispatch
-	// is silently skipped.
+	// notifier delivers limiter alerts; nil disables alerting.
 	notifier *notify.Client
-
-	// alertMu serializes accrueLimiterCost's read-check-write of each
-	// limiter's alert state, so two exchanges completing close together for
-	// the same limiter can't both observe AlertSent == false and send a
-	// duplicate budget-threshold alert.
-	alertMu sync.Mutex
 
 	// saveRawPayloads mirrors settings.save_raw_payloads so SaveExchange can
 	// check it per request without a query.
 	saveRawPayloads atomic.Bool
 }
 
-// SetNotifications wires up delivery for limiter alerts (both the
-// budget-threshold and per-request-cost kinds). Safe to skip calling
-// entirely — accrueLimiterCost just won't send alerts.
+// SetNotifications sets the client that delivers limiter alerts.
 func (db *DB) SetNotifications(client *notify.Client) {
 	db.notifier = client
 }
@@ -153,23 +144,29 @@ CREATE TABLE IF NOT EXISTS limiter_notifications (
 );
 `
 
-// Open opens (creating if necessary) the SQLite database at path, applies the
-// schema, and seeds default model prices on first run.
+// schemaVersion is stored in the database's user_version pragma and must
+// match for an existing database to be opened.
+const schemaVersion = 2
+
+const databaseFileMode = 0o600
+
+// ErrIncompatibleSchema is returned by Open when the database file was
+// created by a different schema version.
+var ErrIncompatibleSchema = errors.New("database was created by an incompatible claude-lens version")
+
+// Open opens (creating if necessary) the SQLite database at path with
+// owner-only permissions, applies the schema, and seeds default prices,
+// settings and proxy integrations on first run. It fails with
+// ErrIncompatibleSchema when path holds a database of another schema version.
 //
-// The connection pool is deliberately capped at a single connection: SQLite
-// allows only one writer at a time, and both the proxy (writing on every
-// intercepted POST) and the admin server (upserting/deleting prices) share
-// this *DB from the same process. Serializing at the pool level avoids
-// SQLITE_BUSY races without needing retry logic throughout the query code;
-// busy_timeout gives any queued writer up to 5s to acquire the lock before
-// failing outright. foreign_keys(1) turns on SQLite's foreign-key
-// enforcement (off by default per connection) so exchange_data's
-// ON DELETE CASCADE actually fires.
-//
-// auto_vacuum(2) (INCREMENTAL) only takes effect when set before the first
-// table is created, so it is listed first and runs before journal_mode(WAL)
-// writes the database header.
+// The pool holds a single connection, which serializes all writes;
+// busy_timeout lets a queued writer wait up to 5s for the lock. auto_vacuum
+// is listed first because it only takes effect before the first table exists.
 func Open(ctx context.Context, path string) (*DB, error) {
+	if err := restrictFile(path); err != nil {
+		return nil, fmt.Errorf("secure database file: %w", err)
+	}
+
 	dsn := fmt.Sprintf("file:%s?_pragma=auto_vacuum(2)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)", path)
 
 	sqlDB, err := sql.Open("sqlite", dsn)
@@ -178,9 +175,9 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	if _, err := sqlDB.ExecContext(ctx, schema); err != nil {
+	if err := applySchema(ctx, sqlDB, path); err != nil {
 		sqlDB.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, err
 	}
 
 	db := &DB{sql: sqlDB}
@@ -203,6 +200,42 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	}
 
 	return db, nil
+}
+
+// restrictFile creates the file at path if missing and limits it to its
+// owner. SQLite gives its -wal and -shm files the same mode.
+func restrictFile(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, databaseFileMode)
+	if err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(path, databaseFileMode)
+}
+
+// applySchema creates the schema on an empty database and stamps it with
+// schemaVersion; a database that already has tables must carry that version.
+func applySchema(ctx context.Context, sqlDB *sql.DB, path string) error {
+	var version, tables int
+	if err := sqlDB.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if err := sqlDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'`).Scan(&tables); err != nil {
+		return fmt.Errorf("inspect database: %w", err)
+	}
+	if tables > 0 && version != schemaVersion {
+		return fmt.Errorf("%w: remove %s to start fresh", ErrIncompatibleSchema, path)
+	}
+
+	if _, err := sqlDB.ExecContext(ctx, schema); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+		return fmt.Errorf("stamp schema version: %w", err)
+	}
+	return nil
 }
 
 // Close closes the underlying connection pool.

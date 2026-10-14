@@ -1,8 +1,6 @@
-// Package pricesync keeps claude-lens's model_prices table in sync with the
-// active proxy integration's authoritative per-model rates, both on demand
-// (the admin UI's manual sync button) and on the integration's own
-// background schedule stored in the database, so changing it never needs a
-// restart.
+// Package pricesync keeps the model_prices table in sync with the active
+// proxy integration's per-model rates, on demand and on the integration's
+// own schedule.
 package pricesync
 
 import (
@@ -26,31 +24,19 @@ type Result struct {
 	Models  []string `json:"models"`
 }
 
-// ErrUpstreamUnavailable wraps a Sync failure that specifically means "this
-// upstream can't serve prices" (the fetch itself failed) — as opposed to
-// some other failure further down Sync's pipeline (e.g. a DB write error),
-// which says nothing about whether the upstream is reachable. Callers use
-// errors.Is against this to decide whether the failure is a genuine
-// capability signal: the admin API maps it to 502 (see
-// admin.syncProxyPrices), which the Prices page uses to grey out its manual
-// sync button.
+// ErrUpstreamUnavailable wraps a Sync failure caused by the price fetch
+// itself, as opposed to a later failure such as a database write.
 var ErrUpstreamUnavailable = errors.New("price sync upstream unavailable")
 
 // Fetchers maps a proxy integration type to the client that reads model
 // prices from that kind of gateway.
 type Fetchers map[string]priceprovider.Fetcher
 
-// Sync pulls per-model rates from integration's gateway via fetchers and
-// upserts each model's price row into db — see database.UpsertPriceFromSync
-// for why a manually configured above-200k override survives a sync that
-// doesn't report that tier — then refreshes est so the new rates apply
-// immediately and marks the sync's completion time on the integration, so
-// RunLoop's staleness check doesn't immediately fire again right after.
-// Returns an error, without changing any price, if the fetch itself fails —
-// wrapped in ErrUpstreamUnavailable — and records that failure on the
-// integration regardless of whether this call came from the admin UI's
-// button or RunLoop's own schedule, so the admin UI can grey out the button
-// the moment *any* attempt establishes the gateway can't serve prices.
+// Sync pulls per-model rates from integration's gateway via fetchers, upserts
+// them with database.UpsertPricesFromSync, refreshes est and records the
+// completion time on the integration. A failed fetch changes no price, is
+// recorded on the integration and is returned wrapped in
+// ErrUpstreamUnavailable.
 func Sync(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers Fetchers, integration database.ProxyIntegration) (Result, error) {
 	now := float64(time.Now().Unix())
 
@@ -64,21 +50,15 @@ func Sync(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers
 		if err := db.MarkPriceSyncFailed(ctx, integration.ID, fetchErr.Error(), now); err != nil {
 			slog.Warn("record price sync failure", "integration", integration.Type, "error", err)
 		}
-		return Result{}, fmt.Errorf("%w: %v", ErrUpstreamUnavailable, fetchErr)
+		return Result{}, fmt.Errorf("%w: %w", ErrUpstreamUnavailable, fetchErr)
 	}
 
-	result := Result{Models: make([]string, 0, len(prices))}
+	created, updated, err := db.UpsertPricesFromSync(ctx, prices, now)
+	if err != nil {
+		return Result{}, fmt.Errorf("upsert prices: %w", err)
+	}
+	result := Result{Created: created, Updated: updated, Models: make([]string, 0, len(prices))}
 	for _, p := range prices {
-		created, err := db.UpsertPriceFromSync(ctx, p.ModelName, p.InputPerM, p.OutputPerM, p.CacheWritePerM, p.CacheReadPerM,
-			p.InputPerMAbove200k, p.OutputPerMAbove200k, p.CacheWritePerMAbove200k, p.CacheReadPerMAbove200k, now)
-		if err != nil {
-			return Result{}, fmt.Errorf("upsert %s: %w", p.ModelName, err)
-		}
-		if created {
-			result.Created++
-		} else {
-			result.Updated++
-		}
 		result.Models = append(result.Models, p.ModelName)
 	}
 
@@ -91,10 +71,7 @@ func Sync(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers
 	return result, nil
 }
 
-// pollInterval is how often RunLoop checks whether a sync is due. It is not
-// itself the sync schedule — see database.ProxyIntegration.PriceSyncIntervalMinutes
-// for that — just the granularity at which a change to that setting takes
-// effect when no integration change wakes the loop sooner.
+// pollInterval is how often RunLoop checks whether a sync is due.
 const pollInterval = time.Minute
 
 // syncDue reports whether integration's PriceSyncIntervalMinutes has elapsed
@@ -112,17 +89,9 @@ func syncDue(integration database.ProxyIntegration, now time.Time) bool {
 
 // RunLoop syncs the active proxy integration's prices whenever its
 // PriceSyncIntervalMinutes has elapsed since the later of its last success
-// and last attempt — including immediately when it was just activated, or on
-// a restart after the interval already lapsed. Using the last attempt rather
-// than just the last success means a run of failures still retries once per
-// interval, not on every poll. The check runs every pollInterval and
-// whenever the registry reports an integration change, so activating an
-// integration or editing its interval takes effect promptly, no restart
-// needed. With no active integration there is nothing to sync. The admin
-// UI's manual sync button is wired separately and unaffected either way.
-//
-// Failures are logged, not propagated: a gateway that can't serve prices
-// fails every due check by design and that must never take the process down.
+// and last attempt. It checks at start, every pollInterval and whenever the
+// registry reports an integration change, until ctx is done. Failures are
+// logged.
 func RunLoop(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers Fetchers, registry *upstream.Registry) {
 	logger := slog.Default().With("component", "pricesync")
 

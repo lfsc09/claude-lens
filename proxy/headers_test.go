@@ -1,22 +1,6 @@
 package proxy
 
-import (
-	"net/http"
-	"testing"
-)
-
-func TestSetHeader_ReplacesCaseInsensitively(t *testing.T) {
-	h := http.Header{}
-	h.Set("Authorization", "old-value")
-	SetHeader(h, "authorization", "new-value")
-
-	if got := h.Get("Authorization"); got != "new-value" {
-		t.Errorf("Authorization = %q, want %q", got, "new-value")
-	}
-	if len(h["Authorization"]) != 1 {
-		t.Errorf("expected exactly one Authorization value, got %v", h["Authorization"])
-	}
-}
+import "testing"
 
 func TestFormatAuthHeader(t *testing.T) {
 	tests := []struct {

@@ -20,9 +20,8 @@ var dashboardRanges = map[string]bool{
 	"last-60-days": true,
 }
 
-// normalizeDashboardRange returns key if it's a recognized range, else the
-// default — so a missing or tampered-with ?range= value falls back safely
-// instead of erroring or (worse) silently querying unbounded all-time data.
+// normalizeDashboardRange returns key if it is a recognized range, else the
+// default range.
 func normalizeDashboardRange(key string) string {
 	if dashboardRanges[key] {
 		return key

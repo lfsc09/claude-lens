@@ -1,18 +1,9 @@
-// Package bifrost fetches authoritative per-model pricing from a Bifrost
-// gateway's /v1/models endpoint, so claude-lens's own price table can be
-// kept in sync with what the gateway actually bills instead of drifting
-// from it.
-//
-// Bifrost's dedicated management-API pricing endpoint
-// (/api/models/details) requires a management API key, while /v1/models is
-// the OpenRouter-compatible model-catalog route Bifrost exposes to the same
-// virtual key used for live inference traffic, and it carries pricing too,
-// so this package uses that instead.
+// Package bifrost fetches per-model pricing from a Bifrost gateway's
+// /v1/models endpoint.
 package bifrost
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -51,10 +42,9 @@ const (
 	bedrockVersionSuffix  = "-v1:0"
 )
 
-// claudeModelName converts a Bifrost model id back to the plain Claude model
-// name Claude Code sends (and every exchange's model column stores),
-// dropping the leading "<provider>/", any "<region>.anthropic." vendor
-// prefix, and Bedrock's "-v1:0" version suffix — e.g.
+// claudeModelName converts a Bifrost model id to the plain Claude model name
+// Claude Code sends, dropping the leading "<provider>/", any
+// "<region>.anthropic." vendor prefix and Bedrock's "-v1:0" version suffix:
 // "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0" and
 // "anthropic/claude-haiku-4-5-20251001" both yield
 // "claude-haiku-4-5-20251001". It reports false for any non-Claude model.
@@ -73,25 +63,14 @@ func claudeModelName(id string) (string, bool) {
 	return name, true
 }
 
-// FetchModelPrices queries baseURL's host's /v1/models endpoint and returns
-// per-million-token rates for every Claude model it reports, whichever
-// provider hosts it; when two providers report the same Claude model the
-// first listed wins. Non-Claude models are skipped since claude-lens only
-// proxies Anthropic-shaped traffic. Only a Bifrost upstream serves this
-// route, so any other upstream surfaces as the status-code error below.
-//
-// baseURL may carry a path — e.g. ".../anthropic", the inference-route
-// prefix claude-lens's reverse proxy forwards live traffic under — which
-// this strips: Bifrost's /v1/models lives at the host root, a sibling of
-// that inference prefix, not nested under it.
-//
-// /v1/models' pricing fields are decimal strings (an OpenRouter-API
-// convention Bifrost mirrors here), not JSON numbers like LiteLLM's
-// /model/info — hence the explicit strconv.ParseFloat below. It also
-// doesn't report an above-200k long-context tier, so the four
-// *Above200k fields on every returned priceprovider.ModelPrice are always
-// nil — database.UpsertPriceFromSync treats a nil override as "keep
-// whatever's already configured" rather than clearing it.
+// FetchModelPrices queries the host root of baseURL for /v1/models and
+// returns per-million-token rates for every Claude model it reports; when
+// several providers report the same model the first listed wins, and
+// non-Claude models are skipped. Any path on baseURL is discarded. Pricing
+// fields are decimal strings and no above-200k tier is reported, so the
+// *Above200k fields of every returned price are nil. A non-200 answer is
+// returned as a *priceprovider.StatusError noting the upstream may not be a
+// Bifrost gateway.
 func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string) ([]priceprovider.ModelPrice, error) {
 	hostRoot, err := hostRootURL(baseURL)
 	if err != nil {
@@ -100,10 +79,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 
 	var parsed listModelsResponse
 	if err := priceprovider.GetJSON(ctx, c.http, hostRoot+"/v1/models?page_size=1000", authToken, &parsed); err != nil {
-		if statusErr := (*priceprovider.StatusError)(nil); errors.As(err, &statusErr) {
-			return nil, fmt.Errorf("%w — is this upstream a Bifrost gateway?", err)
-		}
-		return nil, err
+		return nil, priceprovider.WrapStatusError(err, "a Bifrost gateway")
 	}
 
 	prices := make([]priceprovider.ModelPrice, 0, len(parsed.Data))
@@ -139,7 +115,7 @@ func modelPrice(name string, prompt, completion, cacheWrite, cacheRead string) (
 		if err != nil {
 			return priceprovider.ModelPrice{}, err
 		}
-		rates[i] = priceprovider.Round6(rate * 1_000_000)
+		rates[i] = priceprovider.PerM(rate)
 	}
 	return priceprovider.ModelPrice{
 		ModelName:      name,
@@ -160,10 +136,8 @@ func parsePerTokenRate(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
-// hostRootURL reduces rawURL to just its scheme and host, discarding any
-// path (and any query/fragment) — Bifrost's /v1/models lives at the
-// gateway's host root regardless of what inference-route prefix the
-// proxy's own baseURL carries.
+// hostRootURL reduces rawURL to its scheme and host, discarding any path,
+// query and fragment.
 func hostRootURL(rawURL string) (string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {

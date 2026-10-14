@@ -28,6 +28,12 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run executes the command selected by the flags and returns the process exit
+// code, so deferred cleanup runs before the process exits.
+func run() int {
 	feed := flag.Bool("feed", false, "seed a single row into a table via the running admin API, instead of starting the service")
 	table := flag.String("table", "", "table to seed with --feed (limiters, model_prices, notification_integrations, proxy_integrations)")
 	row := flag.String("row", "", "row to insert or update with --feed, as a JSON object")
@@ -40,7 +46,7 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -48,23 +54,23 @@ func main() {
 
 	if *feed && *dummy {
 		fmt.Fprintln(os.Stderr, "error: --feed and --dummy cannot be combined")
-		os.Exit(1)
+		return 1
 	}
 
 	if *dummy {
 		if err := runDummy(ctx, cfg, *count, *sessions); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	if *feed {
 		if err := runFeed(ctx, cfg, *table, *row, *match); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	logging.Setup(cfg)
@@ -72,7 +78,7 @@ func main() {
 	db, err := database.Open(ctx, cfg.DBPath)
 	if err != nil {
 		slog.Error("failed to open database", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer db.Close()
 
@@ -81,7 +87,7 @@ func main() {
 	est := pricing.New(db)
 	if err := est.Refresh(ctx); err != nil {
 		slog.Error("failed to load model prices", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	st := status.New()
@@ -91,7 +97,7 @@ func main() {
 	registry, err := upstream.NewRegistry(ctx, db)
 	if err != nil {
 		slog.Error("failed to resolve upstream", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	fetchers := pricesync.Fetchers{
 		database.ProxyTypeLiteLLM: litellm.NewClient(),
@@ -100,10 +106,10 @@ func main() {
 
 	proxySrv := proxy.NewServer(registry, db, est, st, fresh, limitersFresh)
 
-	adminSrv, err := admin.NewServer(db, est, registry, fetchers, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir)
+	adminSrv, err := admin.NewServer(db, est, registry, fetchers, st, fresh, limitersFresh, Version, cfg.DBPath, cfg.LogDir, !config.IsLoopbackAddr(cfg.AdminAddr))
 	if err != nil {
 		slog.Error("failed to build admin server", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	slog.Info("starting", "version", Version, "proxy_addr", cfg.ProxyAddr, "admin_addr", cfg.AdminAddr)
@@ -113,10 +119,7 @@ func main() {
 	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		// stop() also cancels ctx (see signal.NotifyContext), so if this
-		// server exits for its own reason (e.g. a startup failure) before
-		// a shutdown signal arrives, the other server unblocks and shuts
-		// down too instead of running on its own indefinitely.
+		// stop cancels ctx, shutting the other server down when this one exits.
 		defer stop()
 		proxyErr = proxySrv.Run(ctx, cfg.ProxyAddr)
 	}()
@@ -147,5 +150,5 @@ func main() {
 		slog.Error("admin server exited with error", "error", adminErr)
 		exitCode = 1
 	}
-	os.Exit(exitCode)
+	return exitCode
 }

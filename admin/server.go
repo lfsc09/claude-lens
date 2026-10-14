@@ -31,11 +31,10 @@ type Server struct {
 }
 
 // NewServer builds a Server with the JSON API and static frontend routes
-// registered. It only fails if the embedded static filesystem can't be
-// rooted at "static" — a build-time invariant, not a runtime condition —
-// so that's treated as fatal rather than something the caller can
-// meaningfully recover from at startup.
-func NewServer(db *database.DB, est *pricing.Estimator, reg *upstream.Registry, fetchers pricesync.Fetchers, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir string) (*Server, error) {
+// registered. allowAnyHost disables the loopback Host check, for servers
+// deliberately bound to a non-loopback address. It fails only if the embedded
+// static filesystem can't be rooted at "static".
+func NewServer(db *database.DB, est *pricing.Estimator, reg *upstream.Registry, fetchers pricesync.Fetchers, st *status.Flag, fr *status.Fresh, limitersFresh *status.Fresh, version, dbPath, logDir string, allowAnyHost bool) (*Server, error) {
 	logger := slog.Default().With("component", "admin")
 	h := &handlers{
 		db: db, est: est, status: st, fresh: fr, limitersFresh: limitersFresh, logger: logger,
@@ -112,7 +111,7 @@ func NewServer(db *database.DB, est *pricing.Estimator, reg *upstream.Registry, 
 	mux.HandleFunc("POST /api/notification-integrations/{id}/deactivate", h.setNotificationIntegrationActive(false))
 	mux.HandleFunc("DELETE /api/notification-integrations/{id}", h.deleteNotificationIntegration)
 
-	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger))
+	handler := chain(mux, recoverMiddleware, loggingMiddleware(logger), guardMiddleware(allowAnyHost))
 	return &Server{handler: handler, logger: logger}, nil
 }
 

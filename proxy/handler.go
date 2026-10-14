@@ -22,11 +22,8 @@ import (
 	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
-// exchangeMeta carries per-request state from Director to ModifyResponse —
-// httputil.ReverseProxy gives no other hook for passing data between the
-// two, so it rides the outbound request's context (resp.Request is the same
-// *http.Request Director mutated, per net/http.Transport's contract of
-// setting Response.Request to the request it sent).
+// exchangeMeta carries per-request state from the director to modifyResponse
+// through the outbound request's context.
 type exchangeMeta struct {
 	intercept   bool
 	sessionID   string
@@ -51,10 +48,8 @@ type Handler struct {
 	rp            *httputil.ReverseProxy
 	logger        *slog.Logger
 
-	// saveWG tracks saveExchange goroutines still writing to the database,
-	// so Server.Run can drain them before the process exits instead of
-	// dropping the last exchange of a request that completed right as
-	// shutdown began.
+	// saveWG tracks saveExchange goroutines still writing to the database;
+	// Server.Run drains it on shutdown.
 	saveWG sync.WaitGroup
 }
 
@@ -83,10 +78,7 @@ func NewHandler(reg *upstream.Registry, db *database.DB, estimator *pricing.Esti
 		ModifyResponse: h.modifyResponse,
 		ErrorHandler:   h.errorHandler,
 		Transport:      transport,
-		// Flush after every write, unconditionally — Anthropic's streaming
-		// responses are SSE, but don't rely on ReverseProxy's default
-		// content-type sniff to catch that; a buffered stream defeats the
-		// entire point of this proxy.
+		// Flushes after every write so streamed responses are not buffered.
 		FlushInterval: -1,
 	}
 
@@ -117,9 +109,7 @@ func sessionIDFromRequest(r *http.Request) string {
 	))
 }
 
-// writeLimiterBlocked writes an Anthropic-shaped 429 error body so Claude
-// Code's existing error display renders it, instead of a generic
-// connection failure.
+// writeLimiterBlocked writes an Anthropic-shaped 429 error body.
 func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
 	scope := "global"
 	if by.SessionID != "" {
@@ -149,21 +139,15 @@ func (h *Handler) director(r *http.Request) {
 	r.URL.Path = target.BaseURL.Path + originalPath
 	r.Host = target.BaseURL.Host
 
-	// The client's Accept-Encoding (Claude Code asks for gzip/br) would
-	// otherwise ride straight through to upstream. http.Transport only
-	// auto-decompresses gzip when it picks the encoding itself — if this
-	// header survives, Anthropic replies compressed (often brotli, which
-	// Go never decodes) and every downstream read, including the
-	// tee'd copy used for parsing tokens/output text, gets raw compressed
-	// bytes instead of text. Stripping it lets Transport negotiate and
-	// transparently undo gzip on its own.
+	// Dropping Accept-Encoding lets http.Transport negotiate gzip itself and
+	// decompress it, so the recorded body is always plain text.
 	r.Header.Del("Accept-Encoding")
 
 	if target.AuthToken != "" {
-		SetHeader(r.Header, "Authorization", FormatAuthHeader(target.AuthToken))
+		r.Header.Set("Authorization", FormatAuthHeader(target.AuthToken))
 	}
 	for name, value := range target.Headers {
-		SetHeader(r.Header, name, value)
+		r.Header.Set(name, value)
 	}
 
 	meta := &exchangeMeta{path: originalPath}
@@ -208,8 +192,7 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 }
 
 // waitForSaves blocks until every in-flight saveExchange goroutine has
-// finished, or timeout elapses first — bounded so a stuck database write
-// (past SQLite's own busy_timeout) can't hang shutdown forever.
+// finished or timeout elapses.
 func (h *Handler) waitForSaves(timeout time.Duration) {
 	done := make(chan struct{})
 	go func() {

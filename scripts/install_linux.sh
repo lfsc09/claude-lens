@@ -58,6 +58,25 @@ normalize_port() {
   printf '%s' "$port"
 }
 
+# validate_bind_host exits with an error unless value looks like a hostname
+# or IP address.
+validate_bind_host() {
+  case "$1" in
+    ''|*[!A-Za-z0-9._:-]*)
+      log error "--bind must be a hostname or IP address (e.g. 127.0.0.1), got '${1}'."
+      exit 1
+      ;;
+  esac
+}
+
+# listen_addr prints host:port, bracketing IPv6 hosts.
+listen_addr() {
+  case "$1" in
+    *:*) printf '[%s]:%s' "$1" "$2" ;;
+    *) printf '%s:%s' "$1" "$2" ;;
+  esac
+}
+
 # saved_value prints the last value stored for key in the env file from a
 # previous install. The file is parsed, never sourced: it lives in a
 # user-writable directory and this script runs as root.
@@ -75,6 +94,9 @@ service. Any option you omit keeps whatever was set on a previous run
 
   --proxy-addr PORT         Proxy listen port (default: 7801)
   --admin-addr PORT         Admin listen port (default: 7802)
+  --bind HOST               Interface both servers listen on (default: 127.0.0.1, this
+                             machine only). Anything else exposes the admin UI and the
+                             proxy, which have no authentication, to your network.
   --install-dir PATH        Directory holding the binary, data/ and logs/ (default: ~/.claude-lens)
   --as-service              Configure and start claude-lens as a systemd service
                              (default: off - just downloads/updates the binary)
@@ -85,6 +107,7 @@ USAGE
 # ── Parse flags ───────────────────────────────────────────────────────
 flag_proxy_addr=""
 flag_admin_addr=""
+flag_bind=""
 flag_install_dir=""
 flag_as_service=""
 while [ $# -gt 0 ]; do
@@ -93,6 +116,8 @@ while [ $# -gt 0 ]; do
     --proxy-addr=*) flag_proxy_addr="${1#*=}"; shift ;;
     --admin-addr) flag_admin_addr="$2"; shift 2 ;;
     --admin-addr=*) flag_admin_addr="${1#*=}"; shift ;;
+    --bind) flag_bind="$2"; shift 2 ;;
+    --bind=*) flag_bind="${1#*=}"; shift ;;
     --install-dir) flag_install_dir="$2"; shift 2 ;;
     --install-dir=*) flag_install_dir="${1#*=}"; shift ;;
     --as-service) flag_as_service="true"; shift ;;
@@ -133,28 +158,42 @@ CLENS_LOG_DIR="${CLENS_INSTALL_DIR}/logs"
 ENV_FILE="${CLENS_INSTALL_DIR}/claude-lens.env"
 
 # ── Defaults, then settings carried forward from a previous install ────
-saved_proxy_addr=""
-saved_admin_addr=""
+saved_proxy_port=""
+saved_admin_port=""
+saved_bind=""
 saved_as_service=""
 if [ -f "$ENV_FILE" ]; then
   saved_proxy_addr="$(saved_value CLENS_PROXY_ADDR)"
   saved_admin_addr="$(saved_value CLENS_ADMIN_ADDR)"
   saved_as_service="$(saved_value CLENS_AS_SERVICE)"
+  saved_proxy_port="${saved_proxy_addr##*:}"
+  saved_admin_port="${saved_admin_addr##*:}"
+  case "$saved_admin_addr" in
+    *:*)
+      saved_bind="${saved_admin_addr%:*}"
+      saved_bind="${saved_bind#[}"
+      saved_bind="${saved_bind%]}"
+      ;;
+  esac
 fi
 
 # ── Flags override persisted values, which override defaults ───────────
-CLENS_PROXY_ADDR="${flag_proxy_addr:-${saved_proxy_addr:-7801}}"
-CLENS_ADMIN_ADDR="${flag_admin_addr:-${saved_admin_addr:-7802}}"
+proxy_port="$(normalize_port --proxy-addr "${flag_proxy_addr:-${saved_proxy_port:-7801}}")"
+admin_port="$(normalize_port --admin-addr "${flag_admin_addr:-${saved_admin_port:-7802}}")"
+CLENS_BIND_HOST="${flag_bind:-${saved_bind:-127.0.0.1}}"
 CLENS_AS_SERVICE="${flag_as_service:-${saved_as_service:-false}}"
 
-# --proxy-addr/--admin-addr accept a bare port number; normalized here to
-# the ":port" form CLENS_PROXY_ADDR/CLENS_ADMIN_ADDR carry at runtime.
-CLENS_PROXY_ADDR=":$(normalize_port --proxy-addr "$CLENS_PROXY_ADDR")"
-CLENS_ADMIN_ADDR=":$(normalize_port --admin-addr "$CLENS_ADMIN_ADDR")"
-if [ "$CLENS_PROXY_ADDR" = "$CLENS_ADMIN_ADDR" ]; then
-  log error "--proxy-addr and --admin-addr must differ, both are '${CLENS_PROXY_ADDR#:}'."
+validate_bind_host "$CLENS_BIND_HOST"
+CLENS_PROXY_ADDR="$(listen_addr "$CLENS_BIND_HOST" "$proxy_port")"
+CLENS_ADMIN_ADDR="$(listen_addr "$CLENS_BIND_HOST" "$admin_port")"
+if [ "$proxy_port" = "$admin_port" ]; then
+  log error "--proxy-addr and --admin-addr must differ, both are '${proxy_port}'."
   exit 1
 fi
+case "$CLENS_BIND_HOST" in
+  127.*|localhost|::1) ;;
+  *) log warn "Binding to '${CLENS_BIND_HOST}' exposes the admin UI and the proxy, which have no authentication, to your network." ;;
+esac
 
 # The service runs as the invoking user so it can reach the data and log
 # directories under their home.
@@ -165,7 +204,6 @@ RUN_GROUP="$(id -gn "$RUN_USER")"
 # claude-lens never sees this variable - Claude Code does, by reading the
 # `env` block of its own ~/.claude/settings.json. We only touch that file,
 # for the port this install's proxy listens on.
-proxy_port="${CLENS_PROXY_ADDR##*:}"
 expected_anthropic_url="http://localhost:${proxy_port}"
 
 claude_dir="${target_home}/.claude"
@@ -187,28 +225,49 @@ if [ ! -d "$claude_dir" ]; then
   exit 1
 fi
 
-# configure_claude_settings points Claude Code at this install's proxy by
-# setting ANTHROPIC_BASE_URL in settings.json, leaving other keys untouched.
-configure_claude_settings() {
-  if [ ! -f "$settings_file" ]; then
-    log info "Creating ${settings_file}..."
-    printf '%s\n' "$settings_json_snippet" > "$settings_file"
-    chown "${RUN_USER}:${RUN_GROUP}" "$settings_file"
-    log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
-  else
-    if ! command -v jq >/dev/null 2>&1; then
-      log error "'${settings_file}' already exists and jq is required to safely read/update it, but jq is not installed."
-      log error "Install jq (sudo apt-get install -y jq) and re-run this installer, or add this yourself:"
-      log error "$settings_json_snippet"
-      exit 1
-    fi
+settings_action=""
 
-    if ! current_url="$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$settings_file" 2>/dev/null)"; then
-      log error "'${settings_file}' exists but isn't valid JSON. Fix it manually, then re-run this installer. It should include:"
-      log error "$settings_json_snippet"
-      exit 1
-    fi
-    if [ -z "$current_url" ]; then
+# check_claude_settings validates ${settings_file} without changing it and
+# sets settings_action to create, update or none, so a problem is reported
+# before anything is installed.
+check_claude_settings() {
+  if [ ! -f "$settings_file" ]; then
+    settings_action="create"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    log error "'${settings_file}' already exists and jq is required to safely read/update it, but jq is not installed."
+    log error "Install jq (sudo apt-get install -y jq) and re-run this installer, or add this yourself:"
+    log error "$settings_json_snippet"
+    exit 1
+  fi
+  if ! current_url="$(jq -r '.env.ANTHROPIC_BASE_URL // empty' "$settings_file" 2>/dev/null)"; then
+    log error "'${settings_file}' exists but isn't valid JSON. Fix it manually, then re-run this installer. It should include:"
+    log error "$settings_json_snippet"
+    exit 1
+  fi
+  if [ -z "$current_url" ]; then
+    settings_action="update"
+  elif [ "$current_url" != "$expected_anthropic_url" ]; then
+    log error "ANTHROPIC_BASE_URL is already set to '${current_url}' in ${settings_file}, but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
+    log error "Edit it manually to match, or re-run this installer with --proxy-addr matching the existing value."
+    exit 1
+  else
+    settings_action="none"
+  fi
+}
+
+# apply_claude_settings points Claude Code at this install's proxy by setting
+# ANTHROPIC_BASE_URL in settings.json, leaving other keys untouched.
+apply_claude_settings() {
+  case "$settings_action" in
+    create)
+      log info "Creating ${settings_file}..."
+      printf '%s\n' "$settings_json_snippet" > "$settings_file"
+      chown "${RUN_USER}:${RUN_GROUP}" "$settings_file"
+      log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
+      ;;
+    update)
       orig_mode="$(stat -c '%a' "$settings_file")"
       orig_owner="$(stat -c '%U:%G' "$settings_file")"
       tmp_settings="$(mktemp)"
@@ -218,15 +277,14 @@ configure_claude_settings() {
       chown "$orig_owner" "$tmp_settings" 2>/dev/null || true
       mv "$tmp_settings" "$settings_file"
       log info "ANTHROPIC_BASE_URL set to ${expected_anthropic_url} in ${settings_file}."
-    elif [ "$current_url" != "$expected_anthropic_url" ]; then
-      log error "ANTHROPIC_BASE_URL is already set to '${current_url}' in ${settings_file}, but this install listens at '${expected_anthropic_url}' (from --proxy-addr=${proxy_port})."
-      log error "Edit it manually to match, or re-run this installer with --proxy-addr matching the existing value."
-      exit 1
-    else
+      ;;
+    none)
       log info "ANTHROPIC_BASE_URL already set to ${expected_anthropic_url} in ${settings_file} - good."
-    fi
-  fi
+      ;;
+  esac
 }
+
+check_claude_settings
 
 if [ "$CLENS_AS_SERVICE" = "true" ] && ! command -v systemctl >/dev/null 2>&1; then
   log error "--as-service needs systemd (systemctl not found). Re-run without --as-service to only install the binary."
@@ -240,6 +298,8 @@ install_dir_existed=false
 mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
 $install_dir_existed || chown "${RUN_USER}:${RUN_GROUP}" "$CLENS_INSTALL_DIR"
 chown "${RUN_USER}:${RUN_GROUP}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+chmod 700 "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
+$install_dir_existed || chmod 700 "$CLENS_INSTALL_DIR"
 
 log info "Downloading latest ${SERVICE_NAME} binary and checksum..."
 tmp_bin="$(mktemp "${CLENS_INSTALL_DIR}/.${SERVICE_NAME}.XXXXXX")"
@@ -314,4 +374,4 @@ else
   log info "Re-run this installer with --as-service to configure and start it as a systemd service."
 fi
 
-configure_claude_settings
+apply_claude_settings

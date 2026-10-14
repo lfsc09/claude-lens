@@ -1,18 +1,9 @@
 package proxy
 
 import (
-	"net/http"
 	"regexp"
 	"strings"
 )
-
-// SetHeader sets key to value, replacing any existing value under that
-// (case-insensitive) header name. http.Header already stores keys under
-// their canonical MIME form, so this is exactly http.Header.Set, named
-// here so the proxy's header-mutation call sites read consistently.
-func SetHeader(headers http.Header, key, value string) {
-	headers.Set(key, value)
-}
 
 var schemePrefix = regexp.MustCompile(`^[A-Za-z]+\s+`)
 

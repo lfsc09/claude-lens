@@ -3,18 +3,20 @@ package database
 import (
 	"context"
 	"testing"
+
+	"github.com/lfsc09/claude-lens/internal/priceprovider"
 )
 
-func TestUpsertPriceFromSync_CreatesWhenAbsent(t *testing.T) {
+func TestUpsertPricesFromSync_CreatesWhenAbsent(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	created, err := db.UpsertPriceFromSync(ctx, "brand-new-model", 2.20, 11.00, 2.75, 0.22, nil, nil, nil, nil, 1)
+	created, _, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{{ModelName: "brand-new-model", InputPerM: 2.20, OutputPerM: 11.00, CacheWritePerM: 2.75, CacheReadPerM: 0.22}}, 1)
 	if err != nil {
-		t.Fatalf("UpsertPriceFromSync: %v", err)
+		t.Fatalf("UpsertPricesFromSync: %v", err)
 	}
-	if !created {
-		t.Fatal("expected created=true for a prefix with no existing row")
+	if created != 1 {
+		t.Fatal("expected created=1 for a prefix with no existing row")
 	}
 
 	p, err := db.GetPriceByPrefix(ctx, "brand-new-model")
@@ -29,7 +31,7 @@ func TestUpsertPriceFromSync_CreatesWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestUpsertPriceFromSync_OverwritesBaseRatesOnExistingRow(t *testing.T) {
+func TestUpsertPricesFromSync_OverwritesBaseRatesOnExistingRow(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
@@ -38,12 +40,12 @@ func TestUpsertPriceFromSync_OverwritesBaseRatesOnExistingRow(t *testing.T) {
 		t.Fatalf("CreatePrice: %v", err)
 	}
 
-	created, err := db.UpsertPriceFromSync(ctx, "sync-model", 2.20, 11.00, 2.75, 0.22, nil, nil, nil, nil, 2)
+	created, updated, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{{ModelName: "sync-model", InputPerM: 2.20, OutputPerM: 11.00, CacheWritePerM: 2.75, CacheReadPerM: 0.22}}, 2)
 	if err != nil {
-		t.Fatalf("UpsertPriceFromSync: %v", err)
+		t.Fatalf("UpsertPricesFromSync: %v", err)
 	}
-	if created {
-		t.Fatal("expected created=false when a row already exists")
+	if created != 0 || updated != 1 {
+		t.Fatalf("created, updated = %d, %d, want 0, 1 when a row already exists", created, updated)
 	}
 
 	p, err := db.GetPrice(ctx, id)
@@ -55,10 +57,10 @@ func TestUpsertPriceFromSync_OverwritesBaseRatesOnExistingRow(t *testing.T) {
 	}
 }
 
-// TestUpsertPriceFromSync_PreservesManualAbove200kOverride verifies that a
+// TestUpsertPricesFromSync_PreservesManualAbove200kOverride verifies that a
 // sync which doesn't report an above-200k tier for a model leaves a
 // manually configured override in place, rather than clearing it.
-func TestUpsertPriceFromSync_PreservesManualAbove200kOverride(t *testing.T) {
+func TestUpsertPricesFromSync_PreservesManualAbove200kOverride(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
@@ -71,8 +73,8 @@ func TestUpsertPriceFromSync_PreservesManualAbove200kOverride(t *testing.T) {
 		t.Fatalf("CreatePrice: %v", err)
 	}
 
-	if _, err := db.UpsertPriceFromSync(ctx, "manual-tier-model", 2.20, 11.00, 2.75, 0.22, nil, nil, nil, nil, 2); err != nil {
-		t.Fatalf("UpsertPriceFromSync: %v", err)
+	if _, _, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{{ModelName: "manual-tier-model", InputPerM: 2.20, OutputPerM: 11.00, CacheWritePerM: 2.75, CacheReadPerM: 0.22}}, 2); err != nil {
+		t.Fatalf("UpsertPricesFromSync: %v", err)
 	}
 
 	p, err := db.GetPrice(ctx, id)
@@ -84,10 +86,10 @@ func TestUpsertPriceFromSync_PreservesManualAbove200kOverride(t *testing.T) {
 	}
 }
 
-// TestUpsertPriceFromSync_OverwritesAbove200kWhenSyncReportsIt verifies that
+// TestUpsertPricesFromSync_OverwritesAbove200kWhenSyncReportsIt verifies that
 // when the sync does supply a non-nil above-200k rate, it overwrites
 // whatever was there before.
-func TestUpsertPriceFromSync_OverwritesAbove200kWhenSyncReportsIt(t *testing.T) {
+func TestUpsertPricesFromSync_OverwritesAbove200kWhenSyncReportsIt(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
@@ -101,8 +103,8 @@ func TestUpsertPriceFromSync_OverwritesAbove200kWhenSyncReportsIt(t *testing.T) 
 	}
 
 	newOverride := 30.0
-	if _, err := db.UpsertPriceFromSync(ctx, "reported-tier-model", 2.20, 11.00, 2.75, 0.22, &newOverride, nil, nil, nil, 2); err != nil {
-		t.Fatalf("UpsertPriceFromSync: %v", err)
+	if _, _, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{{ModelName: "reported-tier-model", InputPerM: 2.20, OutputPerM: 11.00, CacheWritePerM: 2.75, CacheReadPerM: 0.22, InputPerMAbove200k: &newOverride}}, 2); err != nil {
+		t.Fatalf("UpsertPricesFromSync: %v", err)
 	}
 
 	p, err := db.GetPrice(ctx, id)
@@ -111,5 +113,25 @@ func TestUpsertPriceFromSync_OverwritesAbove200kWhenSyncReportsIt(t *testing.T) 
 	}
 	if p.InputPerMAbove200k == nil || *p.InputPerMAbove200k != newOverride {
 		t.Errorf("InputPerMAbove200k = %v, want the newly synced override %v", p.InputPerMAbove200k, newOverride)
+	}
+}
+
+func TestUpsertPricesFromSync_CountsCreatedAndUpdatedAcrossBatch(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.CreatePrice(ctx, Price{Prefix: "known", InputPerM: 1, OutputPerM: 2, CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatalf("CreatePrice: %v", err)
+	}
+	created, updated, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{
+		{ModelName: "known", InputPerM: 3, OutputPerM: 4},
+		{ModelName: "fresh-a", InputPerM: 3, OutputPerM: 4},
+		{ModelName: "fresh-b", InputPerM: 3, OutputPerM: 4},
+	}, 5)
+	if err != nil {
+		t.Fatalf("UpsertPricesFromSync: %v", err)
+	}
+	if created != 2 || updated != 1 {
+		t.Errorf("created, updated = %d, %d, want 2, 1", created, updated)
 	}
 }

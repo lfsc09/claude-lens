@@ -59,7 +59,7 @@ func newTestServerWithStatus(t *testing.T) (*Server, *database.DB, *status.Flag,
 		database.ProxyTypeLiteLLM: litellm.NewClient(),
 		database.ProxyTypeBifrost: bifrost.NewClient(),
 	}
-	s, err := NewServer(db, est, reg, fetchers, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir)
+	s, err := NewServer(db, est, reg, fetchers, st, fresh, limitersFresh, "test", filepath.Join(tmpDir, "test.db"), tmpDir, true)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

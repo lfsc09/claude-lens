@@ -2,10 +2,14 @@
 package config
 
 import (
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+const privateDirMode = 0o700
 
 // Config holds all runtime configuration for both the proxy and admin servers.
 type Config struct {
@@ -19,27 +23,52 @@ type Config struct {
 
 // Load reads configuration from the OS environment (plus a dev-only .env file,
 // see dotenv_dev.go / dotenv_release.go), applies defaults, and ensures the
-// data/log directories exist.
+// data/log directories exist with owner-only permissions.
 func Load() (Config, error) {
 	loadDotEnv()
 
 	cfg := Config{
-		ProxyAddr: getEnv("CLENS_PROXY_ADDR", ":7801"),
-		AdminAddr: getEnv("CLENS_ADMIN_ADDR", ":7802"),
+		ProxyAddr: getEnv("CLENS_PROXY_ADDR", "127.0.0.1:7801"),
+		AdminAddr: getEnv("CLENS_ADMIN_ADDR", "127.0.0.1:7802"),
 
 		DataDir: getEnv("CLENS_DATA_DIR", "data"),
 		LogDir:  getEnv("CLENS_LOG_DIR", "logs"),
 	}
 	cfg.DBPath = filepath.Join(cfg.DataDir, "claude-lens.db")
 
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return Config{}, err
-	}
-	if err := os.MkdirAll(cfg.LogDir, 0o755); err != nil {
-		return Config{}, err
+	for _, dir := range [...]string{cfg.DataDir, cfg.LogDir} {
+		if err := ensurePrivateDir(dir); err != nil {
+			return Config{}, err
+		}
 	}
 
 	return cfg, nil
+}
+
+// ensurePrivateDir creates dir if missing and restricts it to its owner.
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, privateDirMode); err != nil {
+		return err
+	}
+	return os.Chmod(dir, privateDirMode)
+}
+
+// IsLoopbackAddr reports whether a listen address binds only to a loopback
+// interface. Addresses without a host (":7801") or with an unspecified host
+// ("0.0.0.0") listen on every interface and are not loopback.
+func IsLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	return err == nil && IsLoopbackHost(host)
+}
+
+// IsLoopbackHost reports whether host, without a port, is "localhost" or a
+// loopback IP address.
+func IsLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 func getEnv(name, fallback string) string {

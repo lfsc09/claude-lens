@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -88,4 +89,30 @@ func waitForListening(t *testing.T, addr string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("server never started listening on %s", addr)
+}
+
+func TestRejectBrowserRequests(t *testing.T) {
+	handler := rejectBrowserRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	cases := []struct {
+		name    string
+		headers map[string]string
+		want    int
+	}{
+		{"api client", nil, http.StatusNoContent},
+		{"with origin", map[string]string{"Origin": "http://evil.test"}, http.StatusForbidden},
+		{"with fetch metadata", map[string]string{"Sec-Fetch-Site": "cross-site"}, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		for name, value := range tc.headers {
+			req.Header.Set(name, value)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status = %d, want %d", tc.name, rec.Code, tc.want)
+		}
+	}
 }

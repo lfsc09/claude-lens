@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,8 +19,8 @@ import (
 // feedTable describes how --feed reaches a table through the admin API.
 type feedTable struct {
 	endpoint string
-	// updateOnly rejects creating rows: the table's rows are inserted by
-	// migrations, so --feed may only update an existing one.
+	// updateOnly rejects creating rows: the table's rows are seeded by the
+	// database, so --feed may only update an existing one.
 	updateOnly bool
 }
 
@@ -46,11 +47,7 @@ var feedTables = map[string]feedTable{
 func runFeed(ctx context.Context, cfg config.Config, table, row, match string) error {
 	spec, ok := feedTables[table]
 	if !ok {
-		names := make([]string, 0, len(feedTables))
-		for name := range feedTables {
-			names = append(names, name)
-		}
-		sort.Strings(names)
+		names := slices.Sorted(maps.Keys(feedTables))
 		return fmt.Errorf("unknown table %q, must be one of: %s", table, strings.Join(names, ", "))
 	}
 	if !json.Valid([]byte(row)) {

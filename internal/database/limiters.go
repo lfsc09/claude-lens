@@ -3,8 +3,11 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/lfsc09/claude-lens/internal/status"
@@ -79,12 +82,7 @@ var alignedRefreshCombos = map[string][]int{
 // SupportsAlignedRefresh reports whether unit/value is one of the six
 // combos with an unambiguous calendar boundary.
 func SupportsAlignedRefresh(unit string, value int) bool {
-	for _, v := range alignedRefreshCombos[unit] {
-		if v == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(alignedRefreshCombos[unit], value)
 }
 
 func scanLimiter(row interface{ Scan(dest ...any) error }) (Limiter, error) {
@@ -106,6 +104,27 @@ func scanLimiterInto(row interface{ Scan(dest ...any) error }, l *Limiter, extra
 	return err
 }
 
+// collectLimiters scans every row into a Limiter and closes rows. extra, if
+// set, returns the scan destinations for columns the query appends after
+// limiterColumns.
+func collectLimiters(rows *sql.Rows, extra func(*Limiter) []any) ([]Limiter, error) {
+	defer rows.Close()
+
+	var limiters []Limiter
+	for rows.Next() {
+		var l Limiter
+		var dest []any
+		if extra != nil {
+			dest = extra(&l)
+		}
+		if err := scanLimiterInto(rows, &l, dest...); err != nil {
+			return nil, err
+		}
+		limiters = append(limiters, l)
+	}
+	return limiters, rows.Err()
+}
+
 // ListLimiters returns every limiter, grouped by session (global first)
 // and then by active-period start hour.
 func (db *DB) ListLimiters(ctx context.Context) ([]Limiter, error) {
@@ -113,40 +132,33 @@ func (db *DB) ListLimiters(ctx context.Context) ([]Limiter, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var limiters []Limiter
-	for rows.Next() {
-		l, err := scanLimiter(rows)
-		if err != nil {
-			return nil, err
-		}
-		limiters = append(limiters, l)
-	}
-	if err := rows.Err(); err != nil {
+	limiters, err := collectLimiters(rows, nil)
+	if err != nil {
 		return nil, err
 	}
-	rows.Close()
 	return limiters, db.attachNotifications(ctx, limiters)
 }
 
 // attachNotifications fills each limiter's Notifications from
-// limiter_notifications in a single query.
+// limiter_notifications in a single query over the given limiters.
 func (db *DB) attachNotifications(ctx context.Context, limiters []Limiter) error {
 	if len(limiters) == 0 {
 		return nil
 	}
+	byID := make(map[int64]*Limiter, len(limiters))
+	ids := make([]any, 0, len(limiters))
+	for i := range limiters {
+		byID[limiters[i].ID] = &limiters[i]
+		ids = append(ids, limiters[i].ID)
+	}
 	rows, err := db.sql.QueryContext(ctx,
-		`SELECT limiter_id, notification_id, threshold_pct, request_cost_usd, alert_sent FROM limiter_notifications ORDER BY notification_id`)
+		`SELECT limiter_id, notification_id, threshold_pct, request_cost_usd, alert_sent FROM limiter_notifications
+		 WHERE limiter_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`) ORDER BY notification_id`, ids...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 
-	byID := make(map[int64]*Limiter, len(limiters))
-	for i := range limiters {
-		byID[limiters[i].ID] = &limiters[i]
-	}
 	for rows.Next() {
 		var limiterID int64
 		var n LimiterNotification
@@ -167,7 +179,7 @@ func (db *DB) attachNotifications(ctx context.Context, limiters []Limiter) error
 func (db *DB) GetLimiter(ctx context.Context, id int64) (*Limiter, error) {
 	row := db.sql.QueryRowContext(ctx, `SELECT `+limiterColumns+` FROM limiters WHERE id = ?`, id)
 	l, err := scanLimiter(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -278,19 +290,18 @@ func (db *DB) FindOverlappingLimiter(ctx context.Context, sessionID string, excl
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	peers, err := collectLimiters(rows, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	mask := hourMask(startHour, endHour)
-	for rows.Next() {
-		l, err := scanLimiter(rows)
-		if err != nil {
-			return nil, err
-		}
-		if mask&hourMask(l.ActiveStartHour, l.ActiveEndHour) != 0 {
-			return &l, nil
+	for i := range peers {
+		if mask&hourMask(peers[i].ActiveStartHour, peers[i].ActiveEndHour) != 0 {
+			return &peers[i], nil
 		}
 	}
-	return nil, rows.Err()
+	return nil, nil
 }
 
 // hourMask returns the bitmask of hours (bit i set means hour i is
@@ -323,15 +334,7 @@ func hourMask(startHour, endHour *int) uint32 {
 // otherwise the range is inclusive on both ends and wraps past midnight
 // when start > end.
 func withinActivePeriod(l Limiter, now time.Time) bool {
-	if l.ActiveStartHour == nil || l.ActiveEndHour == nil {
-		return true
-	}
-	hour := now.Hour()
-	start, end := *l.ActiveStartHour, *l.ActiveEndHour
-	if start <= end {
-		return hour >= start && hour <= end
-	}
-	return hour >= start || hour <= end
+	return hourMask(l.ActiveStartHour, l.ActiveEndHour)&(1<<uint(now.Hour())) != 0
 }
 
 // WithinActivePeriodNow reports whether l's active-period hour range covers
@@ -383,33 +386,40 @@ func ComputeNextRefresh(now time.Time, unit string, value int, aligned bool) tim
 	}
 }
 
-// refreshIfDue zeroes CurrentCost and recomputes NextRefreshAt when now has
-// reached it, returning whether it fired. The caller is responsible for
-// persisting the change (see applyDueRefresh).
-func refreshIfDue(l *Limiter, now time.Time) bool {
-	if float64(now.Unix()) < l.NextRefreshAt {
-		return false
-	}
-	l.CurrentCost = 0
-	l.NextRefreshAt = float64(ComputeNextRefresh(now, l.RefreshUnit, l.RefreshValue, l.RefreshAligned).Unix())
-	return true
-}
-
-// applyDueRefresh runs refreshIfDue on l and, when it fired, persists the
-// new window and re-arms the limiter's one-shot threshold alerts in one
-// transaction.
+// applyDueRefresh zeroes l's cost, advances its refresh boundary and re-arms
+// its one-shot threshold alerts in one transaction, when now has reached
+// l.NextRefreshAt. The update only applies while the stored boundary still
+// equals l.NextRefreshAt; otherwise another refresh already ran and l is
+// reloaded from the database, so a stale refresh never wipes newer accruals.
 func (db *DB) applyDueRefresh(ctx context.Context, l *Limiter, now time.Time) error {
-	if !refreshIfDue(l, now) {
+	if float64(now.Unix()) < l.NextRefreshAt {
 		return nil
 	}
+	next := float64(ComputeNextRefresh(now, l.RefreshUnit, l.RefreshValue, l.RefreshAligned).Unix())
+
 	tx, err := db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("refresh limiter %d: %w", l.ID, err)
 	}
 	defer tx.Rollback()
 
-	if err := persistLimiterProgress(ctx, tx, *l, float64(now.Unix())); err != nil {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE limiters SET current_cost = 0, next_refresh_at = ?, updated_at = ? WHERE id = ? AND next_refresh_at = ?`,
+		next, float64(now.Unix()), l.ID, l.NextRefreshAt)
+	if err != nil {
 		return fmt.Errorf("refresh limiter %d: %w", l.ID, err)
+	}
+	refreshed, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("refresh limiter %d: %w", l.ID, err)
+	}
+	if refreshed == 0 {
+		err := tx.QueryRowContext(ctx, `SELECT current_cost, next_refresh_at FROM limiters WHERE id = ?`, l.ID).
+			Scan(&l.CurrentCost, &l.NextRefreshAt)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reload limiter %d: %w", l.ID, err)
+		}
+		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE limiter_notifications SET alert_sent = 0 WHERE limiter_id = ?`, l.ID); err != nil {
 		return fmt.Errorf("re-arm limiter %d alerts: %w", l.ID, err)
@@ -417,19 +427,9 @@ func (db *DB) applyDueRefresh(ctx context.Context, l *Limiter, now time.Time) er
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("refresh limiter %d: %w", l.ID, err)
 	}
+	l.CurrentCost = 0
+	l.NextRefreshAt = next
 	return nil
-}
-
-// persistLimiterProgress writes back a limiter's current_cost and
-// next_refresh_at after refreshIfDue and/or an accrual.
-func persistLimiterProgress(ctx context.Context, e interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}, l Limiter, updatedAt float64) error {
-	_, err := e.ExecContext(ctx,
-		`UPDATE limiters SET current_cost = ?, next_refresh_at = ?, updated_at = ? WHERE id = ?`,
-		l.CurrentCost, l.NextRefreshAt, updatedAt, l.ID,
-	)
-	return err
 }
 
 // applicableLimiters returns every limiter that governs sessionID: the
@@ -441,17 +441,7 @@ func (db *DB) applicableLimiters(ctx context.Context, sessionID string) ([]Limit
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var limiters []Limiter
-	for rows.Next() {
-		var l Limiter
-		if err := scanLimiterInto(rows, &l, &l.hasLinks); err != nil {
-			return nil, err
-		}
-		limiters = append(limiters, l)
-	}
-	return limiters, rows.Err()
+	return collectLimiters(rows, func(l *Limiter) []any { return []any{&l.hasLinks} })
 }
 
 // RefreshDueLimiters resets every limiter whose next refresh boundary has
@@ -467,19 +457,10 @@ func (db *DB) RefreshDueLimiters(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var due []Limiter
-	for rows.Next() {
-		l, err := scanLimiter(rows)
-		if err != nil {
-			rows.Close()
-			return 0, err
-		}
-		due = append(due, l)
-	}
-	if err := rows.Err(); err != nil {
+	due, err := collectLimiters(rows, nil)
+	if err != nil {
 		return 0, err
 	}
-	rows.Close()
 
 	for i := range due {
 		if err := db.applyDueRefresh(ctx, &due[i], now); err != nil {
@@ -607,13 +588,10 @@ func (db *DB) alertTargets(ctx context.Context, limiterID int64) ([]alertTarget,
 // inactive or outside its active period right now simply doesn't track this
 // request, or alert on it, at all.
 //
-// Locked on alertMu for its whole body: two exchanges completing close
-// together for the same limiter must not both observe AlertSent == false
-// and send a duplicate budget alert.
+// Each limiter's total is incremented in a single UPDATE and a threshold
+// alert is claimed by flipping alert_sent from 0 to 1, so concurrent accruals
+// neither lose cost nor send a budget alert twice.
 func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost float64, model *string) error {
-	db.alertMu.Lock()
-	defer db.alertMu.Unlock()
-
 	limiters, err := db.refreshApplicableLimiters(ctx, sessionID)
 	if err != nil {
 		return err
@@ -626,11 +604,16 @@ func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost floa
 			continue
 		}
 
-		previousCost := l.CurrentCost
-		l.CurrentCost += cost
-		if err := persistLimiterProgress(ctx, db.sql, *l, float64(now.Unix())); err != nil {
+		err := db.sql.QueryRowContext(ctx,
+			`UPDATE limiters SET current_cost = current_cost + ?, updated_at = ? WHERE id = ? RETURNING current_cost`,
+			cost, float64(now.Unix()), l.ID).Scan(&l.CurrentCost)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
 			return fmt.Errorf("accrue limiter %d: %w", l.ID, err)
 		}
+		previousCost := l.CurrentCost - cost
 		if db.notifier == nil || !l.hasLinks {
 			continue
 		}
@@ -643,12 +626,15 @@ func (db *DB) accrueLimiterCost(ctx context.Context, sessionID string, cost floa
 			if t.ThresholdPct != nil && !t.AlertSent && l.LimitAmount > 0 {
 				threshold := l.LimitAmount * float64(*t.ThresholdPct) / 100
 				if l.CurrentCost >= threshold && previousCost < threshold {
-					if _, err := db.sql.ExecContext(ctx,
-						`UPDATE limiter_notifications SET alert_sent = 1 WHERE limiter_id = ? AND notification_id = ?`,
-						l.ID, t.NotificationID); err != nil {
+					res, err := db.sql.ExecContext(ctx,
+						`UPDATE limiter_notifications SET alert_sent = 1 WHERE limiter_id = ? AND notification_id = ? AND alert_sent = 0`,
+						l.ID, t.NotificationID)
+					if err != nil {
 						return fmt.Errorf("mark limiter %d alert sent: %w", l.ID, err)
 					}
-					db.sendAlert(t.WebhookURL, budgetAlertText(*l, *t.ThresholdPct), *l)
+					if claimed, _ := res.RowsAffected(); claimed == 1 {
+						db.sendAlert(t.WebhookURL, budgetAlertText(*l, *t.ThresholdPct), *l)
+					}
 				}
 			}
 			if t.RequestCostUSD != nil && cost >= *t.RequestCostUSD {

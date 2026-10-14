@@ -7,6 +7,7 @@ package priceprovider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -54,13 +55,18 @@ func Round6(f float64) float64 {
 	return math.Round(f*mult) / mult
 }
 
+// PerM converts a per-token rate to a per-million-token rate.
+func PerM(perToken float64) float64 {
+	return Round6(perToken * 1_000_000)
+}
+
 // PerMPtr converts a per-token rate to a per-million-token rate, preserving
 // nil (no override reported) instead of defaulting it to zero.
 func PerMPtr(perToken *float64) *float64 {
 	if perToken == nil {
 		return nil
 	}
-	perM := Round6(*perToken * 1_000_000)
+	perM := PerM(*perToken)
 	return &perM
 }
 
@@ -80,6 +86,16 @@ type StatusError struct {
 // Error implements error.
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("%s returned status %d", e.URL, e.Code)
+}
+
+// WrapStatusError annotates a *StatusError with the kind of gateway that was
+// expected to serve the route (e.g. "a LiteLLM proxy"); any other error is
+// returned unchanged.
+func WrapStatusError(err error, gateway string) error {
+	if statusErr := (*StatusError)(nil); errors.As(err, &statusErr) {
+		return fmt.Errorf("%w — is this upstream %s?", err, gateway)
+	}
+	return err
 }
 
 // GetJSON GETs url with an optional Bearer token and decodes the JSON body
