@@ -3,8 +3,6 @@ set -e
 
 LABEL="com.user.claude-lens"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LABEL}.plist"
-CONFIG_DIR="$HOME/Library/Application Support/claude-lens"
-ENV_FILE="${CONFIG_DIR}/claude-lens.env"
 
 SCRIPT_NAME="install_macos.sh"
 _COLOR_YELLOW=$'\033[33m'
@@ -165,16 +163,27 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── Resolve install/data/log directories ─────────────────────────────────
+CLENS_INSTALL_DIR="${flag_install_dir:-${HOME}/.claude-lens}"
+case "$CLENS_INSTALL_DIR" in
+  "~"|"~/"*) CLENS_INSTALL_DIR="${HOME}${CLENS_INSTALL_DIR#\~}" ;;
+esac
+case "$CLENS_INSTALL_DIR" in
+  /*) ;;
+  *) log error "--install-dir must be an absolute path, got '${CLENS_INSTALL_DIR}'."; exit 1 ;;
+esac
+CLENS_DATA_DIR="${CLENS_INSTALL_DIR}/data"
+CLENS_LOG_DIR="${CLENS_INSTALL_DIR}/logs"
+ENV_FILE="${CLENS_INSTALL_DIR}/claude-lens.env"
+
 # ── Defaults, then settings carried forward from a previous install ────
 saved_proxy_port=""
 saved_admin_port=""
 saved_bind=""
-saved_install_dir=""
 saved_as_service=""
 if [ -f "$ENV_FILE" ]; then
   saved_proxy_addr="$(saved_value CLENS_PROXY_ADDR)"
   saved_admin_addr="$(saved_value CLENS_ADMIN_ADDR)"
-  saved_install_dir="$(saved_value CLENS_INSTALL_DIR)"
   saved_as_service="$(saved_value CLENS_AS_SERVICE)"
   saved_proxy_port="${saved_proxy_addr##*:}"
   saved_admin_port="${saved_admin_addr##*:}"
@@ -191,7 +200,6 @@ fi
 proxy_port="$(normalize_port --proxy-addr "${flag_proxy_addr:-${saved_proxy_port:-7801}}")"
 admin_port="$(normalize_port --admin-addr "${flag_admin_addr:-${saved_admin_port:-7802}}")"
 CLENS_BIND_HOST="${flag_bind:-${saved_bind:-127.0.0.1}}"
-CLENS_INSTALL_DIR="${flag_install_dir:-$saved_install_dir}"
 CLENS_AS_SERVICE="${flag_as_service:-${saved_as_service:-false}}"
 
 validate_bind_host "$CLENS_BIND_HOST"
@@ -205,18 +213,6 @@ case "$CLENS_BIND_HOST" in
   127.*|localhost|::1) ;;
   *) log warn "Binding to '${CLENS_BIND_HOST}' exposes the admin UI and the proxy, which have no authentication, to your network." ;;
 esac
-
-# ── Resolve install/data/log directories ─────────────────────────────────
-CLENS_INSTALL_DIR="${CLENS_INSTALL_DIR:-${HOME}/.claude-lens}"
-case "$CLENS_INSTALL_DIR" in
-  "~"|"~/"*) CLENS_INSTALL_DIR="${HOME}${CLENS_INSTALL_DIR#\~}" ;;
-esac
-case "$CLENS_INSTALL_DIR" in
-  /*) ;;
-  *) log error "--install-dir must be an absolute path, got '${CLENS_INSTALL_DIR}'."; exit 1 ;;
-esac
-CLENS_DATA_DIR="${CLENS_INSTALL_DIR}/data"
-CLENS_LOG_DIR="${CLENS_INSTALL_DIR}/logs"
 
 # ── Configure ANTHROPIC_BASE_URL via Claude Code's settings.json ───────
 # claude-lens never sees this variable - Claude Code does, by reading the
@@ -303,9 +299,10 @@ check_claude_settings
 check_install_dir_writable
 install_dir_existed=false
 [ -d "$CLENS_INSTALL_DIR" ] && install_dir_existed=true
-mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR" "$CONFIG_DIR"
+mkdir -p "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
 chmod 700 "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
 $install_dir_existed || chmod 700 "$CLENS_INSTALL_DIR"
+log info "Binary: ${CLENS_INSTALL_DIR}/claude-lens, data: ${CLENS_DATA_DIR}, logs: ${CLENS_LOG_DIR}."
 
 log info "Downloading latest claude-lens binary and checksum..."
 tmp_bin="$(mktemp "${CLENS_INSTALL_DIR}/.claude-lens.XXXXXX")"
@@ -336,15 +333,17 @@ chmod 755 "$tmp_bin"
 mv "$tmp_bin" "${CLENS_INSTALL_DIR}/claude-lens"
 
 log info "Writing ${ENV_FILE}..."
-cat <<EOF > "$ENV_FILE"
+tmp_env="$(mktemp "${CLENS_INSTALL_DIR}/.claude-lens.env.XXXXXX")"
+tmp_files+=("$tmp_env")
+cat <<EOF > "$tmp_env"
 CLENS_PROXY_ADDR="${CLENS_PROXY_ADDR}"
 CLENS_ADMIN_ADDR="${CLENS_ADMIN_ADDR}"
-CLENS_INSTALL_DIR="${CLENS_INSTALL_DIR}"
 CLENS_DATA_DIR="${CLENS_DATA_DIR}"
 CLENS_LOG_DIR="${CLENS_LOG_DIR}"
 CLENS_AS_SERVICE="${CLENS_AS_SERVICE}"
 EOF
-chmod 600 "$ENV_FILE"
+chmod 600 "$tmp_env"
+mv "$tmp_env" "$ENV_FILE"
 
 if [ "$CLENS_AS_SERVICE" = "true" ]; then
   log info "Creating launchd property list..."
