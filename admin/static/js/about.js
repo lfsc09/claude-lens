@@ -1,6 +1,6 @@
-import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON, withPending } from './app.js';
-
 'use strict';
+
+import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON, withPending } from './app.js';
 
 (() => {
   const versionEl = document.getElementById('about-version');
@@ -56,9 +56,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   // Wipes every exchange, and optionally sessions rows + on-disk Claude Code
   // files, via the bulk-delete endpoint with confirm_all set and session_ids
   // empty.
-  const setDialogMessage = makeDialogMessage('clear-all-dialog-message', {
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-  });
+  const setDialogMessage = makeDialogMessage('clear-all-dialog-message');
 
   async function fetchSessionCount() {
     const res = await fetch('/api/session-stats?limit=1');

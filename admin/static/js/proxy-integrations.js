@@ -1,6 +1,6 @@
-import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, withPending } from './app.js';
-
 'use strict';
+
+import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavPolling, postJSON, putJSON, withPending } from './app.js';
 
 (() => {
   const cardsEl = document.getElementById('proxy-cards');
@@ -45,16 +45,14 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
    */
   function buildCard(p) {
     const headers = Object.entries(p.custom_headers ?? {});
-    const badge = p.active
-      ? '<span class="text-emerald-700 dark:text-emerald-400 text-xs font-medium px-2 py-0.5 bg-emerald-50 dark:bg-emerald-500/15 rounded-full">Active</span>'
-      : '<span class="text-fg-subtle text-xs font-medium px-2 py-0.5 bg-surface-hover rounded-full">Inactive</span>';
+    const status = badge(p.active ? 'emerald' : 'muted', p.active ? 'Active' : 'Inactive', 'rounded-full text-xs');
     const tokenPlaceholder = p.has_auth_token ? `Stored (${p.auth_token_hint}) — leave blank to keep` : 'Paste the gateway token';
     const id = `proxy-${p.id}`;
     return `<article class="proxy-card ${p.active ? 'border-emerald-600' : 'border-line'} bg-surface rounded-lg border" data-id="${p.id}" aria-label="${esc(p.name)} integration">
       <form class="proxy-form">
         <header class="flex items-start justify-between gap-4 px-5 py-4 border-b border-line">
           <div>
-            <h2 class="flex items-center gap-2 text-base font-semibold">${esc(p.name)} ${badge}</h2>
+            <h2 class="flex items-center gap-2 text-base font-semibold">${esc(p.name)} ${status}</h2>
             <p class="text-xs text-fg-subtle mt-0.5">Prices are read from <code>${PRICE_ENDPOINTS[p.type] ?? ''}</code> on the gateway.</p>
           </div>
           <button type="button" class="toggle-active-btn shrink-0 ${BUTTON_CLASS}">${p.active ? 'Deactivate' : 'Activate'}</button>
@@ -96,9 +94,16 @@ import { esc, extractErrorMessage, fmtTime, initNavPolling, postJSON, putJSON, w
     </article>`;
   }
 
+  /** Fetches the integrations and renders their cards, or an error when the fetch fails. */
   async function loadIntegrations() {
-    const res = await fetch('/api/proxy-integrations');
-    const integrations = res.ok ? await res.json() : [];
+    let integrations;
+    try {
+      integrations = await getJSON('/api/proxy-integrations');
+    } catch (err) {
+      modeNote.textContent = '';
+      cardsEl.innerHTML = errorBlock(err.message);
+      return;
+    }
     integrationsById.clear();
     integrations.forEach((p) => integrationsById.set(String(p.id), p));
     const active = integrations.find((p) => p.active);

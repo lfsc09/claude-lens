@@ -1,6 +1,6 @@
-import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, putJSON, withPending } from './app.js';
-
 'use strict';
+
+import { badge, errorRow, esc, extractErrorMessage, getJSON, initNavPolling, makeDialogMessage, postJSON, putJSON, runAction, switchToggle, withPending } from './app.js';
 
 (() => {
   const tbody = document.getElementById('notifications-tbody');
@@ -22,21 +22,7 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
   const integrationsById = new Map();
   let editingId = null;
 
-  const setDialogMessage = makeDialogMessage('notification-dialog-message', {
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-  });
-
-  /**
-   * Renders the on/off switch for an integration.
-   * @param {{id: number, active: boolean}} n - Notification integration.
-   * @returns {string} Button markup.
-   */
-  function statusToggle(n) {
-    return `<button type="button" class="toggle-active-btn inline-flex items-center relative h-5 w-9 rounded-full transition-colors ${n.active ? 'bg-emerald-600' : 'bg-surface-strong'}"
-      aria-pressed="${n.active}" aria-label="Toggle integration active">
-      <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-surface transition-transform ${n.active ? 'translate-x-5' : 'translate-x-0.5'}"></span>
-    </button>`;
-  }
+  const setDialogMessage = makeDialogMessage('notification-dialog-message');
 
   /**
    * Renders one integration as a table row.
@@ -46,9 +32,9 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
   function buildRow(n) {
     return `<tr class="hover:bg-surface-hover transition-colors" data-id="${n.id}">
       <td class="font-medium px-4 py-2">${esc(n.name)}</td>
-      <td class="px-4 py-2"><span class="text-blue-700 dark:text-blue-400 font-medium px-1.5 py-0.5 bg-blue-50 dark:bg-blue-500/15 rounded">${esc(n.type)}</span></td>
+      <td class="px-4 py-2">${badge('blue', esc(n.type))}</td>
       <td class="text-fg-muted font-mono text-xs px-4 py-2">${esc(n.webhook_hint)}</td>
-      <td class="px-4 py-2">${statusToggle(n)}</td>
+      <td class="px-4 py-2">${switchToggle(n.active, 'Toggle integration active')}</td>
       <td class="text-right whitespace-nowrap px-4 py-2">
         <button type="button" command="show-modal" commandfor="notification-dialog" class="edit-btn text-sm text-fg-subtle mr-3 hover:text-fg">Edit</button>
         <button type="button" class="delete-btn text-sm text-fg-subtle hover:text-red-600 dark:hover:text-red-400">Delete</button>
@@ -56,9 +42,15 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     </tr>`;
   }
 
+  /** Fetches the integrations and renders them, or an error row when the fetch fails. */
   async function loadIntegrations() {
-    const res = await fetch('/api/notification-integrations');
-    const integrations = res.ok ? await res.json() : [];
+    let integrations;
+    try {
+      integrations = await getJSON('/api/notification-integrations');
+    } catch (err) {
+      tbody.innerHTML = errorRow(5, err.message);
+      return;
+    }
     integrationsById.clear();
     if (!integrations.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="text-center text-fg-subtle px-4 py-8">No notification integrations configured.</td></tr>';
@@ -68,15 +60,22 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     tbody.innerHTML = integrations.map(buildRow).join('');
   }
 
+  /**
+   * Flips an integration's active state and reloads the table.
+   * @param {object} n - Notification integration from the API.
+   */
   async function toggleActive(n) {
-    await fetch(`/api/notification-integrations/${n.id}/${n.active ? 'deactivate' : 'activate'}`, { method: 'POST' });
-    loadIntegrations();
+    const request = fetch(`/api/notification-integrations/${n.id}/${n.active ? 'deactivate' : 'activate'}`, { method: 'POST' });
+    if (await runAction(request, 'Failed to change integration status.')) loadIntegrations();
   }
 
+  /**
+   * Deletes an integration after confirmation and reloads the table.
+   * @param {object} n - Notification integration from the API.
+   */
   async function deleteIntegration(n) {
     if (!confirm(`Delete "${n.name}"? It will be unlinked from every limiter.`)) return;
-    await fetch(`/api/notification-integrations/${n.id}`, { method: 'DELETE' });
-    loadIntegrations();
+    if (await runAction(fetch(`/api/notification-integrations/${n.id}`, { method: 'DELETE' }), 'Failed to delete integration.')) loadIntegrations();
   }
 
   tbody.addEventListener('click', (e) => {
@@ -96,6 +95,10 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     else webhookHint.innerHTML = help?.hint ?? '';
   }
 
+  /**
+   * Fills the dialog with an integration for editing.
+   * @param {object} n - Notification integration from the API.
+   */
   function startEdit(n) {
     editingId = n.id;
     dialogTitle.textContent = 'Edit integration';
@@ -108,6 +111,7 @@ import { esc, extractErrorMessage, initNavPolling, makeDialogMessage, postJSON, 
     renderWebhookHelp();
   }
 
+  /** Returns the dialog to its empty "add" state. */
   function resetDialog() {
     editingId = null;
     dialogTitle.textContent = 'Add an integration';

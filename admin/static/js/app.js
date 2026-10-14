@@ -8,21 +8,32 @@ const txtEncoder = new TextEncoder();
 const NAV_LINK_ACTIVE = 'text-emerald-50 py-1 px-2 rounded-lg bg-emerald-700 shadow-md hover:shadow-emerald-700/50 transition';
 const NAV_LINK_INACTIVE = 'text-fg-muted hover:text-fg';
 
+/** Text and background classes per badge tone, each with an explicit dark-theme shade. */
+const BADGE_TONES = {
+  blue: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950',
+  emerald: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950',
+  amber: 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900',
+  muted: 'text-fg-subtle bg-surface-hover',
+};
+
+/** Text, background and border classes of an inline error message. */
+export const ERROR_MESSAGE_CLASS = 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800';
+
 const PROXY_BADGE_BASE = 'px-2 py-1 border border-dashed text-xs rounded-lg';
 const PROXY_STATUSES = {
   ok: {
     label: 'OK',
-    badge: 'border-emerald-300 dark:border-emerald-700 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300',
+    badge: 'border-emerald-300 dark:border-emerald-700 bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300',
     dot: 'bg-emerald-500',
   },
   degraded: {
     label: 'Degraded',
-    badge: 'border-yellow-300 dark:border-yellow-700 bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-400',
+    badge: 'border-yellow-300 dark:border-yellow-700 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-400',
     dot: 'bg-yellow-500',
   },
   unreachable: {
     label: 'Unreachable',
-    badge: 'border-red-300 dark:border-red-700 bg-red-100 dark:bg-red-500/20 text-red-800 dark:text-red-300',
+    badge: 'border-red-300 dark:border-red-700 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300',
     dot: 'bg-red-500 animate-pulse',
   },
   unknown: {
@@ -31,6 +42,38 @@ const PROXY_STATUSES = {
     dot: 'bg-fg-subtle',
   },
 };
+
+/**
+ * Renders a small colored label.
+ * @param {keyof BADGE_TONES} tone - Color family of the label.
+ * @param {string} html - Label content; the caller escapes untrusted text.
+ * @param {string} [shape='rounded'] - Border-radius class.
+ * @returns {string} Badge markup.
+ */
+export function badge(tone, html, shape = 'rounded') {
+  return `<span class="font-medium px-1.5 py-0.5 ${BADGE_TONES[tone]} ${shape}">${html}</span>`;
+}
+
+/**
+ * Renders the track and knob of an on/off switch; the nearest `group`
+ * ancestor's aria-checked state drives its look.
+ * @returns {string} Switch markup.
+ */
+function switchTrack() {
+  return `<span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-surface-strong group-aria-checked:bg-emerald-600 transition-colors" aria-hidden="true">
+    <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-surface shadow transition-transform group-aria-checked:translate-x-4"></span>
+  </span>`;
+}
+
+/**
+ * Renders a standalone on/off switch button.
+ * @param {boolean} active - Whether the switch is on.
+ * @param {string} label - Accessible name of the switch.
+ * @returns {string} Button markup, marked with the `toggle-active-btn` class for delegated click handlers.
+ */
+export function switchToggle(active, label) {
+  return `<button type="button" role="switch" aria-checked="${active}" aria-label="${esc(label)}" class="toggle-active-btn group inline-flex items-center rounded-full">${switchTrack()}</button>`;
+}
 
 /**
  * Applies the given theme to the document, persists it, and notifies
@@ -62,21 +105,17 @@ export function jsonViewerTheme() {
 }
 
 /**
- * Site-wide header/nav, shared by every admin page in place of duplicating
- * the markup per page. Set the `active` attribute to highlight the current
- * page: "dashboard" | "exchanges" | "analyze-exchange" | "prices" |
- * "limiters" | "proxy-integrations" | "notification-integrations" | "about". Renders into light DOM (no shadow root) so existing
- * global code — updateProxyStatusBadge via getElementById('proxy-status') —
- * keeps working unchanged, and so the Tailwind CDN's mutation observer picks
- * up its utility classes the same way it does for every page's own
- * dynamically-rendered markup.
+ * Site-wide header/nav. The `active` attribute highlights the current page:
+ * "dashboard" | "exchanges" | "analyze-exchange" | "prices" | "limiters" |
+ * "proxy-integrations" | "notification-integrations" | "about". Renders into
+ * light DOM so page code can reach its elements by id.
  */
 class SiteNav extends HTMLElement {
   connectedCallback() {
     const active = this.getAttribute('active');
     const linkClass = (key) => (key === active ? NAV_LINK_ACTIVE : NAV_LINK_INACTIVE);
     const menuItemClass = (key) => (key === active
-      ? 'block text-emerald-700 dark:text-emerald-400 font-semibold px-3 py-2 bg-emerald-50 dark:bg-emerald-500/15'
+      ? `block font-semibold px-3 py-2 ${BADGE_TONES.emerald}`
       : 'block text-fg-muted hover:text-fg px-3 py-2 hover:bg-surface-hover');
     const dropdown = (id, buttonClass, buttonContent, panelClass, body) => `
       <div class="relative" data-nav-menu>
@@ -102,9 +141,7 @@ class SiteNav extends HTMLElement {
                   ${label}
                   ${hint && `<span class="text-xs text-fg-subtle">${hint}</span>`}
                 </span>
-                <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-surface-strong group-aria-checked:bg-emerald-600 transition-colors" aria-hidden="true">
-                  <span class="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform group-aria-checked:translate-x-4"></span>
-                </span>
+                ${switchTrack()}
               </button>`;
     const settingsMenu = dropdown(
       'settings',
@@ -149,11 +186,12 @@ class SiteNav extends HTMLElement {
     this.onDocumentKeydown = (e) => {
       if (e.key === 'Escape') this.menus.forEach((m) => this.setMenuOpen(m, false));
     };
-    this.menus.forEach((m) => {
-      m.querySelector('button').addEventListener('click', () => {
-        const opening = m.querySelector('[role="menu"]').classList.contains('hidden');
-        this.menus.forEach((other) => this.setMenuOpen(other, other === m && opening));
-      });
+    this.addEventListener('click', (e) => {
+      const trigger = e.target.closest('[data-nav-menu] > button');
+      if (!trigger) return;
+      const current = trigger.parentElement;
+      const opening = current.querySelector('[role="menu"]').classList.contains('hidden');
+      this.menus.forEach((menu) => this.setMenuOpen(menu, menu === current && opening));
     });
     this.onThemeChange = () => this.themeToggle.setAttribute('aria-checked', String(isDarkTheme()));
     this.querySelector('#settings-menu').addEventListener('click', (e) => {
@@ -183,13 +221,11 @@ class SiteNav extends HTMLElement {
    */
   async loadSettings() {
     try {
-      const res = await fetch('/api/settings');
-      if (!res.ok) return;
-      const settings = await res.json();
+      const settings = await getJSON('/api/settings');
       this.saveRawToggle.setAttribute('aria-checked', String(settings.save_raw_payloads));
       this.saveRawToggle.disabled = false;
-    } catch {
-      return;
+    } catch (err) {
+      notifyError(err.message);
     }
   }
 
@@ -212,6 +248,7 @@ class SiteNav extends HTMLElement {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch {
       this.saveRawToggle.setAttribute('aria-checked', String(!enabled));
+      notifyError('Failed to update the save raw payloads setting.');
     } finally {
       this.saveRawToggle.disabled = false;
     }
@@ -231,14 +268,29 @@ class SiteNav extends HTMLElement {
 }
 customElements.define('site-nav', SiteNav);
 
+/**
+ * Left-pads a number to two digits.
+ * @param {number} n - Number to pad.
+ * @returns {string} Two-digit string.
+ */
 export function pad(n) {
   return String(n).padStart(2, '0');
 }
 
+/**
+ * Escapes text for safe interpolation into HTML markup and attributes.
+ * @param {*} s - Value to escape; null and undefined become ''.
+ * @returns {string} Escaped text.
+ */
 export function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/**
+ * Measures a string's UTF-8 size.
+ * @param {?string} str - Text to measure.
+ * @returns {number} Byte length, 0 for empty input.
+ */
 export function estimateBytes(str) {
   if (!str) return 0;
   return txtEncoder.encode(String(str)).length;
@@ -264,25 +316,31 @@ export function fmtTokens(n) {
   return `${neg ? '-' : ''}${val}${suffix}`;
 }
 
+/**
+ * Formats an exact integer with thousands separators.
+ * @param {?number} n - Value to format.
+ * @returns {string} Formatted number, or '—' when n is null.
+ */
 export function fmtInt(n) {
   if (n == null) return '—';
   return Number(n).toLocaleString('en-US');
 }
 
+/**
+ * Formats a USD cost to cents, with "<$0.01" for smaller amounts.
+ * @param {?number} c - Cost in USD.
+ * @returns {string} Formatted cost, or '—' when c is null.
+ */
 export function fmtCost(c) {
   if (c == null) return '—';
   return c < 0.01 ? '<$0.01' : `$${c.toFixed(2)}`;
 }
 
 /**
- * Describes a price rule's token boundary, e.g. "≤ 1,000" or "> 1,000".
- * @param {{rule: string, rule_tokens: number}} price - Price rule record.
- * @returns {string} Human-readable rule text.
+ * Formats a Unix-seconds timestamp as local "YYYY-MM-DD HH:MM:SS".
+ * @param {?number} ts - Unix timestamp in seconds.
+ * @returns {string} Formatted time, or '—' when ts is empty.
  */
-export function ruleText(price) {
-  return price.rule === 'under' ? `≤ ${fmtInt(price.rule_tokens)}` : `> ${fmtInt(price.rule_tokens)}`;
-}
-
 export function fmtTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts * 1000);
@@ -314,18 +372,15 @@ export function fmtCountdown(ts) {
  * @returns {string} HTML markup for the active period badge.
  */
 export function fmtActivePeriod(l) {
-  if (l.active_start_hour == null) {
-    return l.is_active
-      ? '<span class="text-blue-700 dark:text-blue-400 font-medium px-1.5 py-0.5 bg-blue-50 dark:bg-blue-500/15 rounded">Always</span>'
-      : '<span class="text-fg-subtle font-medium px-1.5 py-0.5 bg-surface-hover rounded">Always</span>';
-  }
-  const color = l.within_active_period && l.is_active ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-surface-hover text-fg-subtle';
-  return `<span class="font-medium px-1.5 py-0.5 ${color} rounded">${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59</span>`;
+  if (l.active_start_hour == null) return badge(l.is_active ? 'blue' : 'muted', 'Always');
+  const tone = l.within_active_period && l.is_active ? 'emerald' : 'muted';
+  return badge(tone, `${pad(l.active_start_hour)}:00 – ${pad(l.active_end_hour)}:59`);
 }
 
 /**
  * Progress bar + "spent of limit" caption for a limiter's current spend.
- * @param {{current_cost: number, limit_amount: number}} l - Limiter record.
+ * @param {{current_cost: number, limit_amount: number, within_active_period: boolean, is_active: boolean}} l - Limiter record.
+ * @param {string} [height='h-1.5'] - Height class of the bar.
  * @returns {string} Progress-bar markup.
  */
 export function progressBar(l, height = 'h-1.5') {
@@ -339,6 +394,11 @@ export function progressBar(l, height = 'h-1.5') {
   </div>`;
 }
 
+/**
+ * Formats a byte count with a binary unit.
+ * @param {?number} bytes - Size in bytes.
+ * @returns {string} Formatted size, or '—' when bytes is null.
+ */
 export function fmtBytes(bytes) {
   if (bytes == null) return '—';
   if (bytes < 1024) return `${bytes} Bytes`;
@@ -347,6 +407,12 @@ export function fmtBytes(bytes) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+/**
+ * Shortens a session id to its head and tail around an ellipsis.
+ * @param {?string} sessionId - Session id.
+ * @param {number} [maxLength=15] - Longest id shown unshortened.
+ * @returns {string} Shortened id, or '-' when empty.
+ */
 export function fmtSessionId(sessionId, maxLength = 15) {
   if (!sessionId) return '-';
   return sessionId.length > maxLength ? `${sessionId.slice(0, Math.floor(maxLength / 2))} … ${sessionId.slice(-Math.floor(maxLength / 2))}` : sessionId;
@@ -365,6 +431,11 @@ export function addCost(a, b) {
   return (a ?? 0) + (b ?? 0);
 }
 
+/**
+ * Builds the tooltip markup listing an exchange's per-component costs.
+ * @param {object} row - Exchange record.
+ * @returns {string} Tooltip HTML, or '' when no component has a cost.
+ */
 export function costTooltip(row) {
   const parts = [];
   if (row.input_cost != null) parts.push(`<div class="flex justify-between"><b>Input:</b><span>${fmtCost(row.input_cost)}</span></div>`);
@@ -374,6 +445,11 @@ export function costTooltip(row) {
   return parts.length ? '<div class="flex flex-col w-32 gap-0.5">' + parts.join('') + '</div>' : '';
 }
 
+/**
+ * Builds the tooltip markup listing an exchange's per-component token counts.
+ * @param {object} row - Exchange record.
+ * @returns {string} Tooltip HTML, or '' when no component has tokens.
+ */
 export function tokensTooltip(row) {
   const parts = [];
   if (row.input_tokens != null) parts.push(`<div class="flex justify-between"><b>Input:</b><span>${fmtTokens(row.input_tokens)}</span></div>`);
@@ -383,13 +459,17 @@ export function tokensTooltip(row) {
   return parts.length ? '<div class="flex flex-col w-32 gap-0.5">' + parts.join('') + '</div>' : '';
 }
 
-// Single floating tooltip driven by [data-tip] elements: one fixed-position
-// element repositioned on hover/focus instead of one per triggering cell.
+// Single floating tooltip driven by [data-tip] elements, repositioned on
+// hover and focus.
 (() => {
-  const tip = document.getElementById('app-tooltip');
-  if (!tip) return;
+  const tip = document.createElement('div');
+  tip.id = 'app-tooltip';
+  tip.setAttribute('role', 'tooltip');
+  tip.className = 'fixed z-50 max-w-xs whitespace-pre-line text-xs leading-snug px-2.5 py-1.5 rounded-md bg-fg text-canvas shadow-lg pointer-events-none opacity-0 transition-opacity duration-150';
+  document.body.append(tip);
   let activeEl = null;
 
+  /** Places the tooltip above el, or below it when there is no room above. */
   function positionTip(el) {
     const rect = el.getBoundingClientRect();
     const tipRect = tip.getBoundingClientRect();
@@ -401,6 +481,7 @@ export function tokensTooltip(row) {
     tip.style.top = `${top}px`;
   }
 
+  /** Fills the tooltip from el's data-tip attribute and shows it. */
   function showTip(el) {
     const textOrHtml = el.getAttribute('data-tip');
     if (!textOrHtml) return;
@@ -411,6 +492,7 @@ export function tokensTooltip(row) {
     positionTip(el);
   }
 
+  /** Hides the tooltip. */
   function hideTip() {
     activeEl = null;
     tip.classList.remove('opacity-100');
@@ -781,12 +863,12 @@ export async function withPending(button, task) {
  * Builds a setDialogMessage(type, text) function for one dialog: shows text
  * styled per type, or hides the element when text is falsy.
  * @param {string} elementId - Id of the message element inside the dialog.
- * @param {Object<string, string[]>} styles - class strings to apply per type; each entry may hold several space-separated classes.
+ * @param {Object<string, string>} [styles] - Space-separated classes to apply per type; defaults to an `error` style.
  * @returns {function(?string, string): void} setDialogMessage(type, text).
  */
-export function makeDialogMessage(elementId, styles) {
+export function makeDialogMessage(elementId, styles = { error: ERROR_MESSAGE_CLASS }) {
   const tokens = Object.fromEntries(
-    Object.entries(styles).map(([type, cls]) => [type, cls.flatMap((entry) => entry.split(/\s+/))]),
+    Object.entries(styles).map(([type, cls]) => [type, cls.split(/\s+/)]),
   );
   return function setDialogMessage(type, text) {
     const el = document.getElementById(elementId);
@@ -801,4 +883,77 @@ export function makeDialogMessage(elementId, styles) {
     el.classList.add(...tokens[type]);
     el.textContent = text;
   };
+}
+
+/**
+ * GETs url and decodes its JSON body.
+ * @param {string} url - Request URL.
+ * @returns {Promise<*>} The decoded body.
+ * @throws {Error} With the server's error message when the response is not ok.
+ */
+export async function getJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await extractErrorMessage(res, `Request failed (HTTP ${res.status}).`));
+  return res.json();
+}
+
+/**
+ * Awaits a request made for its side effect (toggle, delete) and reports a
+ * failure to the user.
+ * @param {Promise<Response>} request - The pending fetch.
+ * @param {string} failureMessage - Message shown when the request fails without a server-provided one.
+ * @returns {Promise<boolean>} Whether the request succeeded.
+ */
+export async function runAction(request, failureMessage) {
+  try {
+    const res = await request;
+    if (res.ok) return true;
+    notifyError(await extractErrorMessage(res, failureMessage));
+  } catch {
+    notifyError(failureMessage);
+  }
+  return false;
+}
+
+/**
+ * Renders a centered paragraph reporting a failed load.
+ * @param {string} message - Error text; escaped here.
+ * @returns {string} Paragraph markup, spanning every column of a grid parent.
+ */
+export function errorBlock(message) {
+  return `<p class="col-span-full text-center text-red-700 dark:text-red-400 py-8" role="alert">${esc(message)}</p>`;
+}
+
+/**
+ * Renders a full-width table row reporting a failed load.
+ * @param {number} colspan - Number of columns the row spans.
+ * @param {string} message - Error text; escaped here.
+ * @returns {string} Row markup.
+ */
+export function errorRow(colspan, message) {
+  return `<tr><td colspan="${colspan}">${errorBlock(message)}</td></tr>`;
+}
+
+const TOAST_LIFETIME_MS = 6000;
+
+/**
+ * Shows a dismissible error toast in the bottom-right corner; it closes on
+ * click or after a few seconds.
+ * @param {string} message - Text to show.
+ */
+export function notifyError(message) {
+  let stack = document.getElementById('app-toasts');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'app-toasts';
+    stack.className = 'fixed z-50 bottom-4 right-4 flex flex-col gap-2 max-w-sm';
+    document.body.append(stack);
+  }
+  const toast = document.createElement('div');
+  toast.setAttribute('role', 'alert');
+  toast.className = `text-sm px-4 py-3 border rounded-lg shadow-lg cursor-pointer ${ERROR_MESSAGE_CLASS}`;
+  toast.textContent = message;
+  toast.addEventListener('click', () => toast.remove());
+  stack.append(toast);
+  setTimeout(() => toast.remove(), TOAST_LIFETIME_MS);
 }

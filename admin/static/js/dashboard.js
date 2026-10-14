@@ -1,6 +1,6 @@
-import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON, withPending } from './app.js';
-
 'use strict';
+
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON, withPending } from './app.js';
 
 (() => {
   const RANGES = ['today', 'this-week', 'this-month', 'last-7-days', 'last-15-days', 'last-30-days', 'last-60-days'];
@@ -339,9 +339,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
     });
   }
 
-  const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message', {
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-  });
+  const setBulkDeleteMessage = makeDialogMessage('bulk-delete-dialog-message');
 
   if (bulkDeleteBtn) {
     bulkDeleteBtn.onclick = () => {

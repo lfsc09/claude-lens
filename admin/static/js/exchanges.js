@@ -1,6 +1,6 @@
-import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, isDarkTheme, makeAbortable, computePagination, renderPaginationControls, wirePaginationNav } from './app.js';
-
 'use strict';
+
+import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, isDarkTheme, makeAbortable, computePagination, renderPaginationControls, wirePaginationNav } from './app.js';
 
 (() => {
   const DEFAULT_PAGE_SIZE = 50;

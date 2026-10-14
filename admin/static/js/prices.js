@@ -1,6 +1,6 @@
-import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogMessage, postJSON, putJSON, withPending } from './app.js';
-
 'use strict';
+
+import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
@@ -20,6 +20,11 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     ['cache_read_per_m_above_200k', 'Cache read'],
   ];
 
+  /**
+   * Renders the above-200k-token rates of a price, when it has any.
+   * @param {object} p - Model price from the API.
+   * @returns {string} Section markup, or '' when no tier is set.
+   */
   function above200kSectionHtml(p) {
     const rows = TIER_FIELDS
       .filter(([field]) => p[field] != null)
@@ -32,6 +37,11 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     </div>`;
   }
 
+  /**
+   * Renders one model price as a card.
+   * @param {object} p - Model price from the API.
+   * @returns {string} Card markup.
+   */
   function buildCard(p) {
     return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border border-line" data-id="${p.id}">
       <div class="flex items-start justify-between gap-2">
@@ -58,15 +68,24 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     </article>`;
   }
 
+  /**
+   * Deletes a model price after confirmation and reloads the grid.
+   * @param {object} p - Model price from the API.
+   */
   async function deletePrice(p) {
     if (!confirm(`Delete the price for ${p.model_prefix}?`)) return;
-    await fetch(`/api/prices/${p.id}`, { method: 'DELETE' });
-    loadPrices();
+    if (await runAction(fetch(`/api/prices/${p.id}`, { method: 'DELETE' }), 'Failed to delete price.')) loadPrices();
   }
 
+  /** Fetches the prices and renders them, or an error when the fetch fails. */
   async function loadPrices() {
-    const res = await fetch('/api/prices');
-    const prices = res.ok ? await res.json() : [];
+    let prices;
+    try {
+      prices = await getJSON('/api/prices');
+    } catch (err) {
+      grid.innerHTML = errorBlock(err.message);
+      return;
+    }
 
     pricesById.clear();
     if (!prices.length) {
@@ -92,10 +111,12 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
   });
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
-  const setDialogMessage = makeDialogMessage('price-dialog-message', {
-    error: ['text-red-700 dark:text-red-400', 'bg-red-50 dark:bg-red-500/15', 'border-red-200 dark:border-red-800'],
-  });
+  const setDialogMessage = makeDialogMessage('price-dialog-message');
 
+  /**
+   * Fills the dialog with a price for editing.
+   * @param {object} p - Model price from the API.
+   */
   function startEdit(p) {
     editingId = p.id;
     dialogTitle.textContent = 'Edit model price';
@@ -112,6 +133,7 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
     });
   }
 
+  /** Returns the dialog to its empty "add" state. */
   function resetDialog() {
     editingId = null;
     dialogTitle.textContent = 'Add a model price';
@@ -173,9 +195,13 @@ import { esc, extractErrorMessage, fmtCost, fmtTime, initNavPolling, makeDialogM
    * @returns {Promise<?object>} The active integration, or null when none is active.
    */
   async function loadActiveProxy() {
-    const res = await fetch('/api/proxy-integrations');
-    const integrations = res.ok ? await res.json() : [];
-    return integrations.find((p) => p.active) ?? null;
+    try {
+      const integrations = await getJSON('/api/proxy-integrations');
+      return integrations.find((p) => p.active) ?? null;
+    } catch (err) {
+      notifyError(err.message);
+      return null;
+    }
   }
 
   /** Enables the sync button only while an active proxy integration can sync; otherwise its wrapper shows a tooltip with the reason. */

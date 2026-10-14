@@ -1,6 +1,6 @@
-import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, jsonViewerTheme, ruleText } from './app.js';
-
 'use strict';
+
+import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fmtCost, fmtInt, initNavPolling, jsonViewerTheme } from './app.js';
 
 (() => {
   const exchangeId = window.location.pathname.split('/').filter(Boolean).pop();
@@ -84,7 +84,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
         <td class="font-medium uppercase tracking-wide text-fg-muted">${esc(label)}</td>
         <td class="font-mono text-fg break-all text-right">
           ${fmtCost(price[field])}
-          ${applied ? '<span class="text-xs font-medium align-middle ml-1.5 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 rounded">applied</span>' : ''}
+          ${applied ? badge('amber', 'applied', 'rounded text-xs align-middle ml-1.5') : ''}
         </td>
       </tr>`).join('');
   }
@@ -155,12 +155,6 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, fm
                   <td class="font-medium uppercase tracking-wide text-fg-muted">Prefix</td>
                   <td class="font-mono text-fg break-all text-right">${esc(exchange.matched_price.model_prefix)}</td>
                 </tr>
-                ${exchange.matched_price.rule != null ? `
-                <tr class="*:p-3">
-                  <td class="font-medium uppercase tracking-wide text-fg-muted">Rule</td>
-                  <td class="font-mono text-fg break-all text-right">${esc(ruleText(exchange.matched_price))}</td>
-                </tr>
-                ` : ``}
                 <tr class="*:p-3">
                   <td class="font-medium uppercase tracking-wide text-fg-muted">Input $/M</td>
                   <td class="font-mono text-fg break-all text-right">${fmtCost(exchange.matched_price.input_per_m)}</td>
