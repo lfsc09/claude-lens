@@ -300,6 +300,7 @@ $install_dir_existed || chown "${RUN_USER}:${RUN_GROUP}" "$CLENS_INSTALL_DIR"
 chown "${RUN_USER}:${RUN_GROUP}" "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
 chmod 700 "$CLENS_DATA_DIR" "$CLENS_LOG_DIR"
 $install_dir_existed || chmod 700 "$CLENS_INSTALL_DIR"
+log info "Binary: ${CLENS_INSTALL_DIR}/${SERVICE_NAME}, data: ${CLENS_DATA_DIR}, logs: ${CLENS_LOG_DIR}."
 
 log info "Downloading latest ${SERVICE_NAME} binary and checksum..."
 tmp_bin="$(mktemp "${CLENS_INSTALL_DIR}/.${SERVICE_NAME}.XXXXXX")"
