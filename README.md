@@ -34,8 +34,9 @@ You may provide flags to the install script to customize the Envs.
 
 | Flag | Default | Points to Env |
 |---|---|---|
-| `--proxy-addr` | `7801` | `CLENS_PROXY_ADDR` |
-| `--admin-addr` | `7802` | `CLENS_ADMIN_ADDR` |
+| `--proxy-addr` | `7801` | Port of `CLENS_PROXY_ADDR`. |
+| `--admin-addr` | `7802` | Port of `CLENS_ADMIN_ADDR`. |
+| `--bind` | `127.0.0.1` | Host of `CLENS_PROXY_ADDR` and `CLENS_ADMIN_ADDR`. Anything other than a loopback address exposes the admin UI and the proxy to your network. |
 | `--install-dir` | `~/.claude-lens` | Holds the binary, `data/` (`CLENS_DATA_DIR`) and `logs/` (`CLENS_LOG_DIR`). |
 | `--as-service` | — | If set, will install as a system service (Linux) or launchd agent (macOS). |
 
@@ -105,10 +106,19 @@ They all must be set in OS environment. The `.env` file is only read in developm
 
 | Variable | Default | Description |
 |---|---|---|
-| `CLENS_PROXY_ADDR` | `:7801` | Proxy server listen address. |
-| `CLENS_ADMIN_ADDR` | `:7802` | Admin server listen address. |
+| `CLENS_PROXY_ADDR` | `127.0.0.1:7801` | Proxy server listen address, as `host:port`. |
+| `CLENS_ADMIN_ADDR` | `127.0.0.1:7802` | Admin server listen address, as `host:port`. |
 | `CLENS_DATA_DIR` | `data` | Where the SQLite database is created. |
 | `CLENS_LOG_DIR` | `logs` | Where the rotating log file is written (5MB × 3 backups). |
+
+## Security
+
+`claude-lens` has no authentication and stores your gateway auth token and Slack webhook URLs, so it listens on loopback (`127.0.0.1`) by default.
+
+- The admin server rejects requests whose `Host` is not a loopback name, and state-changing requests from another origin or with a non-JSON body, so a web page you visit cannot drive it. These checks are relaxed only when `CLENS_ADMIN_ADDR` is not a loopback address.
+- The proxy rejects requests carrying a browser `Origin` or `Sec-Fetch-Site` header.
+- The install directory, `data/`, `logs/` and the database file are only readable by their owner (`0700` / `0600`).
+- To listen on other interfaces, pass `--bind HOST` to the installer or set the `CLENS_*_ADDR` variables, and put an authenticating reverse proxy in front.
 
 ## Data and Logs
 
@@ -136,7 +146,7 @@ claude-lens --feed --table table_name --row '{"column1":"value1","column2":"valu
 Add price configuration:
 
 ```sh
-claude-lens --feed --table model_prices --row '{"model_prefix": "claude-sonnet-5", "rule": "over", "rule_tokens": 0, "input_per_m": 3, "output_per_m": 15, "cache_write_per_m": 4, "cache_read_per_m": 0.2}'
+claude-lens --feed --table model_prices --row '{"model_prefix": "claude-sonnet-5", "input_per_m": 3, "output_per_m": 15, "cache_write_per_m": 4, "cache_read_per_m": 0.2}'
 ```
 
 Add limiter:
@@ -151,7 +161,7 @@ Update price if it exists, otherwise create it (`--match` finds the row by `mode
 claude-lens --feed --table model_prices --match '{"model_prefix": "claude-sonnet-5"}' --row '{"model_prefix": "claude-sonnet-5", "input_per_m": 3, "output_per_m": 15, "cache_write_per_m": 4, "cache_read_per_m": 0.2}'
 ```
 
-Update a proxy integration (`proxy_integrations` rows come from migrations, so `--match` is required and the command fails if no row matches; `--match` can use `type` or `name`):
+Update a proxy integration (`proxy_integrations` rows are seeded by the database, so `--match` is required and the command fails if no row matches; `--match` can use `type` or `name`):
 
 ```sh
 claude-lens --feed --table proxy_integrations --match '{"type": "litellm"}' --row '{"base_url": "https://litellm.example.com", "auth_token": "sk-...", "price_sync_interval_minutes": 60}'
