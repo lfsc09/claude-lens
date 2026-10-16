@@ -210,6 +210,9 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
 	usage := parsing.ExtractUsage(rawResponse, meta.isStreaming)
+	if usage.Empty() {
+		h.logger.Warn("no usable token usage in upstream response; cost left unknown", "session_id", meta.sessionID, "path", meta.path)
+	}
 
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
 	var matchedPrice *string

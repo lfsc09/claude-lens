@@ -75,6 +75,13 @@ func TestExtractResponseFields_NonStreaming(t *testing.T) {
 			wantCacheCreate: nil,
 			wantCacheRead:   nil,
 		},
+		{
+			name:           "all-zero usage is unknown",
+			body:           `{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}`,
+			wantText:       "hi",
+			wantInputToks:  nil,
+			wantOutputToks: nil,
+		},
 	}
 
 	for _, tt := range tests {

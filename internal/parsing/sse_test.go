@@ -85,3 +85,55 @@ func TestExtractResponseFields_Streaming_IgnoresNonDataLines(t *testing.T) {
 		t.Errorf("outputText = %v, want %q", derefOrNil(gotText), "hi")
 	}
 }
+
+const bifrostSSEFixture = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1792160062\",\"model\":\"us.anthropic.claude-sonnet-5-5\",\"usage\":{\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0}}}\n" +
+	"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n" +
+	"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":506,\"cache_creation_input_tokens\":115,\"cache_read_input_tokens\":104513,\"output_tokens\":14}}\n" +
+	"data: {\"type\":\"message_stop\"}\n"
+
+const litellmSSEFixture = "data: {\"type\": \"message_start\", \"message\": {\"id\": \"msg_bdrk_1\", \"model\": \"claude-sonnet-5-5\", \"usage\": {\"input_tokens\": 2, \"cache_creation_input_tokens\": 98026, \"cache_read_input_tokens\": 0, \"output_tokens\": 16}}}\n" +
+	"data: {\"type\": \"message_delta\", \"delta\": {\"stop_reason\": \"tool_use\"}, \"usage\": {\"input_tokens\": 2, \"cache_creation_input_tokens\": 98026, \"cache_read_input_tokens\": 0, \"output_tokens\": 250}}\n" +
+	"data: {\"type\": \"message_stop\", \"usage\": {\"input_tokens\": 2, \"cache_creation_input_tokens\": 98026, \"cache_read_input_tokens\": 0, \"output_tokens\": 250}}\n"
+
+func TestExtractUsage_Streaming_GatewayShapes(t *testing.T) {
+	tests := []struct {
+		name                                  string
+		raw                                   string
+		wantInput, wantOutput, wantCW, wantCR *int
+	}{
+		{"bifrost zeroed message_start", bifrostSSEFixture, intPtr(506), intPtr(14), intPtr(115), intPtr(104513)},
+		{"litellm final output overrides estimate", litellmSSEFixture, intPtr(2), intPtr(250), intPtr(98026), intPtr(0)},
+		{
+			"truncated stream keeps message_start usage",
+			"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7,\"output_tokens\":1,\"cache_read_input_tokens\":3}}}\n",
+			intPtr(7), intPtr(1), nil, intPtr(3),
+		},
+		{
+			"message_stop is the only usage source",
+			"data: {\"type\":\"message_stop\",\"usage\":{\"input_tokens\":4,\"output_tokens\":9}}\n",
+			intPtr(4), intPtr(9), nil, nil,
+		},
+		{
+			"genuine zero cache_read stays zero",
+			"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"cache_read_input_tokens\":0}}}\n" +
+				"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":6}}\n",
+			intPtr(5), intPtr(6), nil, intPtr(0),
+		},
+		{
+			"all zeros are unknown",
+			"data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}}\n" +
+				"data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":0}}\n",
+			nil, nil, nil, nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := ExtractUsage([]byte(tt.raw), true)
+			assertIntPtrEqual(t, "inputTokens", usage.InputTokens, tt.wantInput)
+			assertIntPtrEqual(t, "outputTokens", usage.OutputTokens, tt.wantOutput)
+			assertIntPtrEqual(t, "cacheCreationTokens", usage.CacheCreationTokens, tt.wantCW)
+			assertIntPtrEqual(t, "cacheReadTokens", usage.CacheReadTokens, tt.wantCR)
+		})
+	}
+}
