@@ -13,25 +13,64 @@ type Usage struct {
 	CacheReadTokens     *int
 }
 
+// usageFields is the wire shape of a usage object, shared by the
+// non-streaming body and every SSE event that carries usage.
+type usageFields struct {
+	InputTokens              *int `json:"input_tokens"`
+	OutputTokens             *int `json:"output_tokens"`
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+}
+
 type responseBody struct {
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
-	Usage struct {
-		InputTokens              *int `json:"input_tokens"`
-		OutputTokens             *int `json:"output_tokens"`
-		CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
-		CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
-	} `json:"usage"`
+	Usage usageFields `json:"usage"`
+}
+
+// Empty reports whether no token counter carries information, i.e. every
+// counter is nil or zero.
+func (u Usage) Empty() bool {
+	for _, count := range [...]*int{u.InputTokens, u.OutputTokens, u.CacheCreationTokens, u.CacheReadTokens} {
+		if count != nil && *count != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// merge folds a usage object into u counter by counter. A non-zero value
+// replaces the stored one; a zero is stored only while the counter is unset.
+func (u *Usage) merge(f usageFields) {
+	mergeCount(&u.InputTokens, f.InputTokens)
+	mergeCount(&u.OutputTokens, f.OutputTokens)
+	mergeCount(&u.CacheCreationTokens, f.CacheCreationInputTokens)
+	mergeCount(&u.CacheReadTokens, f.CacheReadInputTokens)
+}
+
+func mergeCount(dst **int, src *int) {
+	if src != nil && (*src != 0 || *dst == nil) {
+		*dst = src
+	}
+}
+
+// reliable returns u, or an all-nil Usage when every counter is zero or nil.
+func (u Usage) reliable() Usage {
+	if u.Empty() {
+		return Usage{}
+	}
+	return u
 }
 
 // ExtractResponseFields extracts the assembled output text and token usage
 // from an upstream Anthropic API response. Streaming and non-streaming
 // responses have different shapes (SSE event stream vs. a single JSON
-// object), so isStreaming picks which one to parse. Any decode failure
-// yields an all-nil Usage rather than an error, so a malformed upstream
-// body never blocks storage of the exchange.
+// object), so isStreaming picks which one to parse. Any decode failure, or a
+// response whose counters are all zero, yields an all-nil Usage rather than
+// an error, so a malformed upstream body never blocks storage of the
+// exchange.
 func ExtractResponseFields(rawResponse []byte, isStreaming bool) (outputText *string, usage Usage) {
 	return parseResponse(rawResponse, isStreaming, true)
 }
@@ -63,10 +102,6 @@ func parseResponse(rawResponse []byte, isStreaming, wantText bool) (outputText *
 			break
 		}
 	}
-	return outputText, Usage{
-		InputTokens:         body.Usage.InputTokens,
-		OutputTokens:        body.Usage.OutputTokens,
-		CacheCreationTokens: body.Usage.CacheCreationInputTokens,
-		CacheReadTokens:     body.Usage.CacheReadInputTokens,
-	}
+	usage.merge(body.Usage)
+	return outputText, usage.reliable()
 }

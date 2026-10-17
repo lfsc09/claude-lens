@@ -1,7 +1,6 @@
 package parsing
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"strings"
@@ -10,57 +9,46 @@ import (
 type sseEvent struct {
 	Type    string `json:"type"`
 	Message struct {
-		Usage struct {
-			InputTokens              *int `json:"input_tokens"`
-			CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
-			CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
-		} `json:"usage"`
+		Usage usageFields `json:"usage"`
 	} `json:"message"`
 	Delta struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"delta"`
-	Usage struct {
-		OutputTokens *int `json:"output_tokens"`
-	} `json:"usage"`
+	Usage usageFields `json:"usage"`
 }
 
 // parseSSEResponse parses a streaming (text/event-stream) response body,
-// assembling text_delta chunks and pulling token usage out of the
-// message_start (input + cache tokens) / message_delta (output tokens)
-// events, matching Anthropic's SSE event shapes for the Messages API. The
-// text is assembled only when wantText is set.
+// assembling text_delta chunks and merging token usage across the
+// message_start, message_delta and message_stop events. The text is
+// assembled only when wantText is set.
 func parseSSEResponse(raw []byte, wantText bool) (outputText *string, usage Usage) {
 	var text strings.Builder
 
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+	for line := range bytes.Lines(raw) {
+		data, ok := bytes.CutPrefix(line, []byte("data:"))
+		if !ok {
 			continue
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
+		data = bytes.TrimSpace(data)
+		if string(data) == "[DONE]" {
 			break
 		}
 
 		var event sseEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		if err := json.Unmarshal(data, &event); err != nil {
 			continue
 		}
 
 		switch event.Type {
 		case "message_start":
-			usage.InputTokens = event.Message.Usage.InputTokens
-			usage.CacheCreationTokens = event.Message.Usage.CacheCreationInputTokens
-			usage.CacheReadTokens = event.Message.Usage.CacheReadInputTokens
+			usage.merge(event.Message.Usage)
 		case "content_block_delta":
 			if wantText && event.Delta.Type == "text_delta" {
 				text.WriteString(event.Delta.Text)
 			}
-		case "message_delta":
-			usage.OutputTokens = event.Usage.OutputTokens
+		case "message_delta", "message_stop":
+			usage.merge(event.Usage)
 		}
 	}
 
@@ -68,5 +56,5 @@ func parseSSEResponse(raw []byte, wantText bool) (outputText *string, usage Usag
 		s := text.String()
 		outputText = &s
 	}
-	return outputText, usage
+	return outputText, usage.reliable()
 }

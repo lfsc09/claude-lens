@@ -32,6 +32,7 @@ type exchangeMeta struct {
 	rawRequest  string
 	isStreaming bool
 	model       *string
+	statusCode  int
 }
 
 type metaKey struct{}
@@ -181,6 +182,7 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 		return nil
 	}
 
+	meta.statusCode = resp.StatusCode
 	h.saveWG.Add(1)
 	resp.Body = newTeeReadCloser(resp.Body, func(raw []byte) {
 		go func() {
@@ -210,6 +212,9 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
 	usage := parsing.ExtractUsage(rawResponse, meta.isStreaming)
+	if usage.Empty() && meta.statusCode/100 == 2 {
+		h.logger.Warn("no usable token usage in upstream response; cost left unknown", "session_id", meta.sessionID, "path", meta.path)
+	}
 
 	var inputCost, outputCost, cacheCreationCost, cacheReadCost *float64
 	var matchedPrice *string
