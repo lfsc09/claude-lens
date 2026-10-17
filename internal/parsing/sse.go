@@ -1,7 +1,6 @@
 package parsing
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"strings"
@@ -21,28 +20,23 @@ type sseEvent struct {
 
 // parseSSEResponse parses a streaming (text/event-stream) response body,
 // assembling text_delta chunks and merging token usage across the
-// message_start, message_delta and message_stop events. Gateways distribute
-// the counters differently (Anthropic puts input and cache counts in
-// message_start, Bifrost only in message_delta, LiteLLM repeats them in
-// message_stop), so no single event is authoritative. The text is assembled
-// only when wantText is set.
+// message_start, message_delta and message_stop events. The text is
+// assembled only when wantText is set.
 func parseSSEResponse(raw []byte, wantText bool) (outputText *string, usage Usage) {
 	var text strings.Builder
 
-	scanner := bufio.NewScanner(bytes.NewReader(raw))
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+	for line := range bytes.Lines(raw) {
+		data, ok := bytes.CutPrefix(line, []byte("data:"))
+		if !ok {
 			continue
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
+		data = bytes.TrimSpace(data)
+		if string(data) == "[DONE]" {
 			break
 		}
 
 		var event sseEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
+		if err := json.Unmarshal(data, &event); err != nil {
 			continue
 		}
 

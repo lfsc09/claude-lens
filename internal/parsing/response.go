@@ -42,10 +42,7 @@ func (u Usage) Empty() bool {
 }
 
 // merge folds a usage object into u counter by counter. A non-zero value
-// always replaces the stored one, so cumulative counts and gateways that
-// zero early events (Bifrost's message_start) resolve to the real figures; a
-// zero is kept only while the counter is still unset, so a genuine zero
-// stays zero rather than nil.
+// replaces the stored one; a zero is stored only while the counter is unset.
 func (u *Usage) merge(f usageFields) {
 	mergeCount(&u.InputTokens, f.InputTokens)
 	mergeCount(&u.OutputTokens, f.OutputTokens)
@@ -59,9 +56,7 @@ func mergeCount(dst **int, src *int) {
 	}
 }
 
-// reliable returns u, or an all-nil Usage when every counter is zero or nil:
-// a billed response never reports no tokens, so such a result means the
-// gateway withheld usage and the figures must read as unknown, not free.
+// reliable returns u, or an all-nil Usage when every counter is zero or nil.
 func (u Usage) reliable() Usage {
 	if u.Empty() {
 		return Usage{}

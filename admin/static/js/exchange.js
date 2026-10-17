@@ -103,7 +103,7 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
       try {
         events.push(JSON.parse(data));
       } catch {
-        // Malformed lines are skipped so one bad event does not hide the rest.
+        continue;
       }
     }
     return events;
@@ -114,23 +114,22 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
    * A non-streaming body is parsed as-is; a streaming body has its content
    * blocks assembled (text, thinking, tool input JSON) and its usage merged
    * across message_start, message_delta and message_stop. Tool input of a
-   * block the stream never closed is still finalized from what arrived.
+   * block the stream never closed is still finalized from what arrived. A
+   * streaming body without any events is parsed as a plain JSON body.
    * @param {string} raw - Raw response body as stored.
    * @param {boolean} isStreaming - Whether the body is a text/event-stream.
    * @returns {?object} The assembled message, or null when nothing could be parsed.
    */
   function assembleMessage(raw, isStreaming) {
     if (!raw) return null;
-    if (!isStreaming) {
+    const events = isStreaming ? parseSseEvents(raw) : [];
+    if (!events.length) {
       try {
         return JSON.parse(raw);
       } catch {
         return null;
       }
     }
-
-    const events = parseSseEvents(raw);
-    if (!events.length) return null;
 
     const message = { content: [] };
     const partialJson = new Map();
@@ -169,6 +168,7 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
     for (const [index, json] of partialJson) {
       if (message.content[index]) finalizeToolInput(message.content[index], json);
     }
+    message.content = message.content.filter(Boolean);
     return message;
   }
 
@@ -201,6 +201,16 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
   function tabButton(name, label, payload, selected) {
     const active = name === selected;
     return `<button type="button" role="tab" id="${name}-tab" aria-selected="${active}" aria-controls="${name}-panel" class="flex-1 uppercase font-medium tracking-wide px-3 py-2 border rounded ${active ? 'bg-fg text-canvas' : 'bg-surface-active hover:bg-surface-strong'}" trigger-content-e="${name}" ${payload ? '' : 'disabled'}>${label}</button>`;
+  }
+
+  /**
+   * Renders the Copy Raw / Download Raw button pair of a payload panel.
+   * @param {string} name - Panel name: "request" | "response".
+   * @returns {string} Buttons markup.
+   */
+  function rawActionButtons(name) {
+    const cls = 'text-xs uppercase font-medium tracking-wide px-2 py-1 rounded border bg-surface hover:bg-surface-hover';
+    return `<button type="button" id="${name}-copy-raw" class="${cls}">Copy Raw</button><button type="button" id="${name}-download-raw" class="${cls}">Download Raw</button>`;
   }
 
   /**
@@ -356,8 +366,7 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
           <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
             <div class="flex items-center gap-2">
               <h2 class="font-semibold uppercase tracking-wide">Request</h2>
-              <button type="button" id="request-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Copy Raw</button>
-              <button type="button" id="request-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Download Raw</button>
+              ${rawActionButtons('request')}
             </div>
             <div class="flex flex-col items-end gap-2">
               <span class="text-xs text-fg font-mono">${fmtInt(exchange.raw_request_tokens)} tokens</span>
@@ -385,16 +394,15 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
     }
 
     if (exchange.raw_response) {
-      const rawView = Boolean(exchange.response_message);
+      const rawView = exchange.response_message != null;
       html += `
         <section class="${firstTab === 'response' ? '' : 'hidden '}flex flex-col gap-0.5" id="response-panel" role="tabpanel" aria-labelledby="response-tab" e-content-id="response">
           <div class="flex items-center justify-between p-4 bg-surface rounded-t-lg border border-line">
             <div class="flex items-center gap-2">
               <h2 class="font-semibold uppercase tracking-wide">Response</h2>
-              <button type="button" id="response-copy-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Copy Raw</button>
-              <button type="button" id="response-download-raw" class="text-xs uppercase font-medium tracking-wide px-2 py-1 rounded bg-surface-active hover:bg-surface-strong">Download Raw</button>
+              ${rawActionButtons('response')}
               <div class="flex gap-0.5" role="group" aria-label="Response view">
-                ${responseViewButton('raw', 'Raw', rawView ? 'raw' : 'output', !rawView)}
+                ${responseViewButton('raw', 'Message', rawView ? 'raw' : 'output', !rawView)}
                 ${responseViewButton('output', 'Output text', rawView ? 'raw' : 'output', !exchange.output_text?.trim())}
               </div>
             </div>
@@ -430,7 +438,7 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
       const requestJsonViewer = document.getElementById('request-json-viewer');
       requestJsonViewer.data = exchange.raw_request;
     }
-    if (exchange.response_message) {
+    if (exchange.response_message != null) {
       document.getElementById('response-json-viewer').data = exchange.response_message;
     }
   }
@@ -480,21 +488,9 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
   });
 
   document.addEventListener('click', async (e) => {
-    const trigger = e.target.closest('#request-copy-raw');
-    if (!trigger || !derivedExchange?.raw_request) return;
-    await copyTextToClipboard(trigger, derivedExchange.raw_request, 'Copy Raw');
-  });
-
-  document.addEventListener('click', (e) => {
-    const trigger = e.target.closest('#request-download-raw');
-    if (!trigger || !derivedExchange?.raw_request) return;
-    let content = derivedExchange.raw_request;
-    try {
-      content = JSON.stringify(JSON.parse(content), null, 4);
-    } catch {
-      // raw_request wasn't valid JSON; fall back to the original text.
-    }
-    downloadTextFile(`exchange-${derivedExchange.id}-request.json`, content);
+    const trigger = e.target.closest('[id$="-copy-raw"]');
+    const raw = derivedExchange?.[`raw_${trigger?.id.split('-')[0]}`];
+    if (raw) await copyTextToClipboard(trigger, raw, 'Copy Raw');
   });
 
   document.addEventListener('click', (e) => {
@@ -514,16 +510,22 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
     document.getElementById('response-bytes').textContent = fmtBytes(view === 'raw' ? derivedExchange.raw_response_bytes : derivedExchange.output_bytes);
   });
 
-  document.addEventListener('click', async (e) => {
-    const trigger = e.target.closest('#response-copy-raw');
-    if (!trigger || !derivedExchange?.raw_response) return;
-    await copyTextToClipboard(trigger, derivedExchange.raw_response, 'Copy Raw');
-  });
-
   document.addEventListener('click', (e) => {
-    const trigger = e.target.closest('#response-download-raw');
-    if (!trigger || !derivedExchange?.raw_response) return;
-    downloadTextFile(`exchange-${derivedExchange.id}-response.txt`, derivedExchange.raw_response, 'text/plain');
+    const trigger = e.target.closest('[id$="-download-raw"]');
+    const name = trigger?.id.split('-')[0];
+    const raw = derivedExchange?.[`raw_${name}`];
+    if (!raw) return;
+    if (name === 'response') {
+      downloadTextFile(`exchange-${derivedExchange.id}-response.txt`, raw, 'text/plain');
+      return;
+    }
+    let content;
+    try {
+      content = JSON.stringify(JSON.parse(raw), null, 4);
+    } catch {
+      content = raw;
+    }
+    downloadTextFile(`exchange-${derivedExchange.id}-request.json`, content);
   });
 
   load();
