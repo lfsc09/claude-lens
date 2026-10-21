@@ -93,8 +93,6 @@ func doGet(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func strPtr(s string) *string { return &s }
-
 func nowUnix() int64 { return time.Now().Unix() }
 
 func TestHealth(t *testing.T) {

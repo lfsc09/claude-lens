@@ -54,14 +54,9 @@ func (e *Estimator) Refresh(ctx context.Context) error {
 		priceByPrefix[p.Prefix] = p
 	}
 
-	// Longest prefix first, so the first HasPrefix match found while
-	// scanning is always the most specific one — this also naturally
-	// prefers an exact match (prefix == model) over any shorter prefix,
-	// without needing a separate exact-match pass. Sorting by length
-	// descending resolves prefix ambiguity deliberately (e.g.
-	// "claude-sonnet-4" and "claude-sonnet" both prefix
-	// "claude-sonnet-4-5") instead of leaving it to accident of insertion
-	// order.
+	// Longest prefix first, so the first match while scanning is the most
+	// specific one and an exact match beats any shorter prefix (e.g.
+	// "claude-sonnet-4" over "claude-sonnet" for "claude-sonnet-4-5").
 	prefixes := make([]string, 0, len(priceByPrefix))
 	for prefix := range priceByPrefix {
 		prefixes = append(prefixes, prefix)

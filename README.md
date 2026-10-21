@@ -238,7 +238,10 @@ untouched). For each one, the database records:
   `cache_read_input_tokens` (Anthropic prompt caching) reported by the
   upstream API, and the estimated cost for each token type
   (longest-matching-prefix against the `Prices` table, which prices cache
-  writes/reads separately from plain input)
+  writes/reads separately from plain input). The stored model is normalized
+  first: a gateway prefix such as `us.anthropic.` or `bedrock/` and a
+  Bedrock `-v1:0` suffix are dropped, so `us.anthropic.claude-sonnet-5-5`
+  is stored and priced as `claude-sonnet-5-5`
 - The raw request and response bodies, for full-fidelity replay
 
 Streaming responses are fully supported: each chunk is forwarded to the
