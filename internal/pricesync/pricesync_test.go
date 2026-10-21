@@ -318,17 +318,22 @@ func TestRunLoop_SyncsImmediatelyWhenDueThenStopsOnCancel(t *testing.T) {
 		close(done)
 	}()
 
-	// A freshly activated integration has PriceSyncedAt == 0, so RunLoop's immediate
-	// check-and-sync (before it ever waits on pollInterval) must fire
-	// right away, without needing to wait out a real interval. hits is
-	// written from the httptest server's own goroutine while this loop
-	// polls it from the test goroutine, hence the atomic rather than a
-	// plain int.
+	// A freshly activated integration has PriceSyncedAt == 0, so RunLoop's
+	// immediate check-and-sync (before it ever waits on pollInterval) must
+	// complete right away. The test waits for the completed sync, not just
+	// the upstream hit, because cancelling mid-sync aborts the DB writes.
 	deadline := time.After(2 * time.Second)
-	for hits.Load() == 0 {
+	for {
+		got, err := db.GetActiveProxyIntegration(context.Background())
+		if err != nil || got == nil {
+			t.Fatalf("GetActiveProxyIntegration: %v, %v", got, err)
+		}
+		if got.PriceSyncedAt != 0 {
+			break
+		}
 		select {
 		case <-deadline:
-			t.Fatal("RunLoop never synced within 2s of starting (a fresh DB should always be immediately due)")
+			t.Fatalf("RunLoop didn't complete a sync within 2s of starting (hits=%d)", hits.Load())
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
@@ -338,14 +343,6 @@ func TestRunLoop_SyncsImmediatelyWhenDueThenStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunLoop didn't return after ctx cancel")
-	}
-
-	got, err := db.GetActiveProxyIntegration(context.Background())
-	if err != nil || got == nil {
-		t.Fatalf("GetActiveProxyIntegration: %v, %v", got, err)
-	}
-	if got.PriceSyncedAt == 0 {
-		t.Error("RunLoop's sync didn't mark PriceSyncedAt")
 	}
 }
 
