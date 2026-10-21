@@ -31,6 +31,7 @@ func (db *DB) SetNotifications(client *notify.Client) {
 	db.notifier = client
 }
 
+// schema creates every table and index of a fresh database.
 const schema = `
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
@@ -161,6 +162,7 @@ var columnMigrations = []columnMigration{
 // match for an existing database to be opened.
 const schemaVersion = 2
 
+// databaseFileMode is the permission of the database file.
 const databaseFileMode = 0o600
 
 // ErrIncompatibleSchema is returned by Open when the database file was

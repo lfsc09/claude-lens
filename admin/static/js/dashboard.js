@@ -13,11 +13,23 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   const select = document.getElementById('predefined-date-filter');
   if (select) select.value = range;
 
+  /**
+   * Sets the text of an element, ignoring a missing one.
+   *
+   * @param {string} id - Element id.
+   * @param {string} text - Text to show.
+   */
   function setText(id, text) {
     const el = document.getElementById(id);
     if (el) el.textContent = text;
   }
 
+  /**
+   * Formats a date as a local YYYY-MM-DD string.
+   *
+   * @param {Date} d - Date to format.
+   * @returns {string} Local calendar day.
+   */
   function dateStr(d) {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
@@ -43,6 +55,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     }
   }
 
+  /** Shows the current range's start and end days in the date labels. */
   function updateDateLabels() {
     const now = new Date();
     setText('date-from-value', dateStr(rangeFrom(range, now)));
@@ -51,6 +64,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   updateDateLabels();
 
   // ── Stats cards ─────────────────────────────────────────────────────────
+  /**
+   * Renders the token and cost totals cards.
+   *
+   * @param {?object} totals - Totals from the API; null leaves the cards untouched.
+   */
   function renderTotals(totals) {
     if (!totals) return;
     const inputTokens = totals.total_input_tokens ?? 0;
@@ -74,6 +92,12 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   let globalLimiters = [];
   let limitersBySession = new Map();
 
+  /**
+   * Renders one global limiter as a card.
+   *
+   * @param {object} l - Limiter from the API.
+   * @returns {string} Card markup.
+   */
   function limiterCard(l) {
     return `<div class="p-4 bg-surface rounded-lg border border-line">
       ${progressBar(l, 'h-2')}
@@ -84,6 +108,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
       </div>`;
   }
 
+  /** Renders the global limiter cards, or an empty-state message. */
   function renderGlobalLimiters() {
     const container = document.getElementById('global-limiters');
     if (!container) return;
@@ -119,6 +144,12 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   // Session IDs checked for bulk delete among the rows on the current page.
   let selectedSessionIds = new Set();
 
+  /**
+   * Renders the limiter progress of a session row.
+   *
+   * @param {{session_id: string}} session - Session stats row.
+   * @returns {string} Cell markup, a dash when the session has no limiter.
+   */
   function sessionLimiterCell(session) {
     const l = limitersBySession.get(session.session_id);
     if (!l) return '<span class="text-fg-subtle">—</span>';
@@ -135,6 +166,12 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     return session?.session_name === session?.session_id ? '' : session.session_name;
   }
 
+  /**
+   * Renders one session as a table row.
+   *
+   * @param {object} session - Session stats row from the API.
+   * @returns {string} Row markup.
+   */
   function buildSessionRow(session) {
     const cacheTok = (session.total_cache_creation_tokens ?? 0) + (session.total_cache_read_tokens ?? 0);
     const inputTok = session.total_input_tokens ?? 0;
@@ -198,6 +235,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
       </tr>`;
   }
 
+  /** Renders the current page of sessions, dropping selections for sessions no longer listed and restoring the inline name edit. */
   function renderSessionRows() {
     const tbody = document.getElementById('session-stats-tbody');
     if (!tbody) return;
@@ -326,6 +364,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     }
   }
 
+  /** Deselects every session and refreshes the selection controls. */
   function clearSelection() {
     selectedSessionIds.clear();
     renderSelectionUI();
@@ -373,6 +412,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     });
   }
 
+  /** Renders the session pagination controls and reloads the sessions when the page or size changes. */
   function renderSessionPagination() {
     const pagination = computePagination(sessionPage, sessionPageSize, sessionTotal);
     sessionPage = pagination.page;
@@ -456,10 +496,6 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   // ── Heatmap ─────────────────────────────────────────────────────────────
   let dailyCosts = [];
 
-  function dayStr(date) {
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-  }
-
   /**
    * Linear-interpolation percentile over an ascending-sorted array.
    * @param {number[]} sorted - Values sorted ascending.
@@ -506,6 +542,12 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     return `(╯°□°)╯`;
   }
 
+  /**
+   * Formats a heatmap cost threshold in dollars.
+   *
+   * @param {number} v - Cost threshold.
+   * @returns {string} Dollar amount with precision that shrinks as the value grows.
+   */
   function fmtThreshold(v) {
     if (v < 0.01) return `$<0.01`;
     if (v < 10) return `$${v.toFixed(2)}`;
@@ -513,6 +555,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     return `$${v.toFixed(0)}`;
   }
 
+  /** Renders the daily cost heatmap, shading each day by its cost percentile. */
   function renderHeatmap() {
     const container = document.getElementById('cost-heatmap');
     if (!container) return;
@@ -581,7 +624,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
       const daysHtml = week.map((date) => {
         if (!date) return '<div class="w-16 h-7"></div>';
 
-        const key = dayStr(date);
+        const key = dateStr(date);
         const isWeekend = date.getDay() === 0 || date.getDay() === 6;
         const cost = costByDay[key] ?? 0;
         const isFuture = date > today;
@@ -672,6 +715,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   // reconnectNav closes any existing SSE connection and opens a new one
   // scoped to the current range.
   let navHandle = null;
+  /** Reopens the live stream for the current range, wiring totals, new-exchange and limiter updates. */
   function reconnectNav() {
     navHandle?.close();
     navHandle = initNav(range, {
@@ -688,6 +732,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   }
 
   // ── Filter switching (SPA-style, no full page reload) ──────────────────────
+  /**
+   * Switches to a range and refreshes the labels, totals and live stream.
+   *
+   * @param {string} newRange - One of RANGES.
+   */
   function applyRange(newRange) {
     range = newRange;
     updateDateLabels();
@@ -695,6 +744,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
     reconnectNav();
   }
 
+  /**
+   * Switches to a different range and records it in the history; unknown or unchanged ranges are ignored.
+   *
+   * @param {string} newRange - One of RANGES.
+   */
   function switchRange(newRange) {
     if (!RANGES.includes(newRange) || newRange === range) return;
     applyRange(newRange);
@@ -715,6 +769,11 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeA
   });
 
   // ── Initial load ──────────────────────────────────────────────────────────
+  /**
+   * Loads totals, daily costs, sessions and limiters for the current range.
+   *
+   * @returns {Promise<void>}
+   */
   async function loadDashboard() {
     await Promise.all([fetchTotals(range), refreshDailyCosts(), refreshSessionStats(), refreshLimiters()]);
   }

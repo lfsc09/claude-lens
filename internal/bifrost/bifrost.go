@@ -26,6 +26,8 @@ func NewClient() *Client {
 	return &Client{http: priceprovider.NewHTTPClient()}
 }
 
+// listModelsResponse is the part of a Bifrost /v1/models answer that carries
+// model ids and pricing.
 type listModelsResponse struct {
 	Data []struct {
 		ID      string `json:"id"`

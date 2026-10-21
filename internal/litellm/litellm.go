@@ -20,6 +20,8 @@ func NewClient() *Client {
 	return &Client{http: priceprovider.NewHTTPClient()}
 }
 
+// modelInfoResponse is the part of a LiteLLM /model/info answer that carries
+// model names and per-token costs.
 type modelInfoResponse struct {
 	Data []struct {
 		ModelName string `json:"model_name"`

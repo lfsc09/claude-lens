@@ -66,6 +66,7 @@ type LimiterNotification struct {
 	AlertSent bool `json:"alert_sent"`
 }
 
+// limiterColumns lists the limiters columns scanLimiter reads, in order.
 const limiterColumns = `id, session_id, limit_amount, current_cost, refresh_value, refresh_unit, refresh_aligned,
 	next_refresh_at, active_start_hour, active_end_hour, is_active, created_at, updated_at`
 
@@ -85,6 +86,7 @@ func SupportsAlignedRefresh(unit string, value int) bool {
 	return slices.Contains(alignedRefreshCombos[unit], value)
 }
 
+// scanLimiter reads one limiters row selected with limiterColumns.
 func scanLimiter(row interface{ Scan(dest ...any) error }) (Limiter, error) {
 	var l Limiter
 	err := scanLimiterInto(row, &l)

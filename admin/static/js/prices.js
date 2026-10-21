@@ -1,11 +1,10 @@
 'use strict';
 
-import { errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, timeAgoHtml, withPending } from './app.js';
+import { errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initEntityDialog, initNavPolling, notifyError, postJSON, runAction, timeAgoHtml, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
   const pricesById = new Map();
-  let editingId = null;
 
   const dialog = document.getElementById('price-dialog');
   const form = document.getElementById('price-form');
@@ -124,17 +123,42 @@ import { errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initNav
   });
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
-  const setDialogMessage = makeDialogMessage('price-dialog-message');
+  const priceDialog = initEntityDialog({
+    dialog,
+    form,
+    titleEl: dialogTitle,
+    submitBtn,
+    messageId: 'price-dialog-message',
+    endpoint: '/api/prices',
+    titles: { add: 'Add a model price', edit: 'Edit model price' },
+    failures: { add: 'Failed to add price.', edit: 'Failed to update price.' },
+    readPayload: () => {
+      const prefix = prefixInput.value.trim();
+      if (!prefix) return null;
+      const data = new FormData(form);
+      const payload = {
+        model_prefix: prefix,
+        input_per_m: parseFloat(data.get('input_per_m')),
+        output_per_m: parseFloat(data.get('output_per_m')),
+        cache_write_per_m: parseFloat(data.get('cache_write_per_m')) || 0,
+        cache_read_per_m: parseFloat(data.get('cache_read_per_m')) || 0,
+      };
+      TIER_FIELDS.forEach(([field]) => {
+        const raw = String(data.get(field) || '').trim();
+        payload[field] = raw ? parseFloat(raw) : null;
+      });
+      return payload;
+    },
+    onReset: () => { prefixInput.disabled = false; },
+    onSaved: loadPrices,
+  });
 
   /**
    * Fills the dialog with a price for editing.
    * @param {object} p - Model price from the API.
    */
   function startEdit(p) {
-    editingId = p.id;
-    dialogTitle.textContent = 'Edit model price';
-    submitBtn.textContent = 'Save changes';
-
+    priceDialog.beginEdit(p.id);
     prefixInput.value = p.model_prefix;
     prefixInput.disabled = true;
     form.querySelector('[name="input_per_m"]').value = p.input_per_m;
@@ -145,46 +169,6 @@ import { errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initNav
       form.querySelector(`[name="${field}"]`).value = p[field] ?? '';
     });
   }
-
-  /** Returns the dialog to its empty "add" state. */
-  function resetDialog() {
-    editingId = null;
-    dialogTitle.textContent = 'Add a model price';
-    submitBtn.textContent = 'Add';
-    prefixInput.disabled = false;
-    setDialogMessage(null, '');
-    form.reset();
-  }
-  dialog.addEventListener('close', resetDialog);
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = new FormData(form);
-    const prefix = String(data.get('model_prefix') || '').trim();
-    if (!prefix) return;
-
-    const payload = {
-      model_prefix: prefix,
-      input_per_m: parseFloat(data.get('input_per_m')),
-      output_per_m: parseFloat(data.get('output_per_m')),
-      cache_write_per_m: parseFloat(data.get('cache_write_per_m')) || 0,
-      cache_read_per_m: parseFloat(data.get('cache_read_per_m')) || 0,
-    };
-    TIER_FIELDS.forEach(([field]) => {
-      const raw = String(data.get(field) || '').trim();
-      payload[field] = raw ? parseFloat(raw) : null;
-    });
-
-    await withPending(submitBtn, async () => {
-      const res = editingId ? await putJSON(`/api/prices/${editingId}`, payload) : await postJSON('/api/prices', payload);
-      if (!res.ok) {
-        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update price.' : 'Failed to add price.'));
-        return;
-      }
-      dialog.close();
-      loadPrices();
-    });
-  });
 
   // ── Sync prices from the active proxy integration ────────────────────
   const syncBtn = document.getElementById('sync-prices-btn');

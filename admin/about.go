@@ -21,8 +21,10 @@ type aboutResponse struct {
 	LogTail      []string             `json:"log_tail"`
 }
 
+// logTailLines is how many trailing log lines the about page returns.
 const logTailLines = 50
 
+// about writes the database table statistics and the tail of the log file.
 func (h *handlers) about(w http.ResponseWriter, r *http.Request) {
 	tables, err := h.db.TableStats(r.Context())
 	if err != nil {

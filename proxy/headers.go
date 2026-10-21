@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// schemePrefix matches a leading auth scheme such as "Bearer ".
 var schemePrefix = regexp.MustCompile(`^[A-Za-z]+\s+`)
 
 // FormatAuthHeader returns token unchanged if it already carries an auth
@@ -17,6 +18,7 @@ func FormatAuthHeader(token string) string {
 	return "Bearer " + trimmed
 }
 
+// sessionIDDisallowed matches every character not allowed in a session id.
 var sessionIDDisallowed = regexp.MustCompile(`[^a-zA-Z0-9_\-]`)
 
 // SanitizeSessionID replaces any character outside [a-zA-Z0-9_-] with "_",

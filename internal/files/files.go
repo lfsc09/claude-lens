@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// claudeSessionID matches the UUID shape of a Claude Code session id.
 var claudeSessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // IsClaudeSessionID reports whether id has the UUID shape of a Claude Code

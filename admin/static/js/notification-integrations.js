@@ -1,6 +1,6 @@
 'use strict';
 
-import { badge, errorRow, esc, extractErrorMessage, getJSON, initNavPolling, makeDialogMessage, postJSON, putJSON, runAction, switchToggle, withPending } from './app.js';
+import { badge, errorRow, esc, getJSON, initEntityDialog, initNavPolling, runAction, switchToggle } from './app.js';
 
 (() => {
   const tbody = document.getElementById('notifications-tbody');
@@ -20,9 +20,6 @@ import { badge, errorRow, esc, extractErrorMessage, getJSON, initNavPolling, mak
     },
   };
   const integrationsById = new Map();
-  let editingId = null;
-
-  const setDialogMessage = makeDialogMessage('notification-dialog-message');
 
   /**
    * Renders one integration as a table row.
@@ -87,11 +84,34 @@ import { badge, errorRow, esc, extractErrorMessage, getJSON, initNavPolling, mak
     else if (e.target.closest('.delete-btn')) deleteIntegration(n);
   });
 
+  const notificationDialog = initEntityDialog({
+    dialog,
+    form,
+    titleEl: dialogTitle,
+    submitBtn,
+    messageId: 'notification-dialog-message',
+    endpoint: '/api/notification-integrations',
+    titles: { add: 'Add an integration', edit: 'Edit integration' },
+    failures: { add: 'Failed to save integration.', edit: 'Failed to save integration.' },
+    readPayload: () => ({
+      name: nameInput.value.trim(),
+      type: typeSelect.value,
+      webhook_url: webhookInput.value.trim(),
+    }),
+    onReset: () => {
+      webhookInput.required = true;
+      webhookCurrent.classList.add('hidden');
+      renderWebhookHelp();
+    },
+    onSaved: loadIntegrations,
+  });
+
   /** Shows the webhook placeholder and hint that belong to the selected integration type. */
   function renderWebhookHelp() {
     const help = WEBHOOK_BY_TYPE[typeSelect.value];
-    webhookInput.placeholder = editingId ? 'Paste a new URL to replace it' : (help?.placeholder ?? '');
-    if (editingId) webhookHint.textContent = 'Leave blank to keep the current URL.';
+    const editing = notificationDialog.editingId != null;
+    webhookInput.placeholder = editing ? 'Paste a new URL to replace it' : (help?.placeholder ?? '');
+    if (editing) webhookHint.textContent = 'Leave blank to keep the current URL.';
     else webhookHint.innerHTML = help?.hint ?? '';
   }
 
@@ -100,9 +120,7 @@ import { badge, errorRow, esc, extractErrorMessage, getJSON, initNavPolling, mak
    * @param {object} n - Notification integration from the API.
    */
   function startEdit(n) {
-    editingId = n.id;
-    dialogTitle.textContent = 'Edit integration';
-    submitBtn.textContent = 'Save changes';
+    notificationDialog.beginEdit(n.id);
     nameInput.value = n.name;
     typeSelect.value = n.type;
     webhookInput.required = false;
@@ -111,40 +129,8 @@ import { badge, errorRow, esc, extractErrorMessage, getJSON, initNavPolling, mak
     renderWebhookHelp();
   }
 
-  /** Returns the dialog to its empty "add" state. */
-  function resetDialog() {
-    editingId = null;
-    dialogTitle.textContent = 'Add an integration';
-    submitBtn.textContent = 'Add';
-    webhookInput.required = true;
-    webhookCurrent.classList.add('hidden');
-    setDialogMessage(null, '');
-    form.reset();
-    renderWebhookHelp();
-  }
-  dialog.addEventListener('close', resetDialog);
   typeSelect.addEventListener('change', renderWebhookHelp);
   renderWebhookHelp();
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const payload = {
-      name: nameInput.value.trim(),
-      type: typeSelect.value,
-      webhook_url: webhookInput.value.trim(),
-    };
-    await withPending(submitBtn, async () => {
-      const res = editingId
-        ? await putJSON(`/api/notification-integrations/${editingId}`, payload)
-        : await postJSON('/api/notification-integrations', payload);
-      if (!res.ok) {
-        setDialogMessage('error', await extractErrorMessage(res, 'Failed to save integration.'));
-        return;
-      }
-      dialog.close();
-      loadIntegrations();
-    });
-  });
 
   loadIntegrations();
   initNavPolling();

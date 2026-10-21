@@ -41,6 +41,7 @@ type Price struct {
 	UpdatedAt               float64  `json:"updated_at"`
 }
 
+// priceColumns lists the model_prices columns scanPrice reads, in order.
 const priceColumns = `id, model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m,
 	input_per_m_above_200k, output_per_m_above_200k, cache_write_per_m_above_200k, cache_read_per_m_above_200k,
 	synced_at, created_at, updated_at`
@@ -54,6 +55,7 @@ var defaultPrices = []Price{
 	{Prefix: "claude-haiku-4-5", InputPerM: 1.00, OutputPerM: 5.00, CacheWritePerM: 1.25, CacheReadPerM: 0.10},
 }
 
+// seedDefaultPrices inserts defaultPrices when model_prices is empty.
 func (db *DB) seedDefaultPrices(ctx context.Context) error {
 	var count int
 	if err := db.sql.QueryRowContext(ctx, "SELECT COUNT(*) FROM model_prices").Scan(&count); err != nil {
@@ -73,6 +75,7 @@ func (db *DB) seedDefaultPrices(ctx context.Context) error {
 	return nil
 }
 
+// scanPrice reads one model_prices row selected with priceColumns.
 func scanPrice(row interface{ Scan(...any) error }) (Price, error) {
 	var p Price
 	err := row.Scan(

@@ -627,6 +627,7 @@ func (db *DB) DeleteExchanges(ctx context.Context, sessionIDs []string) (deleted
 	return deletedRows, affectedSessions, nil
 }
 
+// boolToInt returns 1 for true and 0 for false, SQLite's boolean encoding.
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -634,6 +635,7 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// roundedOrNil returns v rounded to decimals places, or nil when v is NULL.
 func roundedOrNil(v sql.NullFloat64, decimals int) *float64 {
 	if !v.Valid {
 		return nil

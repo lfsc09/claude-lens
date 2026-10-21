@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+// requestTimeout bounds a price fetch; maxResponseBytes caps the size of the
+// body it reads.
 const (
 	requestTimeout   = 10 * time.Second
 	maxResponseBytes = 8 << 20

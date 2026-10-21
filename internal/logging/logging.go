@@ -21,8 +21,7 @@ func FilePath(logDir string) string {
 }
 
 // Setup wires slog's default logger to write to both stderr and a rotating
-// file under cfg.LogDir (5MB per file, 3 backups — matches the old Python
-// RotatingFileHandler settings).
+// file under cfg.LogDir (5MB per file, 3 backups).
 func Setup(cfg config.Config) {
 	fileWriter := &lumberjack.Logger{
 		Filename:   FilePath(cfg.LogDir),

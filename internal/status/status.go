@@ -9,6 +9,7 @@ import "sync"
 // activity.
 type Value string
 
+// The proxy health values.
 const (
 	// OK means the proxy is serving and its most recent forward to
 	// upstream succeeded (or no forward has happened yet since startup).

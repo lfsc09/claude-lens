@@ -21,8 +21,12 @@ type NotificationIntegration struct {
 	UpdatedAt  float64 `json:"updated_at"`
 }
 
+// notificationIntegrationColumns lists the notification_integrations columns
+// scanNotificationIntegration reads, in order.
 const notificationIntegrationColumns = `id, type, name, webhook_url, active, created_at, updated_at`
 
+// scanNotificationIntegration reads one notification_integrations row
+// selected with notificationIntegrationColumns.
 func scanNotificationIntegration(row interface{ Scan(...any) error }) (NotificationIntegration, error) {
 	var n NotificationIntegration
 	var active int

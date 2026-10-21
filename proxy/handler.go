@@ -35,6 +35,8 @@ type exchangeMeta struct {
 	statusCode  int
 }
 
+// metaKey is the request context key under which the exchange metadata is
+// stored.
 type metaKey struct{}
 
 // Handler is an http.Handler that reverse-proxies to the current upstream
@@ -86,6 +88,8 @@ func NewHandler(reg *upstream.Registry, db *database.DB, estimator *pricing.Esti
 	return h
 }
 
+// ServeHTTP rejects a POST that a limiter blocks and forwards every other
+// request to the current upstream.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		sessionID := sessionIDFromRequest(r)
@@ -131,6 +135,8 @@ func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
 	}
 }
 
+// director points r at the current upstream target, injects its credentials
+// and headers, and attaches the exchange metadata to the request context.
 func (h *Handler) director(r *http.Request) {
 	originalPath := r.URL.Path
 
@@ -174,6 +180,8 @@ func (h *Handler) director(r *http.Request) {
 	*r = *r.WithContext(context.WithValue(r.Context(), metaKey{}, meta))
 }
 
+// modifyResponse marks the proxy healthy and wraps the response body so the
+// exchange is saved once it has been fully read.
 func (h *Handler) modifyResponse(resp *http.Response) error {
 	h.status.Set(status.OK)
 
@@ -208,6 +216,8 @@ func (h *Handler) waitForSaves(timeout time.Duration) {
 	}
 }
 
+// saveExchange extracts usage from rawResponse, costs it and stores the
+// exchange.
 func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	ctx := context.Background()
 
@@ -273,6 +283,8 @@ func (h *Handler) saveExchange(meta *exchangeMeta, rawResponse []byte) {
 	h.limitersFresh.Bump()
 }
 
+// errorHandler marks the proxy degraded and answers a failed forward with
+// 502, 504 or 500.
 func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) {
 		return // client disconnected; nothing to write back
@@ -292,6 +304,8 @@ func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error
 	}
 }
 
+// firstNonEmpty returns the first non-empty string in values, or "" when all
+// are empty.
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if v != "" {

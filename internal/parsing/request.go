@@ -8,6 +8,7 @@ import (
 	"github.com/lfsc09/claude-lens/internal/modelname"
 )
 
+// requestBody is the part of an API request body claude-lens reads.
 type requestBody struct {
 	Stream bool   `json:"stream"`
 	Model  string `json:"model"`

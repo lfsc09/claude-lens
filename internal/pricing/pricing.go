@@ -156,10 +156,12 @@ func hasModelPrefix(model, prefix string) bool {
 	return !isAlphanumeric(prefix[len(prefix)-1]) || !isAlphanumeric(model[len(prefix)])
 }
 
+// isAlphanumeric reports whether c is an ASCII letter or digit.
 func isAlphanumeric(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
+// round6 rounds f to six decimal places.
 func round6(f float64) float64 {
 	const mult = 1e6
 	return math.Round(f*mult) / mult

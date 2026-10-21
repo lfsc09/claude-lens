@@ -4,6 +4,8 @@ package modelname
 
 import "strings"
 
+// anthropicVendorMarker precedes the model name in a cloud-provider id;
+// bedrockVersionSuffix is Bedrock's model version suffix.
 const (
 	anthropicVendorMarker = "anthropic."
 	bedrockVersionSuffix  = "-v1:0"
