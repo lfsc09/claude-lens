@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/lfsc09/claude-lens/internal/modelname"
 	"github.com/lfsc09/claude-lens/internal/priceprovider"
 )
 
@@ -37,30 +38,11 @@ type listModelsResponse struct {
 	} `json:"data"`
 }
 
-const (
-	anthropicVendorMarker = "anthropic."
-	bedrockVersionSuffix  = "-v1:0"
-)
-
 // claudeModelName converts a Bifrost model id to the plain Claude model name
-// Claude Code sends, dropping the leading "<provider>/", any
-// "<region>.anthropic." vendor prefix and Bedrock's "-v1:0" version suffix:
-// "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0" and
-// "anthropic/claude-haiku-4-5-20251001" both yield
-// "claude-haiku-4-5-20251001". It reports false for any non-Claude model.
+// Claude Code sends. It reports false for any non-Claude model.
 func claudeModelName(id string) (string, bool) {
-	name := id
-	if _, rest, found := strings.Cut(id, "/"); found {
-		name = rest
-	}
-	if i := strings.LastIndex(name, anthropicVendorMarker); i >= 0 {
-		name = name[i+len(anthropicVendorMarker):]
-	}
-	name = strings.TrimSuffix(name, bedrockVersionSuffix)
-	if !strings.HasPrefix(name, "claude") {
-		return "", false
-	}
-	return name, true
+	name := modelname.Normalize(id)
+	return name, strings.HasPrefix(name, "claude")
 }
 
 // FetchModelPrices queries the host root of baseURL for /v1/models and
@@ -84,6 +66,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 
 	prices := make([]priceprovider.ModelPrice, 0, len(parsed.Data))
 	seen := make(map[string]struct{}, len(parsed.Data))
+	claudeModels := 0
 	for _, m := range parsed.Data {
 		modelName, ok := claudeModelName(m.ID)
 		if !ok {
@@ -93,6 +76,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 			continue
 		}
 		seen[modelName] = struct{}{}
+		claudeModels++
 
 		price, err := modelPrice(modelName, m.Pricing.Prompt, m.Pricing.Completion, m.Pricing.InputCacheWrite, m.Pricing.InputCacheRead)
 		if err != nil {
@@ -103,6 +87,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 			prices = append(prices, price)
 		}
 	}
+	slog.Debug("bifrost models fetched", "listed", len(parsed.Data), "claude", claudeModels, "priced", len(prices))
 	return prices, nil
 }
 

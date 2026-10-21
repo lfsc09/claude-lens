@@ -129,13 +129,45 @@ func TestSync_NonLiteLLMUpstreamReturnsErrorWithoutSideEffects(t *testing.T) {
 	}
 }
 
+func TestSync_NoPricesIsErrNoPricesAndRecordedWithoutMarkingSynced(t *testing.T) {
+	emptySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"model_name":"m","model_info":{}}]}`))
+	}))
+	defer emptySrv.Close()
+
+	db := openTestDB(t)
+	est := pricing.New(db)
+	if err := est.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	_, err := Sync(context.Background(), db, est, testFetchers, activateLiteLLM(t, db, emptySrv.URL))
+	if !errors.Is(err, ErrNoPrices) {
+		t.Fatalf("got %v, want an error wrapping ErrNoPrices", err)
+	}
+	if !errors.Is(err, ErrUpstreamUnavailable) {
+		t.Errorf("got %v, want ErrNoPrices to also wrap ErrUpstreamUnavailable so the admin API answers 502", err)
+	}
+
+	got, err := db.GetActiveProxyIntegration(context.Background())
+	if err != nil || got == nil {
+		t.Fatalf("GetActiveProxyIntegration: %v, %v", got, err)
+	}
+	if got.PriceSyncError == "" {
+		t.Error("the empty sync wasn't recorded in PriceSyncError")
+	}
+	if got.PriceSyncedAt != 0 {
+		t.Errorf("PriceSyncedAt = %v, want 0 — a sync that priced nothing isn't a successful sync", got.PriceSyncedAt)
+	}
+}
+
 func TestSync_SuccessClearsAPriorFailure(t *testing.T) {
 	notLiteLLM := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
 	defer notLiteLLM.Close()
 	litellmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[]}`))
+		w.Write([]byte(`{"data":[{"model_name":"m","model_info":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}]}`))
 	}))
 	defer litellmSrv.Close()
 
@@ -263,7 +295,7 @@ func TestRunLoop_SyncsImmediatelyWhenDueThenStopsOnCancel(t *testing.T) {
 	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		w.Write([]byte(`{"data":[]}`))
+		w.Write([]byte(`{"data":[{"model_name":"m","model_info":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}]}`))
 	}))
 	defer srv.Close()
 

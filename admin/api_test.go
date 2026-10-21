@@ -705,6 +705,20 @@ func TestSyncProxyPrices_UpstreamWithoutPriceRouteIsBadGateway(t *testing.T) {
 	}
 }
 
+func TestSyncProxyPrices_GatewayWithoutPricesIsBadGateway(t *testing.T) {
+	unpriced := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"bedrock/us.anthropic.claude-sonnet-5","name":"x"}]}`))
+	}))
+	defer unpriced.Close()
+
+	s, _ := newTestServer(t)
+	id := activateProxy(t, s, "bifrost", unpriced.URL, "sk-test")
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d when the gateway reports no prices: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
+	}
+}
+
 func TestSyncProxyPrices_InternalErrorIsNot502(t *testing.T) {
 	litellmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[{"model_name":"m","model_info":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002}}]}`))

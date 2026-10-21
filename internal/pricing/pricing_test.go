@@ -298,3 +298,55 @@ func mustListPrices(t *testing.T, db *database.DB) []database.Price {
 	}
 	return prices
 }
+
+func TestEstimateCosts_MatchesOnNameBoundary(t *testing.T) {
+	db := openTestDB(t)
+	clearPrices(t, db)
+	createPrice(t, db, database.Price{Prefix: "claude-sonnet-1", InputPerM: 1.00, OutputPerM: 1.00, CreatedAt: 1, UpdatedAt: 1})
+	createPrice(t, db, database.Price{Prefix: "claude-opus-", InputPerM: 5.00, OutputPerM: 5.00, CreatedAt: 1, UpdatedAt: 1})
+
+	e := New(db)
+	if err := e.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"claude-sonnet-1", true},
+		{"claude-sonnet-1-20260101", true},
+		{"claude-sonnet-1[1m]", true},
+		{"claude-sonnet-1@20260101", true},
+		{"claude-sonnet-10-1", false},
+		{"claude-sonnet-1x", false},
+		{"claude-opus-5", true},
+	}
+	for _, tt := range tests {
+		if _, ok := e.EstimateCosts(tt.model, 1, 1, 0, 0); ok != tt.want {
+			t.Errorf("EstimateCosts(%q) matched = %v, want %v", tt.model, ok, tt.want)
+		}
+	}
+}
+
+func TestEstimateCosts_NormalizesGatewayModelNames(t *testing.T) {
+	db := openTestDB(t)
+	clearPrices(t, db)
+	createPrice(t, db, database.Price{Prefix: "claude-sonnet-5-5", InputPerM: 2.20, OutputPerM: 11.00, CreatedAt: 1, UpdatedAt: 1})
+	createPrice(t, db, database.Price{Prefix: "claude-haiku-4-5", InputPerM: 1.10, OutputPerM: 5.50, CreatedAt: 1, UpdatedAt: 1})
+
+	e := New(db)
+	if err := e.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	for _, model := range []string{
+		"us.anthropic.claude-sonnet-5-5",
+		"bedrock/us.anthropic.claude-sonnet-5-5",
+		"eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+	} {
+		if _, ok := e.EstimateCosts(model, 1, 1, 0, 0); !ok {
+			t.Errorf("EstimateCosts(%q) found no price, want a match after normalization", model)
+		}
+	}
+}

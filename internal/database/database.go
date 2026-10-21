@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS model_prices (
     output_per_m_above_200k      REAL,
     cache_write_per_m_above_200k REAL,
     cache_read_per_m_above_200k  REAL,
+    synced_at                    REAL,
     created_at                   REAL    NOT NULL,
     updated_at                   REAL    NOT NULL
 );
@@ -143,6 +144,18 @@ CREATE TABLE IF NOT EXISTS limiter_notifications (
     CHECK (request_cost_usd IS NULL OR request_cost_usd > 0)
 );
 `
+
+// columnMigration adds a nullable or defaulted column to a table that
+// databases created before the column existed lack.
+type columnMigration struct {
+	table, column, definition string
+}
+
+// columnMigrations lists every column added to the schema after its
+// schemaVersion was stamped, in the order they were introduced.
+var columnMigrations = []columnMigration{
+	{table: "model_prices", column: "synced_at", definition: "REAL"},
+}
 
 // schemaVersion is stored in the database's user_version pragma and must
 // match for an existing database to be opened.
@@ -232,10 +245,61 @@ func applySchema(ctx context.Context, sqlDB *sql.DB, path string) error {
 	if _, err := sqlDB.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrateColumns(ctx, sqlDB); err != nil {
+		return err
+	}
 	if _, err := sqlDB.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 		return fmt.Errorf("stamp schema version: %w", err)
 	}
 	return nil
+}
+
+// migrateColumns adds each of columnMigrations' columns that the existing
+// tables lack, in one transaction. It is idempotent: columns already present
+// are left alone, so it is a no-op on a current database.
+func migrateColumns(ctx context.Context, sqlDB *sql.DB) error {
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin column migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	existing := make(map[string]map[string]struct{})
+	for _, m := range columnMigrations {
+		columns, loaded := existing[m.table]
+		if !loaded {
+			if columns, err = tableColumns(ctx, tx, m.table); err != nil {
+				return err
+			}
+			existing[m.table] = columns
+		}
+		if _, ok := columns[m.column]; ok {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, m.table, m.column, m.definition)); err != nil {
+			return fmt.Errorf("add column %s.%s: %w", m.table, m.column, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// tableColumns returns the set of column names of table.
+func tableColumns(ctx context.Context, tx *sql.Tx, table string) (map[string]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, fmt.Errorf("inspect table %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	columns := make(map[string]struct{})
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("inspect table %s: %w", table, err)
+		}
+		columns[name] = struct{}{}
+	}
+	return columns, rows.Err()
 }
 
 // Close closes the underlying connection pool.

@@ -1,6 +1,6 @@
 'use strict';
 
-import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, withPending } from './app.js';
+import { badge, errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
@@ -38,14 +38,32 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
   }
 
   /**
+   * Renders whether the active proxy's last price sync reported a price.
+   * @param {object} p - Model price from the API.
+   * @param {?object} proxy - Active proxy integration, or null when none is active.
+   * @returns {string} Badge markup, or '' when no proxy is active.
+   */
+  function syncBadgeHtml(p, proxy) {
+    if (!proxy) return '';
+    if (p.synced_at != null && p.synced_at >= proxy.price_synced_at) {
+      return `<span title="Reported by the last price sync at ${fmtTime(p.synced_at)}">${badge('emerald', 'Synced', 'rounded-full text-xs')}</span>`;
+    }
+    return `<span title="The last price sync did not report this model">${badge('muted', 'Not in last sync', 'rounded-full text-xs')}</span>`;
+  }
+
+  /**
    * Renders one model price as a card.
    * @param {object} p - Model price from the API.
+   * @param {?object} proxy - Active proxy integration, or null when none is active.
    * @returns {string} Card markup.
    */
-  function buildCard(p) {
+  function buildCard(p, proxy) {
     return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border border-line" data-id="${p.id}">
       <div class="flex items-start justify-between gap-2">
-        <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
+          ${syncBadgeHtml(p, proxy)}
+        </div>
         <div class="shrink-0 flex items-center gap-2">
           <button type="button" command="show-modal" commandfor="price-dialog" class="edit-btn text-sm text-fg-subtle hover:text-fg">Edit</button>
           <button type="button" class="delete-btn text-sm text-fg-subtle hover:text-red-600 dark:hover:text-red-400">Delete</button>
@@ -77,11 +95,25 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
     if (await runAction(fetch(`/api/prices/${p.id}`, { method: 'DELETE' }), 'Failed to delete price.')) loadPrices();
   }
 
+  /**
+   * Fetches the active proxy integration.
+   * @returns {Promise<?object>} The active integration, or null when none is active or the fetch fails.
+   */
+  async function loadActiveProxy() {
+    try {
+      const integrations = await getJSON('/api/proxy-integrations');
+      return integrations.find((i) => i.active) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Fetches the prices and renders them, or an error when the fetch fails. */
   async function loadPrices() {
     let prices;
+    let proxy;
     try {
-      prices = await getJSON('/api/prices');
+      [prices, proxy] = await Promise.all([getJSON('/api/prices'), loadActiveProxy()]);
     } catch (err) {
       grid.innerHTML = errorBlock(err.message);
       return;
@@ -94,7 +126,7 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
     }
 
     prices.forEach((p) => pricesById.set(String(p.id), p));
-    grid.innerHTML = prices.map(buildCard).join('');
+    grid.innerHTML = prices.map((p) => buildCard(p, proxy)).join('');
   }
 
   grid.addEventListener('click', (e) => {

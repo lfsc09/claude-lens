@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/lfsc09/claude-lens/internal/modelname"
 	"github.com/lfsc09/claude-lens/internal/priceprovider"
 )
 
@@ -37,7 +38,7 @@ type modelInfoResponse struct {
 
 // FetchModelPrices queries baseURL's /model/info endpoint and returns
 // per-million-token rates for every model it reports with an input and
-// output price. A non-200 answer is returned as a *priceprovider.StatusError
+// output price, under its normalized name (see modelname.Normalize). A non-200 answer is returned as a *priceprovider.StatusError
 // noting the upstream may not be a LiteLLM proxy.
 func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string) ([]priceprovider.ModelPrice, error) {
 	var parsed modelInfoResponse
@@ -51,7 +52,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 			continue
 		}
 		price := priceprovider.ModelPrice{
-			ModelName:               m.ModelName,
+			ModelName:               modelname.Normalize(m.ModelName),
 			InputPerM:               priceprovider.PerM(m.ModelInfo.InputCostPerToken),
 			OutputPerM:              priceprovider.PerM(m.ModelInfo.OutputCostPerToken),
 			CacheWritePerM:          priceprovider.PerM(m.ModelInfo.CacheCreationInputTokenCost),
