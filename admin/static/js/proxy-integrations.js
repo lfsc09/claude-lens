@@ -87,7 +87,7 @@ import { badge, errorBlock, esc, extractErrorMessage, getJSON, initNavPolling, p
               <input type="number" name="price_sync_interval_minutes" min="0" step="1" required value="${p.price_sync_interval_minutes}" aria-label="Price sync interval in minutes" class="w-20 ${FIELD_BASE}">
               min <span class="text-xs text-fg-subtle">(0 = off)</span>
             </label>
-            <p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-subtle'} text-xs">${syncStatus(p)}</p>
+            ${p.active ? `<p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-subtle'} text-xs">${syncStatus(p)}</p>` : ''}
           </div>
           <div class="flex items-center gap-3">
             <p class="card-message hidden text-xs" role="alert"></p>

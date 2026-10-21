@@ -1,6 +1,6 @@
 'use strict';
 
-import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, timeAgoHtml, withPending } from './app.js';
+import { errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, timeAgoHtml, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
@@ -38,17 +38,13 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, 
   }
 
   /**
-   * Renders whether the active proxy's last price sync reported a price.
+   * Tells whether the active proxy's last price sync reported a price.
    * @param {object} p - Model price from the API.
    * @param {?object} proxy - Active proxy integration, or null when none is active.
-   * @returns {string} Badge markup, or '' when no proxy is active.
+   * @returns {boolean} True when the price was reported by the last sync.
    */
-  function syncBadgeHtml(p, proxy) {
-    if (!proxy) return '';
-    if (p.synced_at != null && p.synced_at >= proxy.price_synced_at) {
-      return badge('emerald', `Synced ${timeAgoHtml(p.synced_at)}`, 'rounded-full text-xs');
-    }
-    return `<span title="The last price sync did not report this model">${badge('muted', 'Not in last sync', 'rounded-full text-xs')}</span>`;
+  function isSynced(p, proxy) {
+    return !!proxy && p.synced_at != null && p.synced_at >= proxy.price_synced_at;
   }
 
   /**
@@ -58,12 +54,10 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, 
    * @returns {string} Card markup.
    */
   function buildCard(p, proxy) {
-    return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border border-line" data-id="${p.id}">
+    const synced = isSynced(p, proxy);
+    return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border ${synced ? 'border-emerald-600 dark:border-emerald-500' : 'border-line'}" data-id="${p.id}"${synced ? ' title="Reported by the last price sync"' : ''}>
       <div class="flex items-start justify-between gap-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
-          ${syncBadgeHtml(p, proxy)}
-        </div>
+        <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
         <div class="shrink-0 flex items-center gap-2">
           <button type="button" command="show-modal" commandfor="price-dialog" class="edit-btn text-sm text-fg-subtle hover:text-fg">Edit</button>
           <button type="button" class="delete-btn text-sm text-fg-subtle hover:text-red-600 dark:hover:text-red-400">Delete</button>
@@ -93,19 +87,6 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, 
   async function deletePrice(p) {
     if (!confirm(`Delete the price for ${p.model_prefix}?`)) return;
     if (await runAction(fetch(`/api/prices/${p.id}`, { method: 'DELETE' }), 'Failed to delete price.')) loadPrices();
-  }
-
-  /**
-   * Fetches the active proxy integration.
-   * @returns {Promise<?object>} The active integration, or null when none is active or the fetch fails.
-   */
-  async function loadActiveProxy() {
-    try {
-      const integrations = await getJSON('/api/proxy-integrations');
-      return integrations.find((i) => i.active) ?? null;
-    } catch {
-      return null;
-    }
   }
 
   /** Fetches the prices and renders them, or an error when the fetch fails. */
@@ -211,12 +192,13 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, 
   const syncMessageEl = document.getElementById('sync-message');
 
   /**
-   * Shows a status line next to the sync button.
+   * Shows the outcome of a sync next to the sync button.
    * @param {string} text - Message to show; empty clears it.
    * @param {boolean} [isError=false] - Whether to style it as an error.
    */
   function setSyncMessage(text, isError = false) {
     syncMessageEl.textContent = text;
+    syncMessageEl.classList.toggle('hidden', !text);
     syncMessageEl.classList.toggle('text-red-600', isError);
     syncMessageEl.classList.toggle('dark:text-red-400', isError);
     syncMessageEl.classList.toggle('text-fg-muted', !isError);
@@ -244,9 +226,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, 
       ? 'Price sync needs an active proxy integration.'
       : proxy.price_sync_error && `${proxy.name} sync unavailable: ${proxy.price_sync_error}${lastSynced}`;
     syncBtn.disabled = !!reason;
-    if (reason) syncBtnWrap.dataset.tip = esc(reason);
-    else syncBtnWrap.removeAttribute('data-tip');
-    setSyncMessage(reason ? '' : `Syncing from ${proxy.name}${lastSynced}.`);
+    syncBtnWrap.dataset.tip = esc(reason || `Syncing from ${proxy.name}${lastSynced}.`);
     return proxy;
   }
 
@@ -269,7 +249,8 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, 
       loadPrices();
     });
     await refreshSyncAvailability();
-    if (!(outcome.isError && syncBtn.disabled)) setSyncMessage(outcome.text, outcome.isError);
+    if (outcome.isError && syncBtn.disabled) setSyncMessage('');
+    else setSyncMessage(outcome.text, outcome.isError);
   });
 
   loadPrices();

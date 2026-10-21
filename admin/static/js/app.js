@@ -375,14 +375,14 @@ export function fmtAgo(ts) {
 }
 
 /**
- * Renders a timestamp as relative text with the exact time as its tooltip;
+ * Renders a timestamp as relative text with the exact time as its [data-tip] tooltip;
  * the text is kept current by the page-wide ticker below.
  * @param {?number} ts - Unix timestamp in seconds.
  * @returns {string} `<time>` markup, or '—' when ts is empty.
  */
 export function timeAgoHtml(ts) {
   if (!ts) return '—';
-  return `<time datetime="${new Date(ts * 1000).toISOString()}" data-ts="${ts}" title="${fmtTime(ts)}">${fmtAgo(ts)}</time>`;
+  return `<time datetime="${new Date(ts * 1000).toISOString()}" data-ts="${ts}" data-tip="${fmtTime(ts)}">${fmtAgo(ts)}</time>`;
 }
 
 const RELATIVE_TICK_MS = 30_000;
