@@ -77,7 +77,7 @@ func NewHandler(reg *upstream.Registry, db *database.DB, estimator *pricing.Esti
 	}
 
 	h.rp = &httputil.ReverseProxy{
-		Director:       h.director,
+		Rewrite:        h.rewrite,
 		ModifyResponse: h.modifyResponse,
 		ErrorHandler:   h.errorHandler,
 		Transport:      transport,
@@ -135,49 +135,53 @@ func writeLimiterBlocked(w http.ResponseWriter, by *database.Limiter) {
 	}
 }
 
-// director points r at the current upstream target, injects its credentials
-// and headers, and attaches the exchange metadata to the request context.
-func (h *Handler) director(r *http.Request) {
-	originalPath := r.URL.Path
+// rewrite points the outgoing request at the current upstream target,
+// injects its credentials and headers, and attaches the exchange metadata to
+// the outgoing request context.
+func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
+	in, out := pr.In, pr.Out
+	originalPath := in.URL.Path
+
+	pr.SetXForwarded()
 
 	target := h.upstream.Current()
-	r.URL.Scheme = target.BaseURL.Scheme
-	r.URL.Host = target.BaseURL.Host
-	r.URL.Path = target.BaseURL.Path + originalPath
-	r.Host = target.BaseURL.Host
+	out.URL.Scheme = target.BaseURL.Scheme
+	out.URL.Host = target.BaseURL.Host
+	out.URL.Path = target.BaseURL.Path + originalPath
+	out.Host = target.BaseURL.Host
 
 	// Dropping Accept-Encoding lets http.Transport negotiate gzip itself and
 	// decompress it, so the recorded body is always plain text.
-	r.Header.Del("Accept-Encoding")
+	out.Header.Del("Accept-Encoding")
 
 	if target.AuthToken != "" {
-		r.Header.Set("Authorization", FormatAuthHeader(target.AuthToken))
+		out.Header.Set("Authorization", FormatAuthHeader(target.AuthToken))
 	}
 	for name, value := range target.Headers {
-		r.Header.Set(name, value)
+		out.Header.Set(name, value)
 	}
 
 	meta := &exchangeMeta{path: originalPath}
 
-	if r.Method == http.MethodPost {
+	if out.Method == http.MethodPost {
 		meta.intercept = true
-		meta.sessionID = sessionIDFromRequest(r)
+		meta.sessionID = sessionIDFromRequest(out)
 		meta.createdAt = float64(time.Now().UnixNano()) / 1e9
 
-		body, err := io.ReadAll(r.Body)
-		r.Body.Close()
+		body, err := io.ReadAll(in.Body)
+		in.Body.Close()
 		if err != nil {
 			h.logger.Error("failed to read request body, forwarding without interception", "error", err, "path", originalPath)
 			meta.intercept = false
-			r.Body = http.NoBody
+			out.Body = http.NoBody
 		} else {
-			r.Body = io.NopCloser(bytes.NewReader(body))
+			out.Body = io.NopCloser(bytes.NewReader(body))
 			meta.rawRequest = string(body)
 			meta.isStreaming, meta.model = parsing.ExtractRequestFields(body)
 		}
 	}
 
-	*r = *r.WithContext(context.WithValue(r.Context(), metaKey{}, meta))
+	pr.Out = out.WithContext(context.WithValue(out.Context(), metaKey{}, meta))
 }
 
 // modifyResponse marks the proxy healthy and wraps the response body so the
