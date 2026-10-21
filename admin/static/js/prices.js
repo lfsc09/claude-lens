@@ -1,6 +1,6 @@
 'use strict';
 
-import { badge, errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, withPending } from './app.js';
+import { badge, errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, timeAgoHtml, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
@@ -46,7 +46,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON,
   function syncBadgeHtml(p, proxy) {
     if (!proxy) return '';
     if (p.synced_at != null && p.synced_at >= proxy.price_synced_at) {
-      return `<span title="Reported by the last price sync at ${fmtTime(p.synced_at)}">${badge('emerald', 'Synced', 'rounded-full text-xs')}</span>`;
+      return badge('emerald', `Synced ${timeAgoHtml(p.synced_at)}`, 'rounded-full text-xs');
     }
     return `<span title="The last price sync did not report this model">${badge('muted', 'Not in last sync', 'rounded-full text-xs')}</span>`;
   }
@@ -80,7 +80,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON,
       ${above200kSectionHtml(p)}
       <div class="flex-1 flex items-end">
         <div class="flex justify-end w-full pt-3 border-t border-line">
-          <p class="text-xs text-fg-subtle">Updated ${fmtTime(p.updated_at)}</p>
+          <p class="text-xs text-fg-subtle">Updated ${timeAgoHtml(p.updated_at)}</p>
         </div>
       </div>
     </article>`;
@@ -239,7 +239,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON,
   /** Enables the sync button only while an active proxy integration can sync; otherwise its wrapper shows a tooltip with the reason. */
   async function refreshSyncAvailability() {
     const proxy = await loadActiveProxy();
-    const lastSynced = proxy?.price_synced_at ? ` (last synced ${fmtTime(proxy.price_synced_at)})` : '';
+    const lastSynced = proxy?.price_synced_at ? ` (last synced ${fmtAgo(proxy.price_synced_at)})` : '';
     const reason = !proxy
       ? 'Price sync needs an active proxy integration.'
       : proxy.price_sync_error && `${proxy.name} sync unavailable: ${proxy.price_sync_error}${lastSynced}`;

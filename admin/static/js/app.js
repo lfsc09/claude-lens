@@ -347,6 +347,52 @@ export function fmtTime(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+const relativeTimeFormat = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+
+const RELATIVE_UNITS = [
+  ['second', 60],
+  ['minute', 60],
+  ['hour', 24],
+  ['day', 30],
+  ['month', 12],
+  ['year', Infinity],
+];
+
+/**
+ * Human-readable time elapsed since a Unix-seconds timestamp, e.g.
+ * "5 minutes ago", "yesterday".
+ * @param {?number} ts - Unix timestamp in seconds.
+ * @returns {string} Relative time, "just now" under a minute, or '—' when ts is empty.
+ */
+export function fmtAgo(ts) {
+  if (!ts) return '—';
+  let value = ts - Date.now() / 1000;
+  if (Math.abs(value) < 60) return 'just now';
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(value) < size) return relativeTimeFormat.format(Math.round(value), unit);
+    value /= size;
+  }
+}
+
+/**
+ * Renders a timestamp as relative text with the exact time as its tooltip;
+ * the text is kept current by the page-wide ticker below.
+ * @param {?number} ts - Unix timestamp in seconds.
+ * @returns {string} `<time>` markup, or '—' when ts is empty.
+ */
+export function timeAgoHtml(ts) {
+  if (!ts) return '—';
+  return `<time datetime="${new Date(ts * 1000).toISOString()}" data-ts="${ts}" title="${fmtTime(ts)}">${fmtAgo(ts)}</time>`;
+}
+
+const RELATIVE_TICK_MS = 30_000;
+
+setInterval(() => {
+  document.querySelectorAll('time[data-ts]').forEach((el) => {
+    el.textContent = fmtAgo(Number(el.dataset.ts));
+  });
+}, RELATIVE_TICK_MS);
+
 /**
  * Human-readable time remaining until a Unix-seconds timestamp, e.g.
  * "in 3 mins", "in 2 hrs", "in 5 days".

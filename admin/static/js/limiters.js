@@ -1,6 +1,6 @@
 'use strict';
 
-import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fmtCountdown, fmtSessionId, fmtTime, getJSON, initNav, makeDialogMessage, notifyError, pad, postJSON, progressBar, putJSON, runAction, switchToggle, withPending } from './app.js';
+import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fmtCountdown, fmtSessionId, getJSON, initNav, makeDialogMessage, notifyError, pad, postJSON, progressBar, putJSON, runAction, switchToggle, timeAgoHtml, withPending } from './app.js';
 
 (() => {
   const tbody = document.getElementById('limiters-tbody');
@@ -210,7 +210,7 @@ import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fm
       </td>
       <td class="whitespace-nowrap px-4 py-2">${fmtActivePeriod(l)}</td>
       <td class="px-4 py-2">${switchToggle(l.is_active, 'Toggle limiter active')}</td>
-      <td class="text-fg-muted whitespace-nowrap px-4 py-2">${fmtTime(l.updated_at)}</td>
+      <td class="text-fg-muted whitespace-nowrap px-4 py-2">${timeAgoHtml(l.updated_at)}</td>
       <td class="text-right whitespace-nowrap px-4 py-2">
         <button type="button" command="show-modal" commandfor="limiter-dialog" class="edit-btn text-sm text-fg-subtle mr-3 hover:text-fg">Edit</button>
         <button type="button" class="delete-btn text-sm text-fg-subtle hover:text-red-600 dark:hover:text-red-400">Delete</button>

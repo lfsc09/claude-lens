@@ -1,6 +1,6 @@
 'use strict';
 
-import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON, withPending } from './app.js';
+import { pad, esc, fmtTokens, fmtCost, fmtCountdown, timeAgoHtml, addCost, makeAbortable, initNav, progressBar, fmtSessionId, fmtActivePeriod, computePagination, renderPaginationControls, wirePaginationNav, tokensTooltip, costTooltip, extractErrorMessage, makeDialogMessage, postJSON, withPending } from './app.js';
 
 (() => {
   const RANGES = ['today', 'this-week', 'this-month', 'last-7-days', 'last-15-days', 'last-30-days', 'last-60-days'];
@@ -193,7 +193,7 @@ import { pad, esc, fmtTokens, fmtCost, fmtCountdown, fmtTime, addCost, makeAbort
         ${costStr}
         <p class="text-xs text-fg-subtle">avg ${avgCostStr}</p>
       </td>
-      <td class="text-fg-subtle whitespace-nowrap px-4 py-2">${fmtTime(session.last_updated)}</td>
+      <td class="text-fg-subtle whitespace-nowrap px-4 py-2">${timeAgoHtml(session.last_updated)}</td>
       <td class="w-36 whitespace-nowrap text-right px-4 py-2">${sessionLimiterCell(session)}</td>
       </tr>`;
   }
