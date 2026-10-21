@@ -1,6 +1,6 @@
 'use strict';
 
-import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, isDarkTheme, makeAbortable, computePagination, renderPaginationControls, wirePaginationNav } from './app.js';
+import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractErrorMessage, initNav, isDarkTheme, makeAbortable, computePagination, renderPaginationControls, wirePaginationNav, setBannerError } from './app.js';
 
 (() => {
   const DEFAULT_PAGE_SIZE = 50;
@@ -25,18 +25,24 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
   if (searchSize) searchSize.value = pageSize;
   if (searchClear) searchClear.classList.toggle('hidden', !q);
 
+  /**
+   * Shows a filter error in place of the filter help text, or restores the help when the message is empty.
+   *
+   * @param {string} msg - Error text; empty restores the help.
+   */
   function showFilterError(msg) {
-    const help = document.getElementById('filter-help');
+    document.getElementById('filter-help')?.classList.toggle('hidden', !!msg);
     const err = document.getElementById('filter-error');
-    if (msg) {
-      if (help) help.classList.add('hidden');
-      if (err) { err.textContent = msg; err.classList.remove('hidden'); }
-    } else {
-      if (help) help.classList.remove('hidden');
-      if (err) err.classList.add('hidden');
-    }
+    if (err) setBannerError(err, msg);
   }
 
+  /**
+   * Navigates to the exchanges list at a page, size and filter query.
+   *
+   * @param {number} page - Page number.
+   * @param {number} size - Page size.
+   * @param {string} query - Filter query; empty for none.
+   */
   function navigate(page, size, query) {
     const searchParams = new URLSearchParams();
     if (query) searchParams.set('q', query);
@@ -46,6 +52,12 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
   }
 
   // ── Table ───────────────────────────────────────────────────────────────
+  /**
+   * Renders one exchange as a table row.
+   *
+   * @param {object} row - Exchange list row from the API.
+   * @returns {string} Row markup.
+   */
   function buildRow(row) {
     const label = esc(row.session_name);
     const modelLabel = esc(row.model || '—');
@@ -118,6 +130,14 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
     return (data.rows || []).toReversed();
   }
 
+  /**
+   * Draws a multi-series line chart of the rows in an SVG, or an empty-state label when there are no rows.
+   *
+   * @param {SVGSVGElement} svg - Target chart element, cleared before drawing.
+   * @param {object[]} rows - Exchange rows, one point per row.
+   * @param {{label: string, color: string, width?: number, get: function(object): number}[]} series - Lines to draw.
+   * @param {{fmtY?: function(number): string, fmtX?: function(object): string}} [opts] - Axis label formatters.
+   */
   function renderLineChart(svg, rows, series, opts = {}) {
     const W = 1000, H = 260;
     const marginLeft = 46, marginRight = 12, marginTop = 10, marginBottom = 24;
@@ -208,6 +228,12 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
     });
   }
 
+  /**
+   * Renders a color legend for the chart series.
+   *
+   * @param {HTMLElement} container - Legend element.
+   * @param {{label: string, color: string}[]} series - Series to list.
+   */
   function renderChartLegend(container, series) {
     container.innerHTML = series.map((s) =>
       `<span class="inline-flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${s.color}"></span>${esc(s.label)}</span>`
@@ -219,10 +245,20 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
   // each pair), so hue alone tells cache lines apart from non-cache ones.
   // Total stays black on white and flips to white on dark canvas, so it
   // never uses the theme-fixed palette shared by the other series.
+  /**
+   * Returns the color of the total line, which contrasts with the current theme.
+   *
+   * @returns {string} Hex color.
+   */
   function totalLineColor() {
     return isDarkTheme() ? '#ffffff' : '#111827';
   }
 
+  /**
+   * Builds the cost chart series for the current theme.
+   *
+   * @returns {object[]} Series definitions.
+   */
   function buildCostSeries() {
     return [
       { label: 'Total', color: totalLineColor(), width: 2, get: (r) => r.cost },
@@ -233,6 +269,11 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
     ];
   }
 
+  /**
+   * Builds the token chart series for the current theme.
+   *
+   * @returns {object[]} Series definitions.
+   */
   function buildTokensSeries() {
     return [
       { label: 'Total', color: totalLineColor(), width: 2, get: (r) => r.total_tokens },
@@ -245,6 +286,11 @@ import { esc, costTooltip, tokensTooltip, fmtCost, fmtTime, fmtTokens, extractEr
 
   let lastRows = [];
 
+  /**
+   * Renders the cost and token charts with their legends.
+   *
+   * @param {object[]} rows - Exchange rows to plot.
+   */
   function renderCharts(rows) {
     const costSeries = buildCostSeries();
     const tokensSeries = buildTokensSeries();

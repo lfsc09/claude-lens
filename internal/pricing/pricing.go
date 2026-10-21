@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/lfsc09/claude-lens/internal/database"
+	"github.com/lfsc09/claude-lens/internal/modelname"
 )
 
 // above200kTokens is the prompt-size threshold past which a Price's
@@ -21,8 +22,9 @@ import (
 // documented surcharge tier some Claude long-context variants bill at.
 const above200kTokens = 200_000
 
-// Estimator matches a model name against the longest matching model_prices
-// prefix to find that prefix's price row.
+// Estimator matches a normalized model name (see modelname.Normalize)
+// against the longest model_prices prefix that covers it on a name boundary
+// to find that prefix's price row.
 type Estimator struct {
 	db *database.DB
 
@@ -52,14 +54,9 @@ func (e *Estimator) Refresh(ctx context.Context) error {
 		priceByPrefix[p.Prefix] = p
 	}
 
-	// Longest prefix first, so the first HasPrefix match found while
-	// scanning is always the most specific one — this also naturally
-	// prefers an exact match (prefix == model) over any shorter prefix,
-	// without needing a separate exact-match pass. Sorting by length
-	// descending resolves prefix ambiguity deliberately (e.g.
-	// "claude-sonnet-4" and "claude-sonnet" both prefix
-	// "claude-sonnet-4-5") instead of leaving it to accident of insertion
-	// order.
+	// Longest prefix first, so the first match while scanning is the most
+	// specific one and an exact match beats any shorter prefix (e.g.
+	// "claude-sonnet-4" over "claude-sonnet" for "claude-sonnet-4-5").
 	prefixes := make([]string, 0, len(priceByPrefix))
 	for prefix := range priceByPrefix {
 		prefixes = append(prefixes, prefix)
@@ -132,16 +129,39 @@ func rateFor(base float64, above200k *float64, aboveTier bool) float64 {
 }
 
 // matchPriceLocked finds the price row for the longest prefix of
-// prefixesLongestFirst that matches model; callers must hold e.mu.
+// prefixesLongestFirst that matches the normalized model; callers must hold
+// e.mu.
 func (e *Estimator) matchPriceLocked(model string) (database.Price, bool) {
+	model = modelname.Normalize(model)
 	for _, prefix := range e.prefixesLongestFirst {
-		if strings.HasPrefix(model, prefix) {
+		if hasModelPrefix(model, prefix) {
 			return e.priceByPrefix[prefix], true
 		}
 	}
 	return database.Price{}, false
 }
 
+// hasModelPrefix reports whether prefix covers model on a name boundary: the
+// whole model, or a leading part followed by a character that is not a
+// letter or digit ("claude-sonnet-5" covers "claude-sonnet-5-20260101" and
+// "claude-sonnet-5[1m]" but "claude-sonnet-1" does not cover
+// "claude-sonnet-10-1").
+func hasModelPrefix(model, prefix string) bool {
+	if !strings.HasPrefix(model, prefix) {
+		return false
+	}
+	if len(model) == len(prefix) || len(prefix) == 0 {
+		return true
+	}
+	return !isAlphanumeric(prefix[len(prefix)-1]) || !isAlphanumeric(model[len(prefix)])
+}
+
+// isAlphanumeric reports whether c is an ASCII letter or digit.
+func isAlphanumeric(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// round6 rounds f to six decimal places.
 func round6(f float64) float64 {
 	const mult = 1e6
 	return math.Round(f*mult) / mult

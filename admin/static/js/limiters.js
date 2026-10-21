@@ -1,11 +1,10 @@
 'use strict';
 
-import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fmtCountdown, fmtSessionId, fmtTime, getJSON, initNav, makeDialogMessage, notifyError, pad, postJSON, progressBar, putJSON, runAction, switchToggle, withPending } from './app.js';
+import { badge, errorRow, esc, fmtActivePeriod, fmtCost, fmtCountdown, fmtSessionId, getJSON, initEntityDialog, initNav, notifyError, pad, progressBar, runAction, switchToggle, timeAgoHtml } from './app.js';
 
 (() => {
   const tbody = document.getElementById('limiters-tbody');
   const limitersById = new Map();
-  let editingId = null;
 
   const ALIGNED_COMBOS = { minutes: [60], hours: [1, 24], days: [1, 7], months: [1] };
 
@@ -210,7 +209,7 @@ import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fm
       </td>
       <td class="whitespace-nowrap px-4 py-2">${fmtActivePeriod(l)}</td>
       <td class="px-4 py-2">${switchToggle(l.is_active, 'Toggle limiter active')}</td>
-      <td class="text-fg-muted whitespace-nowrap px-4 py-2">${fmtTime(l.updated_at)}</td>
+      <td class="text-fg-muted whitespace-nowrap px-4 py-2">${timeAgoHtml(l.updated_at)}</td>
       <td class="text-right whitespace-nowrap px-4 py-2">
         <button type="button" command="show-modal" commandfor="limiter-dialog" class="edit-btn text-sm text-fg-subtle mr-3 hover:text-fg">Edit</button>
         <button type="button" class="delete-btn text-sm text-fg-subtle hover:text-red-600 dark:hover:text-red-400">Delete</button>
@@ -305,19 +304,44 @@ import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fm
   }
   alwaysActiveCheckbox.addEventListener('change', updateActivePeriodInputs);
 
-  // ── Dialog message ──────────────────────────────────────────────────
-  const setDialogMessage = makeDialogMessage('limiter-dialog-message');
-
   // ── Add / Edit dialog wiring ────────────────────────────────────────
+  const limiterDialog = initEntityDialog({
+    dialog,
+    form,
+    titleEl: dialogTitle,
+    submitBtn,
+    messageId: 'limiter-dialog-message',
+    endpoint: '/api/limiters',
+    titles: { add: 'Add a limiter', edit: 'Edit limiter' },
+    failures: { add: 'Failed to add limiter.', edit: 'Failed to update limiter.' },
+    readPayload: () => {
+      const data = new FormData(form);
+      const alwaysActive = alwaysActiveCheckbox.checked;
+      return {
+        session_id: String(data.get('session_id') || '').trim(),
+        limit_amount: parseFloat(data.get('limit_amount')),
+        refresh_value: parseInt(data.get('refresh_value'), 10),
+        refresh_unit: String(data.get('refresh_unit')),
+        refresh_aligned: alignedCheckbox.checked && !alignedCheckbox.disabled,
+        active_start_hour: alwaysActive ? null : parseInt(data.get('active_start_hour'), 10),
+        active_end_hour: alwaysActive ? null : parseInt(data.get('active_end_hour'), 10),
+        notifications: readNotificationRows(),
+      };
+    },
+    onReset: () => {
+      renderNotificationRows([]);
+      updateAlignedAvailability();
+      updateActivePeriodInputs();
+    },
+    onSaved: loadLimiters,
+  });
+
   /**
    * Fills the dialog with a limiter for editing.
    * @param {object} l - Limiter from the API.
    */
   function startEdit(l) {
-    editingId = l.id;
-    dialogTitle.textContent = 'Edit limiter';
-    submitBtn.textContent = 'Save changes';
-
+    limiterDialog.beginEdit(l.id);
     sessionIDInput.value = l.session_id;
     limitAmountInput.value = l.limit_amount;
     refreshValueInput.value = l.refresh_value;
@@ -333,46 +357,6 @@ import { badge, errorRow, esc, extractErrorMessage, fmtActivePeriod, fmtCost, fm
     renderNotificationRows(l.notifications ?? []);
     refreshNotificationIntegrations();
   }
-
-  /** Returns the dialog to its empty "add" state. */
-  function resetDialog() {
-    editingId = null;
-    dialogTitle.textContent = 'Add a limiter';
-    submitBtn.textContent = 'Add';
-    setDialogMessage(null, '');
-    form.reset();
-    renderNotificationRows([]);
-    updateAlignedAvailability();
-    updateActivePeriodInputs();
-  }
-  dialog.addEventListener('close', resetDialog);
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = new FormData(form);
-    const alwaysActive = alwaysActiveCheckbox.checked;
-
-    const payload = {
-      session_id: String(data.get('session_id') || '').trim(),
-      limit_amount: parseFloat(data.get('limit_amount')),
-      refresh_value: parseInt(data.get('refresh_value'), 10),
-      refresh_unit: String(data.get('refresh_unit')),
-      refresh_aligned: alignedCheckbox.checked && !alignedCheckbox.disabled,
-      active_start_hour: alwaysActive ? null : parseInt(data.get('active_start_hour'), 10),
-      active_end_hour: alwaysActive ? null : parseInt(data.get('active_end_hour'), 10),
-      notifications: readNotificationRows(),
-    };
-
-    await withPending(submitBtn, async () => {
-      const res = editingId ? await putJSON(`/api/limiters/${editingId}`, payload) : await postJSON('/api/limiters', payload);
-      if (!res.ok) {
-        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update limiter.' : 'Failed to add limiter.'));
-        return;
-      }
-      dialog.close();
-      loadLimiters();
-    });
-  });
 
   updateAlignedAvailability();
   updateActivePeriodInputs();

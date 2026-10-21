@@ -135,3 +135,71 @@ func TestUpsertPricesFromSync_CountsCreatedAndUpdatedAcrossBatch(t *testing.T) {
 		t.Errorf("created, updated = %d, %d, want 2, 1", created, updated)
 	}
 }
+
+func TestUpsertPricesFromSync_StampsSyncedAtEvenWhenRatesUnchanged(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	price := priceprovider.ModelPrice{ModelName: "claude-sonnet-5", InputPerM: 3, OutputPerM: 15}
+
+	before, err := db.GetPriceByPrefix(ctx, "claude-sonnet-5")
+	if err != nil || before == nil {
+		t.Fatalf("GetPriceByPrefix: %v, %v", before, err)
+	}
+	if before.SyncedAt != nil {
+		t.Fatalf("seeded row SyncedAt = %v, want nil", *before.SyncedAt)
+	}
+
+	for _, now := range []float64{100, 200} {
+		if _, _, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{price}, now); err != nil {
+			t.Fatalf("UpsertPricesFromSync: %v", err)
+		}
+		got, err := db.GetPriceByPrefix(ctx, "claude-sonnet-5")
+		if err != nil || got == nil {
+			t.Fatalf("GetPriceByPrefix: %v, %v", got, err)
+		}
+		if got.SyncedAt == nil || *got.SyncedAt != now {
+			t.Errorf("SyncedAt = %v, want %v after a sync that changed no rate", got.SyncedAt, now)
+		}
+	}
+}
+
+func TestUpsertPricesFromSync_StampsSyncedAtOnCreatedRow(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	if _, _, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{{ModelName: "brand-new", InputPerM: 1, OutputPerM: 2}}, 50); err != nil {
+		t.Fatalf("UpsertPricesFromSync: %v", err)
+	}
+	got, err := db.GetPriceByPrefix(ctx, "brand-new")
+	if err != nil || got == nil {
+		t.Fatalf("GetPriceByPrefix: %v, %v", got, err)
+	}
+	if got.SyncedAt == nil || *got.SyncedAt != 50 {
+		t.Errorf("SyncedAt = %v, want 50", got.SyncedAt)
+	}
+}
+
+func TestManualPriceWritesLeaveSyncedAtAlone(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	if _, _, err := db.UpsertPricesFromSync(ctx, []priceprovider.ModelPrice{{ModelName: "claude-sonnet-5", InputPerM: 3, OutputPerM: 15}}, 100); err != nil {
+		t.Fatalf("UpsertPricesFromSync: %v", err)
+	}
+	p, err := db.GetPriceByPrefix(ctx, "claude-sonnet-5")
+	if err != nil || p == nil {
+		t.Fatalf("GetPriceByPrefix: %v, %v", p, err)
+	}
+	p.InputPerM = 9
+	p.UpdatedAt = 300
+	if err := db.UpdatePrice(ctx, p.ID, *p); err != nil {
+		t.Fatalf("UpdatePrice: %v", err)
+	}
+	got, err := db.GetPrice(ctx, p.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetPrice: %v, %v", got, err)
+	}
+	if got.SyncedAt == nil || *got.SyncedAt != 100 {
+		t.Errorf("SyncedAt = %v, want 100 untouched by a manual update", got.SyncedAt)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// privateDirMode is the permission of the data and log directories.
 const privateDirMode = 0o700
 
 // Config holds all runtime configuration for both the proxy and admin servers.
@@ -71,6 +72,8 @@ func IsLoopbackHost(host string) bool {
 	return err == nil && ip.IsLoopback()
 }
 
+// getEnv returns the trimmed value of the environment variable name, or
+// fallback when it is unset or blank.
 func getEnv(name, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
 		return v

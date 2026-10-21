@@ -32,10 +32,15 @@ import (
 // columns would collapse to NULL if any single column — e.g. an unpriced
 // exchange's cache_creation_tokens — is NULL).
 const totalTokensExpr = `CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_creation_tokens IS NULL AND cache_read_tokens IS NULL THEN NULL ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0) END`
+
+// cacheTokensExpr is the NULL-safe SQL sum of cache creation and cache read
+// tokens.
 const cacheTokensExpr = `(COALESCE(cache_creation_tokens, 0) + COALESCE(cache_read_tokens, 0))`
 
+// filterFieldKind is the value type of a filter field.
 type filterFieldKind int
 
+// The value kinds a filter field can have.
 const (
 	fieldText filterFieldKind = iota
 	fieldNumber
@@ -53,6 +58,7 @@ type filterField struct {
 	exprs []string
 }
 
+// filterFields maps each field name of the query language to its definition.
 var filterFields = map[string]filterField{
 	"id":            {kind: fieldNumber, exprs: []string{"id"}},
 	"session":       {kind: fieldText, exprs: []string{"exchanges.session_id", "sessions.name"}},
@@ -67,10 +73,16 @@ var filterFields = map[string]filterField{
 	"stream":        {kind: fieldBool, exprs: []string{"is_streaming"}},
 }
 
+// textOps are the operators valid for text fields.
 var textOps = map[string]bool{"=": true, "like": true}
+
+// scalarOps are the operators valid for number and date fields.
 var scalarOps = map[string]bool{"=": true, "!=": true, "<": true, ">": true, "<=": true, ">=": true}
+
+// boolOps are the operators valid for boolean fields.
 var boolOps = map[string]bool{"=": true}
 
+// allowedOps returns the operators valid for fields of kind.
 func allowedOps(kind filterFieldKind) map[string]bool {
 	switch kind {
 	case fieldText:
@@ -84,23 +96,33 @@ func allowedOps(kind filterFieldKind) map[string]bool {
 
 // ---- AST -------------------------------------------------------------
 
+// filterExpr is a node of a parsed filter query.
 type filterExpr interface{ isFilterExpr() }
 
+// filterAnd matches when every term matches.
 type filterAnd struct{ terms []filterExpr }
+
+// filterOr matches when any term matches.
 type filterOr struct{ terms []filterExpr }
+
+// filterCond compares one field against a value; pos is the offset of the
+// field in the query.
 type filterCond struct {
 	field, op, value string
 	pos              int
 }
 
+// isFilterExpr marks filterAnd, filterOr and filterCond as filterExpr nodes.
 func (*filterAnd) isFilterExpr()  {}
 func (*filterOr) isFilterExpr()   {}
 func (*filterCond) isFilterExpr() {}
 
 // ---- Lexer -------------------------------------------------------------
 
+// filterTokenKind is the lexical class of a filter token.
 type filterTokenKind int
 
+// The lexical classes of a filter token.
 const (
 	ftEOF filterTokenKind = iota
 	ftLParen
@@ -112,12 +134,16 @@ const (
 	ftIdent
 )
 
+// filterToken is one lexical unit of a filter query with its offset in the
+// query.
 type filterToken struct {
 	kind filterTokenKind
 	text string
 	pos  int
 }
 
+// lexFilterQuery splits q into tokens, failing on an unterminated quoted
+// string or a '!' not followed by '='.
 func lexFilterQuery(q string) ([]filterToken, error) {
 	runes := []rune(q)
 	var toks []filterToken
@@ -213,11 +239,15 @@ func lexFilterQuery(q string) ([]filterToken, error) {
 
 // ---- Parser -------------------------------------------------------------
 
+// filterParser is a recursive-descent parser over a token list; OR binds
+// loosest, then AND, then parentheses and conditions.
 type filterParser struct {
 	toks []filterToken
 	pos  int
 }
 
+// peek returns the current token without consuming it, or an EOF token past
+// the end.
 func (p *filterParser) peek() filterToken {
 	if p.pos >= len(p.toks) {
 		return filterToken{kind: ftEOF, pos: -1}
@@ -225,6 +255,7 @@ func (p *filterParser) peek() filterToken {
 	return p.toks[p.pos]
 }
 
+// next consumes and returns the current token.
 func (p *filterParser) next() filterToken {
 	t := p.peek()
 	if p.pos < len(p.toks) {
@@ -233,6 +264,7 @@ func (p *filterParser) next() filterToken {
 	return t
 }
 
+// parseOr parses AND-expressions separated by OR.
 func (p *filterParser) parseOr() (filterExpr, error) {
 	first, err := p.parseAnd()
 	if err != nil {
@@ -253,6 +285,7 @@ func (p *filterParser) parseOr() (filterExpr, error) {
 	return &filterOr{terms: terms}, nil
 }
 
+// parseAnd parses terms separated by AND.
 func (p *filterParser) parseAnd() (filterExpr, error) {
 	first, err := p.parseTerm()
 	if err != nil {
@@ -273,6 +306,7 @@ func (p *filterParser) parseAnd() (filterExpr, error) {
 	return &filterAnd{terms: terms}, nil
 }
 
+// parseTerm parses a parenthesized expression or a single condition.
 func (p *filterParser) parseTerm() (filterExpr, error) {
 	if p.peek().kind == ftLParen {
 		p.next()
@@ -289,6 +323,7 @@ func (p *filterParser) parseTerm() (filterExpr, error) {
 	return p.parseCond()
 }
 
+// parseCond parses FIELD OP VALUE.
 func (p *filterParser) parseCond() (filterExpr, error) {
 	fieldTok := p.next()
 	if fieldTok.kind != ftIdent {
@@ -323,6 +358,8 @@ var filterDateLayouts = []string{
 	"2006-01-02",
 }
 
+// parseFilterDate parses raw in any of filterDateLayouts, in the local time
+// zone, into Unix seconds.
 func parseFilterDate(raw string) (float64, error) {
 	for _, layout := range filterDateLayouts {
 		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
@@ -332,6 +369,7 @@ func parseFilterDate(raw string) (float64, error) {
 	return 0, fmt.Errorf("expected a date like YYYY-MM-DD or \"YYYY-MM-DD HH:MM:SS\", got %q", raw)
 }
 
+// parseFilterBool parses true/false, 1/0 or yes/no, case-insensitively.
 func parseFilterBool(raw string) (bool, error) {
 	switch strings.ToLower(raw) {
 	case "true", "1", "yes":
@@ -355,6 +393,8 @@ func escapeLikeValue(s string) string {
 
 // ---- Compiling AST -> SQL -------------------------------------------------
 
+// compileFilterCond renders c as a SQL fragment with its bound arguments,
+// validating the field, operator and value.
 func compileFilterCond(c *filterCond) (string, []any, error) {
 	field, ok := filterFields[strings.ToLower(c.field)]
 	if !ok {
@@ -413,6 +453,8 @@ func compileFilterCond(c *filterCond) (string, []any, error) {
 	return "", nil, fmt.Errorf("unhandled field kind for %q", c.field)
 }
 
+// compileFilterList renders terms joined by joiner, parenthesizing every
+// non-condition term.
 func compileFilterList(terms []filterExpr, joiner string) (string, []any, error) {
 	var parts []string
 	var args []any
@@ -430,6 +472,7 @@ func compileFilterList(terms []filterExpr, joiner string) (string, []any, error)
 	return strings.Join(parts, " "+joiner+" "), args, nil
 }
 
+// compileFilterExpr renders e as a SQL fragment with its bound arguments.
 func compileFilterExpr(e filterExpr) (string, []any, error) {
 	switch n := e.(type) {
 	case *filterCond:

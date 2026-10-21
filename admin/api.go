@@ -57,6 +57,7 @@ type handlers struct {
 	fetchers pricesync.Fetchers
 }
 
+// writeJSON writes v as a JSON response with the given status.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -65,6 +66,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// writeError writes msg as a JSON {"error": msg} response with the given
+// status.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
@@ -100,6 +103,7 @@ func getOr404[T any](w http.ResponseWriter, r *http.Request, id int64, get func(
 	return row, true
 }
 
+// health writes the proxy status and server version.
 func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -115,6 +119,8 @@ type exchangesResponse struct {
 	Total int                        `json:"total"`
 }
 
+// listExchanges writes one page of exchanges matching the "q" filter query,
+// with the total count.
 func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 
@@ -140,6 +146,7 @@ func (h *handlers) listExchanges(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, exchangesResponse{Rows: rows, Total: total})
 }
 
+// exchangeDetail writes a single exchange with its stored payloads.
 func (h *handlers) exchangeDetail(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -334,6 +341,7 @@ func (h *handlers) sessionStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionStatsResponse{Rows: rows, Total: total})
 }
 
+// sessionNameRequest is the payload for renaming a session.
 type sessionNameRequest struct {
 	Name string `json:"name"`
 }
@@ -387,6 +395,7 @@ func (h *handlers) dailyCosts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// listPrices writes every model price row.
 func (h *handlers) listPrices(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListPrices(r.Context())
 	if err != nil {
@@ -399,6 +408,7 @@ func (h *handlers) listPrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// createPriceRequest is the payload for creating a model price.
 type createPriceRequest struct {
 	Prefix                  string   `json:"model_prefix"`
 	InputPerM               *float64 `json:"input_per_m"`
@@ -467,6 +477,7 @@ func (h *handlers) createPrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// updatePriceRequest is the payload for replacing a model price's rates.
 type updatePriceRequest struct {
 	InputPerM               *float64 `json:"input_per_m"`
 	OutputPerM              *float64 `json:"output_per_m"`
@@ -533,6 +544,7 @@ func (h *handlers) updatePrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// deletePrice removes a model price row and refreshes the estimator.
 func (h *handlers) deletePrice(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -550,6 +562,7 @@ func (h *handlers) deletePrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"deleted": id})
 }
 
+// listLimiters writes every limiter with its current active-period state.
 func (h *handlers) listLimiters(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListLimiters(r.Context())
 	if err != nil {
@@ -565,6 +578,7 @@ func (h *handlers) listLimiters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rows)
 }
 
+// limiterRequest is the payload for creating or replacing a limiter.
 type limiterRequest struct {
 	SessionID       string                `json:"session_id"`
 	LimitAmount     *float64              `json:"limit_amount"`
@@ -584,6 +598,7 @@ type limiterNotification struct {
 	RequestCostUSD *float64 `json:"request_cost_usd"`
 }
 
+// limiterRefreshUnits is the set of valid limiter refresh units.
 var limiterRefreshUnits = map[string]bool{"minutes": true, "hours": true, "days": true, "months": true}
 
 // validateLimiterRequest checks the field presence/range rules shared by
@@ -797,6 +812,8 @@ func (h *handlers) updateLimiter(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, existing)
 }
 
+// setLimiterActiveRequest is the payload for toggling a limiter's master
+// switch.
 type setLimiterActiveRequest struct {
 	IsActive *bool `json:"is_active"`
 }
@@ -857,6 +874,7 @@ func (h *handlers) updateSettings(w http.ResponseWriter, r *http.Request) {
 	h.getSettings(w, r)
 }
 
+// deleteLimiter removes a limiter.
 func (h *handlers) deleteLimiter(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {

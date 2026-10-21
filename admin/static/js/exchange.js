@@ -258,6 +258,11 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
       </tr>`).join('');
   }
 
+  /**
+   * Renders the exchange details, usage, and request and response tabs.
+   *
+   * @param {object} exchange - Exchange from the API.
+   */
   function render(exchange) {
     document.getElementById('page-title').textContent = `Exchange #${exchange.id} – claude-lens Admin`;
 
@@ -443,6 +448,7 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
     }
   }
 
+  /** Swaps the exchange content for the not-found message. */
   function showNotFound() {
     document.getElementById('exchange-content').classList.add('hidden');
     document.getElementById('not-found-content').classList.remove('hidden');
@@ -451,6 +457,11 @@ import { badge, copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBy
       : 'Page not found.';
   }
 
+  /**
+   * Fetches the exchange named in the URL and renders it, or shows the not-found message.
+   *
+   * @returns {Promise<void>}
+   */
   async function load() {
     if (!exchangeId || !/^\d+$/.test(exchangeId)) {
       showNotFound();

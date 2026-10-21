@@ -1,6 +1,6 @@
 'use strict';
 
-import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON, withPending } from './app.js';
+import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, makeDialogMessage, postJSON, setBannerError, withPending } from './app.js';
 
 (() => {
   const versionEl = document.getElementById('about-version');
@@ -17,11 +17,11 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   // re-render highlights without re-fetching.
   let logLines = [];
 
-  function showError(msg) {
-    errorEl.textContent = msg;
-    errorEl.classList.remove('hidden');
-  }
-
+  /**
+   * Renders the database table stats and the totals row, and enables the clear-all button only while exchanges exist.
+   *
+   * @param {{name: string, row_count: number, size_bytes: number}[]} tables - Table stats from the API.
+   */
   function renderTables(tables) {
     if (!tables.length) {
       tablesBody.innerHTML = '<tr><td colspan="3" class="text-center text-fg-subtle px-4 py-8">No tables found.</td></tr>';
@@ -58,6 +58,11 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
   // empty.
   const setDialogMessage = makeDialogMessage('clear-all-dialog-message');
 
+  /**
+   * Fetches the total number of sessions.
+   *
+   * @returns {Promise<number>} Session count, or 0 when the request fails.
+   */
   async function fetchSessionCount() {
     const res = await fetch('/api/session-stats?limit=1');
     if (!res.ok) return 0;
@@ -109,6 +114,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
     return parts.map((part) => esc(part)).join(`<mark class="bg-yellow-200 rounded-sm">${esc(query)}</mark>`);
   }
 
+  /** Renders the log lines filtered by the search query with matches highlighted, scrolling to the first match. */
   function renderLogTail() {
     if (!logLines.length) {
       logTailEl.textContent = 'No log entries yet.';
@@ -126,6 +132,13 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
     }
   }
 
+  /**
+   * Shows the log file path and size and renders its tail, newest line first.
+   *
+   * @param {string} logPath - Log file path.
+   * @param {number} logSizeBytes - Log file size in bytes.
+   * @param {string[]} logTail - Last log lines, oldest first.
+   */
   function renderLogs(logPath, logSizeBytes, logTail) {
     logPathEl.textContent = logPath || '—';
     logSizeEl.textContent = fmtBytes(logSizeBytes);
@@ -134,11 +147,12 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
     renderLogTail();
   }
 
+  /** Fetches the about info and renders it, or shows an error banner when the fetch fails. */
   async function load() {
     try {
       const res = await fetch('/api/about');
       if (!res.ok) {
-        showError(await extractErrorMessage(res, 'Failed to load about info.'));
+        setBannerError(errorEl, await extractErrorMessage(res, 'Failed to load about info.'));
         return;
       }
       const data = await res.json();
@@ -147,7 +161,7 @@ import { debounce, esc, extractErrorMessage, fmtBytes, fmtInt, initNavPolling, m
       renderTables(data.tables || []);
       renderLogs(data.log_path, data.log_size_bytes || 0, data.log_tail || []);
     } catch {
-      showError('Failed to load about info.');
+      setBannerError(errorEl, 'Failed to load about info.');
     }
   }
 

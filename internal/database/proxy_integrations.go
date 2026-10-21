@@ -15,6 +15,8 @@ const (
 	ProxyTypeBifrost = "bifrost"
 )
 
+// defaultPriceSyncIntervalMinutes is the price sync interval of a newly
+// seeded proxy integration.
 const defaultPriceSyncIntervalMinutes = 60
 
 // ErrProxyIntegrationIncomplete is returned when activating a proxy
@@ -48,6 +50,8 @@ type ProxyIntegration struct {
 	UpdatedAt      float64 `json:"updated_at"`
 }
 
+// proxyIntegrationColumns lists the proxy_integrations columns
+// scanProxyIntegration reads, in order.
 const proxyIntegrationColumns = `id, type, name, base_url, auth_token, custom_headers, active,
 	price_sync_interval_minutes, price_synced_at, price_sync_attempted_at, price_sync_error, updated_at`
 
@@ -70,6 +74,8 @@ func (db *DB) seedProxyIntegrations(ctx context.Context) error {
 	return nil
 }
 
+// scanProxyIntegration reads one proxy_integrations row selected with
+// proxyIntegrationColumns.
 func scanProxyIntegration(row interface{ Scan(...any) error }) (ProxyIntegration, error) {
 	var p ProxyIntegration
 	var headers string
@@ -117,6 +123,8 @@ func (db *DB) GetActiveProxyIntegration(ctx context.Context) (*ProxyIntegration,
 	return db.queryProxyIntegration(ctx, `SELECT `+proxyIntegrationColumns+` FROM proxy_integrations WHERE active = 1`)
 }
 
+// queryProxyIntegration runs a single-row proxy_integrations query, returning
+// nil when no row matches.
 func (db *DB) queryProxyIntegration(ctx context.Context, query string, args ...any) (*ProxyIntegration, error) {
 	p, err := scanProxyIntegration(db.sql.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, sql.ErrNoRows) {

@@ -931,3 +931,77 @@ func TestOpen_RejectsIncompatibleSchema(t *testing.T) {
 		t.Fatalf("Open error = %v, want ErrIncompatibleSchema", err)
 	}
 }
+
+func hasColumn(t *testing.T, db *sql.DB, table, column string) bool {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&count); err != nil {
+		t.Fatalf("inspect %s: %v", table, err)
+	}
+	return count > 0
+}
+
+func TestOpen_AddsMissingColumnsToExistingDatabaseIdempotently(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	first, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	first.Close()
+
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`ALTER TABLE model_prices DROP COLUMN synced_at`); err != nil {
+		t.Fatalf("drop column to simulate an older database: %v", err)
+	}
+	if hasColumn(t, raw, "model_prices", "synced_at") {
+		t.Fatal("test setup failed: synced_at still present")
+	}
+	raw.Close()
+
+	for i := range 2 {
+		db, err := Open(context.Background(), path)
+		if err != nil {
+			t.Fatalf("Open #%d on an older database: %v", i+1, err)
+		}
+		prices, err := db.ListPrices(context.Background())
+		if err != nil {
+			t.Fatalf("ListPrices #%d: %v", i+1, err)
+		}
+		if len(prices) == 0 || prices[0].SyncedAt != nil {
+			t.Errorf("Open #%d: prices = %+v, want seeded rows with nil SyncedAt", i+1, prices)
+		}
+		db.Close()
+	}
+
+	raw, err = sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if !hasColumn(t, raw, "model_prices", "synced_at") {
+		t.Error("synced_at was not added to the existing model_prices table")
+	}
+}
+
+func TestOpen_FreshDatabaseHasMigratedColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fresh.db")
+	db, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	db.Close()
+
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	for _, m := range columnMigrations {
+		if !hasColumn(t, raw, m.table, m.column) {
+			t.Errorf("fresh schema lacks %s.%s, so the schema constant and columnMigrations disagree", m.table, m.column)
+		}
+	}
+}

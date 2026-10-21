@@ -22,6 +22,8 @@ type usageFields struct {
 	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 }
 
+// responseBody is the part of a non-streaming API response body claude-lens
+// reads.
 type responseBody struct {
 	Content []struct {
 		Type string `json:"type"`
@@ -50,6 +52,8 @@ func (u *Usage) merge(f usageFields) {
 	mergeCount(&u.CacheReadTokens, f.CacheReadInputTokens)
 }
 
+// mergeCount points *dst at src when src is a non-zero count or *dst is still
+// unset.
 func mergeCount(dst **int, src *int) {
 	if src != nil && (*src != 0 || *dst == nil) {
 		*dst = src

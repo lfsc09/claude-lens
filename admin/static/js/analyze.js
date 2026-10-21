@@ -1,6 +1,6 @@
 'use strict';
 
-import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, initNavPolling, jsonViewerTheme } from './app.js';
+import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, initNavPolling, jsonViewerTheme, setBannerError } from './app.js';
 
 (() => {
   let loaded = null; // { rawText: string, payload: object, sourceLabel: string }
@@ -15,16 +15,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
     if (viewer) viewer.setAttribute('theme', jsonViewerTheme());
   });
 
-  function showError(message) {
-    errorEl.textContent = message;
-    errorEl.classList.remove('hidden');
-  }
-
-  function clearError() {
-    errorEl.classList.add('hidden');
-    errorEl.textContent = '';
-  }
-
+  /** Discards the loaded request and returns to the drop zone. */
   function reset() {
     loaded = null;
     content.classList.add('hidden');
@@ -32,7 +23,7 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
     content.innerHTML = '';
     dropzone.classList.remove('hidden');
     fileInput.value = '';
-    clearError();
+    setBannerError(errorEl, '');
   }
 
   /**
@@ -42,33 +33,39 @@ import { copyTextToClipboard, downloadTextFile, esc, estimateBytes, fmtBytes, in
    * @param {string} sourceLabel - Human-readable origin shown in the summary.
    */
   function loadFromText(text, sourceLabel) {
-    clearError();
+    setBannerError(errorEl, '');
     let payload;
     try {
       payload = JSON.parse(text);
     } catch {
-      showError("That doesn't look like valid JSON — paste or drop the exact raw request payload.");
+      setBannerError(errorEl, "That doesn't look like valid JSON — paste or drop the exact raw request payload.");
       return;
     }
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-      showError('Expected a JSON object (the request payload), not a list or plain value.');
+      setBannerError(errorEl, 'Expected a JSON object (the request payload), not a list or plain value.');
       return;
     }
     loaded = { rawText: text, payload, sourceLabel };
     render();
   }
 
+  /**
+   * Reads a JSON file and analyzes its content, or shows an error banner when it is not a readable .json file.
+   *
+   * @param {File} file - File picked or dropped by the user.
+   */
   function loadFromFile(file) {
     if (!/\.json$/i.test(file.name) && file.type !== 'application/json') {
-      showError('Please provide a .json file.');
+      setBannerError(errorEl, 'Please provide a .json file.');
       return;
     }
     const reader = new FileReader();
     reader.onload = () => loadFromText(String(reader.result), file.name);
-    reader.onerror = () => showError('Could not read that file.');
+    reader.onerror = () => setBannerError(errorEl, 'Could not read that file.');
     reader.readAsText(file);
   }
 
+  /** Renders the analysis of the loaded request payload. */
   function render() {
     dropzone.classList.add('hidden');
     const { rawText, payload, sourceLabel } = loaded;

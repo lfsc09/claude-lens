@@ -78,6 +78,8 @@ func (r *Registry) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// targetFor builds the forwarding target of integration, or of the Anthropic
+// API when integration is nil.
 func targetFor(integration *database.ProxyIntegration) (*Target, error) {
 	if integration == nil {
 		base, err := url.Parse(AnthropicBaseURL)
@@ -109,6 +111,7 @@ func NormalizeBaseURL(raw string) (string, error) {
 	return strings.TrimRight(u.String(), "/"), nil
 }
 
+// headerName matches a valid HTTP header field name.
 var headerName = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
 
 // ValidateHeaders checks every custom header has a valid name and a

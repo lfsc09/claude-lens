@@ -93,8 +93,6 @@ func doGet(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func strPtr(s string) *string { return &s }
-
 func nowUnix() int64 { return time.Now().Unix() }
 
 func TestHealth(t *testing.T) {
@@ -702,6 +700,20 @@ func TestSyncProxyPrices_UpstreamWithoutPriceRouteIsBadGateway(t *testing.T) {
 	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want %d for an upstream that can't serve prices", rec.Code, http.StatusBadGateway)
+	}
+}
+
+func TestSyncProxyPrices_GatewayWithoutPricesIsBadGateway(t *testing.T) {
+	unpriced := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"bedrock/us.anthropic.claude-sonnet-5","name":"x"}]}`))
+	}))
+	defer unpriced.Close()
+
+	s, _ := newTestServer(t)
+	id := activateProxy(t, s, "bifrost", unpriced.URL, "sk-test")
+	rec := doJSON(t, s, http.MethodPost, fmt.Sprintf("/api/proxy-integrations/%d/sync-prices", id), nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d when the gateway reports no prices: %s", rec.Code, http.StatusBadGateway, rec.Body.String())
 	}
 }
 
