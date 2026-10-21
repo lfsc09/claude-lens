@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// sseEvent is the part of a streaming API event claude-lens reads.
 type sseEvent struct {
 	Type    string `json:"type"`
 	Message struct {

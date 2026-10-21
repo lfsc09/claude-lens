@@ -31,6 +31,11 @@ func TestExtractRequestFields(t *testing.T) {
 			wantModel: "claude-sonnet-5",
 		},
 		{
+			name:      "gateway-prefixed model is normalized",
+			body:      `{"model":"us.anthropic.claude-sonnet-5-5","messages":[]}`,
+			wantModel: "claude-sonnet-5-5",
+		},
+		{
 			name: "empty model string treated as absent",
 			body: `{"model":"","messages":[]}`,
 		},

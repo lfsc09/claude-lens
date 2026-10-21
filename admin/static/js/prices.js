@@ -1,11 +1,10 @@
 'use strict';
 
-import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNavPolling, makeDialogMessage, notifyError, postJSON, putJSON, runAction, withPending } from './app.js';
+import { errorBlock, esc, extractErrorMessage, fmtAgo, fmtCost, getJSON, initEntityDialog, initNavPolling, notifyError, postJSON, runAction, timeAgoHtml, withPending } from './app.js';
 
 (() => {
   const grid = document.getElementById('prices-grid');
   const pricesById = new Map();
-  let editingId = null;
 
   const dialog = document.getElementById('price-dialog');
   const form = document.getElementById('price-form');
@@ -38,12 +37,24 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
   }
 
   /**
+   * Tells whether the active proxy's last price sync reported a price.
+   * @param {object} p - Model price from the API.
+   * @param {?object} proxy - Active proxy integration, or null when none is active.
+   * @returns {boolean} True when the price was reported by the last sync.
+   */
+  function isSynced(p, proxy) {
+    return !!proxy && p.synced_at != null && p.synced_at >= proxy.price_synced_at;
+  }
+
+  /**
    * Renders one model price as a card.
    * @param {object} p - Model price from the API.
+   * @param {?object} proxy - Active proxy integration, or null when none is active.
    * @returns {string} Card markup.
    */
-  function buildCard(p) {
-    return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border border-line" data-id="${p.id}">
+  function buildCard(p, proxy) {
+    const synced = isSynced(p, proxy);
+    return `<article class="flex flex-col gap-3 p-4 bg-surface rounded-lg border ${synced ? 'border-emerald-600 dark:border-emerald-500' : 'border-line'}" data-id="${p.id}"${synced ? ' title="Reported by the last price sync"' : ''}>
       <div class="flex items-start justify-between gap-2">
         <p class="font-mono text-sm font-medium break-all">${esc(p.model_prefix)}</p>
         <div class="shrink-0 flex items-center gap-2">
@@ -62,7 +73,7 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
       ${above200kSectionHtml(p)}
       <div class="flex-1 flex items-end">
         <div class="flex justify-end w-full pt-3 border-t border-line">
-          <p class="text-xs text-fg-subtle">Updated ${fmtTime(p.updated_at)}</p>
+          <p class="text-xs text-fg-subtle">Updated ${timeAgoHtml(p.updated_at)}</p>
         </div>
       </div>
     </article>`;
@@ -80,8 +91,9 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
   /** Fetches the prices and renders them, or an error when the fetch fails. */
   async function loadPrices() {
     let prices;
+    let proxy;
     try {
-      prices = await getJSON('/api/prices');
+      [prices, proxy] = await Promise.all([getJSON('/api/prices'), loadActiveProxy()]);
     } catch (err) {
       grid.innerHTML = errorBlock(err.message);
       return;
@@ -94,7 +106,7 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
     }
 
     prices.forEach((p) => pricesById.set(String(p.id), p));
-    grid.innerHTML = prices.map(buildCard).join('');
+    grid.innerHTML = prices.map((p) => buildCard(p, proxy)).join('');
   }
 
   grid.addEventListener('click', (e) => {
@@ -111,17 +123,42 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
   });
 
   // ── Add / Edit dialog wiring ────────────────────────────────────────
-  const setDialogMessage = makeDialogMessage('price-dialog-message');
+  const priceDialog = initEntityDialog({
+    dialog,
+    form,
+    titleEl: dialogTitle,
+    submitBtn,
+    messageId: 'price-dialog-message',
+    endpoint: '/api/prices',
+    titles: { add: 'Add a model price', edit: 'Edit model price' },
+    failures: { add: 'Failed to add price.', edit: 'Failed to update price.' },
+    readPayload: () => {
+      const prefix = prefixInput.value.trim();
+      if (!prefix) return null;
+      const data = new FormData(form);
+      const payload = {
+        model_prefix: prefix,
+        input_per_m: parseFloat(data.get('input_per_m')),
+        output_per_m: parseFloat(data.get('output_per_m')),
+        cache_write_per_m: parseFloat(data.get('cache_write_per_m')) || 0,
+        cache_read_per_m: parseFloat(data.get('cache_read_per_m')) || 0,
+      };
+      TIER_FIELDS.forEach(([field]) => {
+        const raw = String(data.get(field) || '').trim();
+        payload[field] = raw ? parseFloat(raw) : null;
+      });
+      return payload;
+    },
+    onReset: () => { prefixInput.disabled = false; },
+    onSaved: loadPrices,
+  });
 
   /**
    * Fills the dialog with a price for editing.
    * @param {object} p - Model price from the API.
    */
   function startEdit(p) {
-    editingId = p.id;
-    dialogTitle.textContent = 'Edit model price';
-    submitBtn.textContent = 'Save changes';
-
+    priceDialog.beginEdit(p.id);
     prefixInput.value = p.model_prefix;
     prefixInput.disabled = true;
     form.querySelector('[name="input_per_m"]').value = p.input_per_m;
@@ -133,58 +170,19 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
     });
   }
 
-  /** Returns the dialog to its empty "add" state. */
-  function resetDialog() {
-    editingId = null;
-    dialogTitle.textContent = 'Add a model price';
-    submitBtn.textContent = 'Add';
-    prefixInput.disabled = false;
-    setDialogMessage(null, '');
-    form.reset();
-  }
-  dialog.addEventListener('close', resetDialog);
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = new FormData(form);
-    const prefix = String(data.get('model_prefix') || '').trim();
-    if (!prefix) return;
-
-    const payload = {
-      model_prefix: prefix,
-      input_per_m: parseFloat(data.get('input_per_m')),
-      output_per_m: parseFloat(data.get('output_per_m')),
-      cache_write_per_m: parseFloat(data.get('cache_write_per_m')) || 0,
-      cache_read_per_m: parseFloat(data.get('cache_read_per_m')) || 0,
-    };
-    TIER_FIELDS.forEach(([field]) => {
-      const raw = String(data.get(field) || '').trim();
-      payload[field] = raw ? parseFloat(raw) : null;
-    });
-
-    await withPending(submitBtn, async () => {
-      const res = editingId ? await putJSON(`/api/prices/${editingId}`, payload) : await postJSON('/api/prices', payload);
-      if (!res.ok) {
-        setDialogMessage('error', await extractErrorMessage(res, editingId ? 'Failed to update price.' : 'Failed to add price.'));
-        return;
-      }
-      dialog.close();
-      loadPrices();
-    });
-  });
-
   // ── Sync prices from the active proxy integration ────────────────────
   const syncBtn = document.getElementById('sync-prices-btn');
   const syncBtnWrap = document.getElementById('sync-btn-wrap');
   const syncMessageEl = document.getElementById('sync-message');
 
   /**
-   * Shows a status line next to the sync button.
+   * Shows the outcome of a sync next to the sync button.
    * @param {string} text - Message to show; empty clears it.
    * @param {boolean} [isError=false] - Whether to style it as an error.
    */
   function setSyncMessage(text, isError = false) {
     syncMessageEl.textContent = text;
+    syncMessageEl.classList.toggle('hidden', !text);
     syncMessageEl.classList.toggle('text-red-600', isError);
     syncMessageEl.classList.toggle('dark:text-red-400', isError);
     syncMessageEl.classList.toggle('text-fg-muted', !isError);
@@ -207,14 +205,12 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
   /** Enables the sync button only while an active proxy integration can sync; otherwise its wrapper shows a tooltip with the reason. */
   async function refreshSyncAvailability() {
     const proxy = await loadActiveProxy();
-    const lastSynced = proxy?.price_synced_at ? ` (last synced ${fmtTime(proxy.price_synced_at)})` : '';
+    const lastSynced = proxy?.price_synced_at ? ` (last synced ${fmtAgo(proxy.price_synced_at)})` : '';
     const reason = !proxy
       ? 'Price sync needs an active proxy integration.'
       : proxy.price_sync_error && `${proxy.name} sync unavailable: ${proxy.price_sync_error}${lastSynced}`;
     syncBtn.disabled = !!reason;
-    if (reason) syncBtnWrap.dataset.tip = esc(reason);
-    else syncBtnWrap.removeAttribute('data-tip');
-    setSyncMessage(reason ? '' : `Syncing from ${proxy.name}${lastSynced}.`);
+    syncBtnWrap.dataset.tip = esc(reason || `Syncing from ${proxy.name}${lastSynced}.`);
     return proxy;
   }
 
@@ -237,7 +233,8 @@ import { errorBlock, esc, extractErrorMessage, fmtCost, fmtTime, getJSON, initNa
       loadPrices();
     });
     await refreshSyncAvailability();
-    if (!(outcome.isError && syncBtn.disabled)) setSyncMessage(outcome.text, outcome.isError);
+    if (outcome.isError && syncBtn.disabled) setSyncMessage('');
+    else setSyncMessage(outcome.text, outcome.isError);
   });
 
   loadPrices();

@@ -13,6 +13,8 @@ import (
 	"github.com/lfsc09/claude-lens/internal/upstream"
 )
 
+// secretHintLen is how many trailing characters of a secret secretHint
+// reveals.
 const secretHintLen = 4
 
 // secretHint returns the last few characters of secret, enough for an admin
@@ -70,6 +72,8 @@ func (h *handlers) listProxyIntegrations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, views)
 }
 
+// updateProxyIntegrationRequest is the payload for updating a proxy
+// integration.
 type updateProxyIntegrationRequest struct {
 	BaseURL                  string            `json:"base_url"`
 	AuthToken                string            `json:"auth_token"`
@@ -228,6 +232,8 @@ func (h *handlers) listNotificationIntegrations(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, views)
 }
 
+// notificationIntegrationRequest is the payload for creating or updating a
+// notification integration.
 type notificationIntegrationRequest struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`

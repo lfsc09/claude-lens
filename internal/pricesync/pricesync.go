@@ -28,15 +28,19 @@ type Result struct {
 // itself, as opposed to a later failure such as a database write.
 var ErrUpstreamUnavailable = errors.New("price sync upstream unavailable")
 
+// ErrNoPrices wraps a Sync failure where the gateway answered but reported no
+// usable price for any model.
+var ErrNoPrices = errors.New("gateway reported no model prices")
+
 // Fetchers maps a proxy integration type to the client that reads model
 // prices from that kind of gateway.
 type Fetchers map[string]priceprovider.Fetcher
 
 // Sync pulls per-model rates from integration's gateway via fetchers, upserts
 // them with database.UpsertPricesFromSync, refreshes est and records the
-// completion time on the integration. A failed fetch changes no price, is
-// recorded on the integration and is returned wrapped in
-// ErrUpstreamUnavailable.
+// completion time on the integration. A failed fetch, or one that yields no
+// price (ErrNoPrices), changes no price, is recorded on the integration and
+// is returned wrapped in ErrUpstreamUnavailable.
 func Sync(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers Fetchers, integration database.ProxyIntegration) (Result, error) {
 	now := float64(time.Now().Unix())
 
@@ -46,6 +50,9 @@ func Sync(ctx context.Context, db *database.DB, est *pricing.Estimator, fetchers
 	}
 
 	prices, fetchErr := fetcher.FetchModelPrices(ctx, integration.BaseURL, integration.AuthToken)
+	if fetchErr == nil && len(prices) == 0 {
+		fetchErr = ErrNoPrices
+	}
 	if fetchErr != nil {
 		if err := db.MarkPriceSyncFailed(ctx, integration.ID, fetchErr.Error(), now); err != nil {
 			slog.Warn("record price sync failure", "integration", integration.Type, "error", err)

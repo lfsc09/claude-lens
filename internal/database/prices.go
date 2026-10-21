@@ -22,6 +22,9 @@ import (
 // prompt size (input + cache-creation + cache-read tokens) exceeds 200,000
 // — the documented surcharge tier some Claude long-context variants bill
 // at. A nil pointer means no override is configured, not a free rate.
+//
+// SyncedAt is when a price sync last reported this model, even if its rates
+// did not change; it is nil for a row no sync has ever reported.
 type Price struct {
 	ID                      int64    `json:"id"`
 	Prefix                  string   `json:"model_prefix"`
@@ -33,13 +36,15 @@ type Price struct {
 	OutputPerMAbove200k     *float64 `json:"output_per_m_above_200k"`
 	CacheWritePerMAbove200k *float64 `json:"cache_write_per_m_above_200k"`
 	CacheReadPerMAbove200k  *float64 `json:"cache_read_per_m_above_200k"`
+	SyncedAt                *float64 `json:"synced_at"`
 	CreatedAt               float64  `json:"created_at"`
 	UpdatedAt               float64  `json:"updated_at"`
 }
 
+// priceColumns lists the model_prices columns scanPrice reads, in order.
 const priceColumns = `id, model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m,
 	input_per_m_above_200k, output_per_m_above_200k, cache_write_per_m_above_200k, cache_read_per_m_above_200k,
-	created_at, updated_at`
+	synced_at, created_at, updated_at`
 
 // defaultPrices seeds model_prices on first run. Cache write/read rates
 // follow Anthropic's standard multipliers (1.25x input for a 5-minute-TTL
@@ -50,6 +55,7 @@ var defaultPrices = []Price{
 	{Prefix: "claude-haiku-4-5", InputPerM: 1.00, OutputPerM: 5.00, CacheWritePerM: 1.25, CacheReadPerM: 0.10},
 }
 
+// seedDefaultPrices inserts defaultPrices when model_prices is empty.
 func (db *DB) seedDefaultPrices(ctx context.Context) error {
 	var count int
 	if err := db.sql.QueryRowContext(ctx, "SELECT COUNT(*) FROM model_prices").Scan(&count); err != nil {
@@ -69,12 +75,13 @@ func (db *DB) seedDefaultPrices(ctx context.Context) error {
 	return nil
 }
 
+// scanPrice reads one model_prices row selected with priceColumns.
 func scanPrice(row interface{ Scan(...any) error }) (Price, error) {
 	var p Price
 	err := row.Scan(
 		&p.ID, &p.Prefix, &p.InputPerM, &p.OutputPerM, &p.CacheWritePerM, &p.CacheReadPerM,
 		&p.InputPerMAbove200k, &p.OutputPerMAbove200k, &p.CacheWritePerMAbove200k, &p.CacheReadPerMAbove200k,
-		&p.CreatedAt, &p.UpdatedAt,
+		&p.SyncedAt, &p.CreatedAt, &p.UpdatedAt,
 	)
 	return p, err
 }
@@ -188,8 +195,8 @@ func (db *DB) UpsertPricesFromSync(ctx context.Context, prices []priceprovider.M
 			`INSERT INTO model_prices
 			    (model_prefix, input_per_m, output_per_m, cache_write_per_m, cache_read_per_m,
 			     input_per_m_above_200k, output_per_m_above_200k, cache_write_per_m_above_200k, cache_read_per_m_above_200k,
-			     created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			     synced_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(model_prefix) DO UPDATE SET
 			    input_per_m = excluded.input_per_m,
 			    output_per_m = excluded.output_per_m,
@@ -199,10 +206,11 @@ func (db *DB) UpsertPricesFromSync(ctx context.Context, prices []priceprovider.M
 			    output_per_m_above_200k = COALESCE(excluded.output_per_m_above_200k, model_prices.output_per_m_above_200k),
 			    cache_write_per_m_above_200k = COALESCE(excluded.cache_write_per_m_above_200k, model_prices.cache_write_per_m_above_200k),
 			    cache_read_per_m_above_200k = COALESCE(excluded.cache_read_per_m_above_200k, model_prices.cache_read_per_m_above_200k),
+			    synced_at = excluded.synced_at,
 			    updated_at = excluded.updated_at`,
 			p.ModelName, p.InputPerM, p.OutputPerM, p.CacheWritePerM, p.CacheReadPerM,
 			p.InputPerMAbove200k, p.OutputPerMAbove200k, p.CacheWritePerMAbove200k, p.CacheReadPerMAbove200k,
-			now, now,
+			now, now, now,
 		); err != nil {
 			return 0, 0, fmt.Errorf("upsert %s: %w", p.ModelName, err)
 		}

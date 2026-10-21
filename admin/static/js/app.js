@@ -347,6 +347,52 @@ export function fmtTime(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+const relativeTimeFormat = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+
+const RELATIVE_UNITS = [
+  ['second', 60],
+  ['minute', 60],
+  ['hour', 24],
+  ['day', 30],
+  ['month', 12],
+];
+
+/**
+ * Human-readable time elapsed since a Unix-seconds timestamp, e.g.
+ * "5 minutes ago", "yesterday".
+ * @param {?number} ts - Unix timestamp in seconds.
+ * @returns {string} Relative time, "just now" under a minute, or '—' when ts is empty.
+ */
+export function fmtAgo(ts) {
+  if (!ts) return '—';
+  let value = ts - Date.now() / 1000;
+  if (Math.abs(value) < 60) return 'just now';
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(value) < size) return relativeTimeFormat.format(Math.round(value), unit);
+    value /= size;
+  }
+  return relativeTimeFormat.format(Math.round(value), 'year');
+}
+
+/**
+ * Renders a timestamp as relative text with the exact time as its [data-tip] tooltip;
+ * the text is kept current by the page-wide ticker below.
+ * @param {?number} ts - Unix timestamp in seconds.
+ * @returns {string} `<time>` markup, or '—' when ts is empty.
+ */
+export function timeAgoHtml(ts) {
+  if (!ts) return '—';
+  return `<time datetime="${new Date(ts * 1000).toISOString()}" data-ts="${ts}" data-tip="${fmtTime(ts)}">${fmtAgo(ts)}</time>`;
+}
+
+const RELATIVE_TICK_MS = 30_000;
+
+setInterval(() => {
+  document.querySelectorAll('time[data-ts]').forEach((el) => {
+    el.textContent = fmtAgo(Number(el.dataset.ts));
+  });
+}, RELATIVE_TICK_MS);
+
 /**
  * Human-readable time remaining until a Unix-seconds timestamp, e.g.
  * "in 3 mins", "in 2 hrs", "in 5 days".
@@ -532,6 +578,7 @@ export function connectSSE(range, onMessage) {
   const lifecycle = new AbortController();
   let eventSource = null;
 
+  /** Opens the event stream unless it is already open. */
   function open() {
     if (eventSource) return;
     eventSource = new EventSource(url);
@@ -539,6 +586,7 @@ export function connectSSE(range, onMessage) {
     eventSource.onerror = () => onMessage({ proxy_status: 'unreachable' });
   }
 
+  /** Closes the event stream until the next open. */
   function suspend() {
     eventSource?.close();
     eventSource = null;
@@ -611,6 +659,7 @@ export function initNav(range, handlers = {}) {
  * @returns {number} The interval id, for cleanup via clearInterval.
  */
 export function initNavPolling(intervalMs = 15000) {
+  /** Checks the proxy health once and updates the status badge. */
   async function poll() {
     try {
       const res = await fetch('/api/health');
@@ -882,6 +931,78 @@ export function makeDialogMessage(elementId, styles = { error: ERROR_MESSAGE_CLA
     el.classList.remove('hidden');
     el.classList.add(...tokens[type]);
     el.textContent = text;
+  };
+}
+
+/**
+ * Shows message in an error banner, or hides the banner when message is empty.
+ * @param {HTMLElement} el - The banner element.
+ * @param {string} message - Error text; empty hides the banner.
+ */
+export function setBannerError(el, message) {
+  el.textContent = message;
+  el.classList.toggle('hidden', !message);
+}
+
+/**
+ * Wires the add/edit dialog of a CRUD page: the title and submit label follow
+ * the mode, closing the dialog returns it to "add", and submitting creates
+ * (POST endpoint) or updates (PUT endpoint/id) the entity, then closes the
+ * dialog and calls onSaved.
+ * @param {object} config - Dialog wiring.
+ * @param {HTMLDialogElement} config.dialog - The dialog element.
+ * @param {HTMLFormElement} config.form - The form inside the dialog.
+ * @param {HTMLElement} config.titleEl - Dialog heading.
+ * @param {HTMLButtonElement} config.submitBtn - Submit button.
+ * @param {string} config.messageId - Id of the dialog's message element.
+ * @param {string} config.endpoint - Collection URL, e.g. "/api/limiters".
+ * @param {{add: string, edit: string}} config.titles - Heading per mode.
+ * @param {{add: string, edit: string}} config.failures - Fallback error text per mode.
+ * @param {function(): ?object} config.readPayload - Builds the request body from the form, or returns null to skip the submit.
+ * @param {function(): void} [config.onReset] - Called after the form is reset to its "add" state.
+ * @param {function(): void} config.onSaved - Called after a successful save.
+ * @returns {{editingId: ?(number|string), beginEdit: function((number|string)): void}} The id being edited (null when adding) and the switch to "edit" mode, to be called before filling the form.
+ */
+export function initEntityDialog({ dialog, form, titleEl, submitBtn, messageId, endpoint, titles, failures, readPayload, onReset, onSaved }) {
+  const setMessage = makeDialogMessage(messageId);
+  let editingId = null;
+
+  /**
+   * Switches the heading and submit label to a mode.
+   * @param {?(number|string)} id - Id being edited, or null for "add".
+   */
+  function setMode(id) {
+    editingId = id;
+    titleEl.textContent = id == null ? titles.add : titles.edit;
+    submitBtn.textContent = id == null ? 'Add' : 'Save changes';
+  }
+
+  dialog.addEventListener('close', () => {
+    setMode(null);
+    setMessage(null, '');
+    form.reset();
+    onReset?.();
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = readPayload();
+    if (!payload) return;
+    const mode = editingId == null ? 'add' : 'edit';
+    await withPending(submitBtn, async () => {
+      const res = mode === 'edit' ? await putJSON(`${endpoint}/${editingId}`, payload) : await postJSON(endpoint, payload);
+      if (!res.ok) {
+        setMessage('error', await extractErrorMessage(res, failures[mode]));
+        return;
+      }
+      dialog.close();
+      onSaved();
+    });
+  });
+
+  return {
+    get editingId() { return editingId; },
+    beginEdit: setMode,
   };
 }
 

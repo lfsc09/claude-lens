@@ -90,6 +90,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	}
 }
 
+// health answers the proxy's own liveness probe.
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {

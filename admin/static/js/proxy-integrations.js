@@ -1,6 +1,6 @@
 'use strict';
 
-import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavPolling, postJSON, putJSON, withPending } from './app.js';
+import { badge, errorBlock, esc, extractErrorMessage, getJSON, initNavPolling, postJSON, putJSON, timeAgoHtml, withPending } from './app.js';
 
 (() => {
   const cardsEl = document.getElementById('proxy-cards');
@@ -34,11 +34,11 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
   /**
    * Describes the integration's last price-sync outcome.
    * @param {object} p - Proxy integration from the API.
-   * @returns {string} Status line text.
+   * @returns {string} Status line markup.
    */
   function syncStatus(p) {
-    if (p.price_sync_error) return `Last price sync failed: ${p.price_sync_error}`;
-    if (p.price_synced_at) return `Prices last synced ${fmtTime(p.price_synced_at)}`;
+    if (p.price_sync_error) return esc(`Last price sync failed: ${p.price_sync_error}`);
+    if (p.price_synced_at) return `Prices last synced ${timeAgoHtml(p.price_synced_at)}`;
     return 'Prices not synced yet';
   }
 
@@ -87,7 +87,7 @@ import { badge, errorBlock, esc, extractErrorMessage, fmtTime, getJSON, initNavP
               <input type="number" name="price_sync_interval_minutes" min="0" step="1" required value="${p.price_sync_interval_minutes}" aria-label="Price sync interval in minutes" class="w-20 ${FIELD_BASE}">
               min <span class="text-xs text-fg-subtle">(0 = off)</span>
             </label>
-            <p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-subtle'} text-xs">${esc(syncStatus(p))}</p>
+            ${p.active ? `<p class="${p.price_sync_error ? 'text-red-600 dark:text-red-400' : 'text-fg-subtle'} text-xs">${syncStatus(p)}</p>` : ''}
           </div>
           <div class="flex items-center gap-3">
             <p class="card-message hidden text-xs" role="alert"></p>

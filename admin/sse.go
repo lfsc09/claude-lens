@@ -14,6 +14,7 @@ import (
 // sseInterval is how often /stream pushes a new payload.
 var sseInterval = 3 * time.Second
 
+// ssePayload is the JSON document pushed on every /stream tick.
 type ssePayload struct {
 	ProxyStatus      string          `json:"proxy_status"`
 	Totals           database.Totals `json:"totals"`
@@ -104,6 +105,8 @@ func (h *handlers) buildSSEPayload(ctx context.Context, rangeKey string) (ssePay
 	}, nil
 }
 
+// latestExchangeID returns the id of the most recent exchange, or 0 when
+// there is none.
 func (h *handlers) latestExchangeID(ctx context.Context) (int64, error) {
 	rows, err := h.db.GetExchanges(ctx, "", 1, 0)
 	if err != nil {

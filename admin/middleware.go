@@ -45,6 +45,7 @@ type statusRecorder struct {
 	status int
 }
 
+// WriteHeader records status and forwards it to the wrapped ResponseWriter.
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
@@ -115,6 +116,8 @@ func hostWithoutPort(hostport string) string {
 	return strings.Trim(hostport, "[]")
 }
 
+// isStateChanging reports whether method can modify server state, i.e. is not
+// GET, HEAD or OPTIONS.
 func isStateChanging(method string) bool {
 	switch method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
@@ -140,6 +143,7 @@ func isSameOrigin(r *http.Request) bool {
 	return err == nil && u.Host == r.Host
 }
 
+// hasJSONContentType reports whether r declares an application/json body.
 func hasJSONContentType(r *http.Request) bool {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	return err == nil && mediaType == "application/json"
