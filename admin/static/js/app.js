@@ -355,7 +355,6 @@ const RELATIVE_UNITS = [
   ['hour', 24],
   ['day', 30],
   ['month', 12],
-  ['year', Infinity],
 ];
 
 /**
@@ -372,6 +371,7 @@ export function fmtAgo(ts) {
     if (Math.abs(value) < size) return relativeTimeFormat.format(Math.round(value), unit);
     value /= size;
   }
+  return relativeTimeFormat.format(Math.round(value), 'year');
 }
 
 /**

@@ -66,7 +66,6 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 
 	prices := make([]priceprovider.ModelPrice, 0, len(parsed.Data))
 	seen := make(map[string]struct{}, len(parsed.Data))
-	claudeModels := 0
 	for _, m := range parsed.Data {
 		modelName, ok := claudeModelName(m.ID)
 		if !ok {
@@ -76,7 +75,6 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 			continue
 		}
 		seen[modelName] = struct{}{}
-		claudeModels++
 
 		price, err := modelPrice(modelName, m.Pricing.Prompt, m.Pricing.Completion, m.Pricing.InputCacheWrite, m.Pricing.InputCacheRead)
 		if err != nil {
@@ -87,7 +85,7 @@ func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string
 			prices = append(prices, price)
 		}
 	}
-	slog.Debug("bifrost models fetched", "listed", len(parsed.Data), "claude", claudeModels, "priced", len(prices))
+	slog.Debug("bifrost models fetched", "listed", len(parsed.Data), "claude", len(seen), "priced", len(prices))
 	return prices, nil
 }
 

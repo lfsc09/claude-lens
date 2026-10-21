@@ -38,8 +38,9 @@ type modelInfoResponse struct {
 
 // FetchModelPrices queries baseURL's /model/info endpoint and returns
 // per-million-token rates for every model it reports with an input and
-// output price, under its normalized name (see modelname.Normalize). A non-200 answer is returned as a *priceprovider.StatusError
-// noting the upstream may not be a LiteLLM proxy.
+// output price, under its normalized name (see modelname.Normalize). A
+// non-200 answer is returned as a *priceprovider.StatusError noting the
+// upstream may not be a LiteLLM proxy.
 func (c *Client) FetchModelPrices(ctx context.Context, baseURL, authToken string) ([]priceprovider.ModelPrice, error) {
 	var parsed modelInfoResponse
 	if err := priceprovider.GetJSON(ctx, c.http, baseURL+"/model/info", authToken, &parsed); err != nil {

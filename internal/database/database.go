@@ -151,8 +151,8 @@ type columnMigration struct {
 	table, column, definition string
 }
 
-// columnMigrations lists every column added to the schema after its
-// schemaVersion was stamped, in the order they were introduced.
+// columnMigrations lists the columns migrateColumns adds to existing tables
+// when they are missing.
 var columnMigrations = []columnMigration{
 	{table: "model_prices", column: "synced_at", definition: "REAL"},
 }
